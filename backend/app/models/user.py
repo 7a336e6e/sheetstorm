@@ -145,6 +145,9 @@ class UserRole(BaseModel):
     """User-Role association model."""
     __tablename__ = 'user_roles'
 
+    # Override BaseModel's created_at — this table uses granted_at instead
+    created_at = None
+
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     role_id = Column(UUID(as_uuid=True), ForeignKey('roles.id', ondelete='CASCADE'), nullable=False)
     organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'))

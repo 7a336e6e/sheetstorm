@@ -52,6 +52,7 @@ export interface Incident {
   phase_name: string
   lead_responder?: User
   creator?: { id: string; name: string }
+  teams?: { id: string; name: string | null }[]
   detected_at?: string
   contained_at?: string
   eradicated_at?: string
@@ -81,6 +82,7 @@ export interface TimelineEvent {
   source?: string
   mitre_tactic?: string
   mitre_technique?: string
+  kill_chain_phase?: string
   phase?: number
   is_key_event: boolean
   is_ioc: boolean
@@ -324,4 +326,36 @@ export interface PaginatedResponse<T> {
   page: number
   per_page: number
   pages: number
+}
+
+export interface CaseNote {
+  id: string
+  incident_id: string
+  title: string
+  content: string
+  category: 'general' | 'finding' | 'question' | 'action_item' | 'handoff' | 'evidence' | 'hypothesis'
+  is_pinned: boolean
+  author?: { id: string; name: string }
+  created_at: string
+  updated_at?: string
+}
+
+export interface VirusTotalResult {
+  found: boolean
+  type: string
+  value: string
+  malicious?: number
+  suspicious?: number
+  undetected?: number
+  harmless?: number
+  total_engines?: number
+  detection_ratio?: string
+  file_name?: string
+  file_type?: string
+  sha256?: string
+  md5?: string
+  sha1?: string
+  tags?: string[]
+  reputation?: number
+  message?: string
 }

@@ -106,7 +106,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 
 ## Project Status
 
-**36 / 40** tasks completed across 9 epics and 7 sprints.
+**42 / 50** tasks completed across 12 epics.
 
 | Epic | Status |
 |------|--------|
@@ -115,24 +115,40 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | WebSocket real-time | ✅ 3/3 |
 | Frontend features (artifacts, reports, notifications, admin) | ✅ 7/7 |
 | Code quality (hooks, error boundaries, validation, stores) | ✅ 8/8 |
-| Security (MFA, SSO, sanitization, rate limiting) | ✅ 5/5 |
+| Security (MFA, SSO, sanitization, rate limiting, OAuth MFA) | ✅ 6/6 |
 | Backend documentation | ✅ 1/1 |
 | AI reports & Google Drive | ✅ 4/4 |
+| Integrations expansion (22 types, test buttons, DB config) | ✅ 3/3 |
+| RBAC & team-based access control | ✅ 2/2 |
+| Threat intelligence (VT lookup, MISP push, case notes) | 🔄 3/4 |
 | Testing | 🔜 0/4 deferred |
 
 ---
 
 ## Roadmap
 
-| Priority | Feature |
-|----------|---------|
-| P1 | Test suite — pytest · Vitest · Playwright |
-| P1 | CI/CD — GitHub Actions |
-| P2 | MITRE ATT&CK navigator heatmap |
-| P2 | Threat intel feed ingestion (STIX/TAXII, VirusTotal) |
-| P3 | Incident templates (ransomware, phishing, insider threat) |
-| P3 | Dashboard analytics & MTTR charts |
-| P3 | STIX 2.1 export |
+| Priority | Feature | Status |
+|----------|---------|--------|
+| P0 | MFA enforcement on OAuth flows (GitHub/Supabase) | ✅ Done |
+| P0 | Team-based incident access restrictions | ✅ Done |
+| P0 | Roles management admin page | ✅ Done |
+| P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
+| P1 | Case notes & kill chain phase per event | ✅ Done |
+| P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
+| P1 | MCP server for AI assistant integration | 📋 [Roadmap](docs/mcp-server-roadmap.md) |
+| P1 | Test suite — pytest · Vitest · Playwright | 🔜 Planned |
+| P1 | CI/CD — GitHub Actions | 🔜 Planned |
+| P2 | CVE lookup (CISA KEV + NVD) | 🔜 Planned |
+| P2 | IP / domain / email reputation lookups | 🔜 Planned |
+| P2 | IOC defanging for safe sharing | 🔜 Planned |
+| P2 | MITRE ATT&CK navigator heatmap | 🔜 Planned |
+| P2 | Lateral movement graph visualization | 🔜 Planned |
+| P2 | Incident templates (ransomware, phishing, insider threat) | 🔜 Planned |
+| P3 | VERIS incident classification & reporting | 🔜 Planned |
+| P3 | MITRE D3FEND defensive countermeasure mapping | 🔜 Planned |
+| P3 | Dashboard analytics & MTTR charts | 🔜 Planned |
+| P3 | STIX 2.1 export | 🔜 Planned |
+| P3 | Activity distribution plots | 🔜 Planned |
 
 ---
 
@@ -145,6 +161,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | [WebSocket Events](docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
 | [Configuration](docs/configuration.md) | Environment variables and database schema |
 | [Development](docs/development.md) | Setup guide, useful commands, migration workflow |
+| [MCP Server Roadmap](docs/mcp-server-roadmap.md) | AI assistant integration via Model Context Protocol |
 
 ---
 

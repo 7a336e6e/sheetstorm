@@ -745,6 +745,18 @@ export default function IncidentDetailPage() {
                         <span className="font-medium text-foreground">{incident.lead_responder?.name || 'Unassigned'}</span>
                       </div>
                     </div>
+                    {incident.teams && incident.teams.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Team Access</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {incident.teams.map(team => (
+                            <Badge key={team.id} variant="outline" className="text-xs">
+                              {team.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>

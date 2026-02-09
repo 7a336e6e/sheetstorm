@@ -1,7 +1,7 @@
 """SQLAlchemy Models"""
 from app.models.user import User, Role, UserRole, PasswordHistory, Session
 from app.models.organization import Organization
-from app.models.incident import Incident, IncidentAssignment
+from app.models.incident import Incident, IncidentAssignment, IncidentTeam
 from app.models.timeline import TimelineEvent
 from app.models.compromised import CompromisedHost, CompromisedAccount
 from app.models.ioc import NetworkIndicator, HostBasedIndicator, MalwareTool
@@ -13,11 +13,12 @@ from app.models.notification import Notification
 from app.models.audit import AuditLog
 from app.models.report import Report
 from app.models.team import Team, TeamMember
+from app.models.case_note import CaseNote
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
     'Organization',
-    'Incident', 'IncidentAssignment',
+    'Incident', 'IncidentAssignment', 'IncidentTeam',
     'TimelineEvent',
     'CompromisedHost', 'CompromisedAccount',
     'NetworkIndicator', 'HostBasedIndicator', 'MalwareTool',
@@ -29,4 +30,5 @@ __all__ = [
     'AuditLog',
     'Report',
     'Team', 'TeamMember',
+    'CaseNote',
 ]

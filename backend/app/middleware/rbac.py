@@ -145,8 +145,10 @@ def require_role(role_name):
 def require_incident_access(permission=None):
     """Decorator to check user has access to a specific incident.
 
-    For Operators and Viewers, this checks if they are assigned to the incident.
-    For other roles, it checks the specified permission.
+    Access rules:
+    - Users with the permission AND Administrator/Manager role: full org access
+    - Users with the permission AND team membership: access if incident is in their team or unscoped
+    - Operators/Viewers: access only if directly assigned
 
     Usage:
         @require_incident_access('incidents:read')
@@ -156,7 +158,7 @@ def require_incident_access(permission=None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            from app.models import Incident, IncidentAssignment
+            from app.models import Incident, IncidentAssignment, IncidentTeam, TeamMember
 
             user = get_current_user()
 
@@ -175,22 +177,58 @@ def require_incident_access(permission=None):
                     'message': 'Incident ID required'
                 }), 400
 
-            # Check if user has the permission
-            if permission and user.has_permission(permission):
-                # For roles with full access, verify incident exists and is in user's org
-                incident = Incident.query.filter_by(
-                    id=incident_id,
-                    organization_id=user.organization_id
-                ).first()
+            # Verify incident exists in user's org
+            incident = Incident.query.filter_by(
+                id=incident_id,
+                organization_id=user.organization_id
+            ).first()
 
-                if not incident:
-                    return jsonify({
-                        'error': 'not_found',
-                        'message': 'Incident not found'
-                    }), 404
+            if not incident:
+                return jsonify({
+                    'error': 'not_found',
+                    'message': 'Incident not found'
+                }), 404
 
+            # Administrators and Managers have full org access
+            if permission and user.has_permission(permission) and (user.has_role('Administrator') or user.has_role('Manager')):
                 g.incident = incident
                 return f(*args, **kwargs)
+
+            # For other roles with the permission, check team-based access
+            if permission and user.has_permission(permission):
+                # Check if incident has no team restrictions (org-wide)
+                incident_team_count = IncidentTeam.query.filter_by(incident_id=incident_id).count()
+                if incident_team_count == 0:
+                    g.incident = incident
+                    return f(*args, **kwargs)
+
+                # Check if user is in one of the incident's teams
+                user_team_ids = db.session.query(TeamMember.team_id).filter(
+                    TeamMember.user_id == user.id
+                ).subquery()
+                team_match = IncidentTeam.query.filter(
+                    IncidentTeam.incident_id == incident_id,
+                    IncidentTeam.team_id.in_(db.session.query(user_team_ids))
+                ).first()
+
+                if team_match:
+                    g.incident = incident
+                    return f(*args, **kwargs)
+
+                # Also allow if directly assigned
+                assignment = IncidentAssignment.query.filter_by(
+                    incident_id=incident_id,
+                    user_id=user.id,
+                    removed_at=None
+                ).first()
+                if assignment:
+                    g.incident = incident
+                    return f(*args, **kwargs)
+
+                return jsonify({
+                    'error': 'forbidden',
+                    'message': 'You do not have access to this incident'
+                }), 403
 
             # For limited roles (Operator, Viewer), check assignment
             if user.has_role('Operator') or user.has_role('Viewer'):
@@ -230,7 +268,7 @@ def check_any_permission(user, permissions):
 
 def check_incident_access(user, incident_id):
     """Helper function to check incident access without decorator."""
-    from app.models import Incident, IncidentAssignment
+    from app.models import Incident, IncidentAssignment, IncidentTeam, TeamMember
 
     if not user:
         return False, None
@@ -244,18 +282,35 @@ def check_incident_access(user, incident_id):
     if not incident:
         return False, None
 
-    # If user has general read permission, they can access
-    if user.has_permission('incidents:read'):
+    # Administrators/Managers have full org access
+    if user.has_role('Administrator') or user.has_role('Manager'):
         return True, incident
 
-    # For limited roles, check assignment
-    if user.has_role('Operator') or user.has_role('Viewer'):
-        assignment = IncidentAssignment.query.filter_by(
-            incident_id=incident_id,
-            user_id=user.id,
-            removed_at=None
-        ).first()
-        if assignment:
+    # If user has general read permission, check team-based access
+    if user.has_permission('incidents:read'):
+        # No team restrictions on incident = org-wide
+        incident_team_count = IncidentTeam.query.filter_by(incident_id=incident_id).count()
+        if incident_team_count == 0:
             return True, incident
+
+        # Check if user is in one of the incident's teams
+        user_team_ids = db.session.query(TeamMember.team_id).filter(
+            TeamMember.user_id == user.id
+        ).subquery()
+        team_match = IncidentTeam.query.filter(
+            IncidentTeam.incident_id == incident_id,
+            IncidentTeam.team_id.in_(db.session.query(user_team_ids))
+        ).first()
+        if team_match:
+            return True, incident
+
+    # For limited roles or team-restricted, check assignment
+    assignment = IncidentAssignment.query.filter_by(
+        incident_id=incident_id,
+        user_id=user.id,
+        removed_at=None
+    ).first()
+    if assignment:
+        return True, incident
 
     return False, None

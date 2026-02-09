@@ -4,7 +4,7 @@ from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db, socketio
-from app.models import Incident, IncidentAssignment, User
+from app.models import Incident, IncidentAssignment, IncidentTeam, User, TeamMember
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
@@ -16,19 +16,61 @@ from app.services.import_service import ImportService
 @jwt_required()
 @require_permission('incidents:read')
 def list_incidents():
-    """List incidents with filtering and pagination."""
+    """List incidents with filtering and pagination.
+    
+    Access rules:
+    - Administrators/Managers: see all org incidents
+    - Incident Responders/Analysts: see incidents assigned to their teams OR directly to them
+    - Operators/Viewers: see only directly assigned incidents
+    """
     user = get_current_user()
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 20, type=int), 100)
 
     query = Incident.query.filter_by(organization_id=user.organization_id)
 
-    # For Operators/Viewers, only show assigned incidents
+    # For Operators/Viewers, only show directly assigned incidents
     if user.has_role('Operator') or user.has_role('Viewer'):
         query = query.join(IncidentAssignment).filter(
             IncidentAssignment.user_id == user.id,
             IncidentAssignment.removed_at.is_(None)
         )
+    # For Incident Responders/Analysts, show team-scoped + directly assigned
+    elif not user.has_role('Administrator') and not user.has_role('Manager'):
+        # Get user's team IDs
+        user_team_ids = db.session.query(TeamMember.team_id).filter(
+            TeamMember.user_id == user.id
+        ).subquery()
+
+        # Show incidents that are:
+        # 1. Assigned to the user directly, OR
+        # 2. Associated with one of the user's teams, OR
+        # 3. Not associated with any team (org-wide incidents)
+        has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
+            IncidentAssignment.user_id == user.id,
+            IncidentAssignment.removed_at.is_(None)
+        ).subquery()
+
+        has_team = db.session.query(IncidentTeam.incident_id).filter(
+            IncidentTeam.team_id.in_(db.session.query(user_team_ids))
+        ).subquery()
+
+        no_teams = ~db.session.query(IncidentTeam).filter(
+            IncidentTeam.incident_id == Incident.id
+        ).exists()
+
+        query = query.filter(
+            db.or_(
+                Incident.id.in_(db.session.query(has_assignment)),
+                Incident.id.in_(db.session.query(has_team)),
+                no_teams
+            )
+        )
+
+    # Filter by team_id if provided
+    team_id = request.args.get('team_id')
+    if team_id:
+        query = query.join(IncidentTeam).filter(IncidentTeam.team_id == team_id)
 
     # Filters
     status = request.args.get('status')
@@ -103,6 +145,16 @@ def create_incident():
 
     db.session.add(incident)
     db.session.commit()
+
+    # Associate teams with incident
+    team_ids = request.get_json().get('team_ids', [])
+    if team_ids:
+        from app.models import Team
+        for tid in team_ids:
+            team = Team.query.filter_by(id=tid, organization_id=user.organization_id).first()
+            if team:
+                it = IncidentTeam(incident_id=incident.id, team_id=team.id)
+                db.session.add(it)
 
     # Assign creator to incident
     assignment = IncidentAssignment(
@@ -409,3 +461,68 @@ def submit_import_data(incident_id):
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
     except Exception as e:
         return jsonify({'error': 'server_error', 'message': 'Import failed'}), 500
+
+
+# --- Incident-Team management ---
+
+@api_bp.route('/incidents/<uuid:incident_id>/teams', methods=['GET'])
+@jwt_required()
+@require_incident_access('incidents:read')
+def list_incident_teams(incident_id):
+    """List teams associated with an incident."""
+    incident = g.incident
+    return jsonify({
+        'items': [it.to_dict() for it in incident.incident_teams]
+    }), 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/teams', methods=['POST'])
+@jwt_required()
+@require_incident_access('incidents:update')
+@audit_log('data_modification', 'add_team', 'incident')
+def add_incident_team(incident_id):
+    """Associate a team with an incident."""
+    from app.models import Team
+    user = get_current_user()
+    incident = g.incident
+    data = request.get_json()
+
+    team_id = data.get('team_id')
+    if not team_id:
+        return jsonify({'error': 'bad_request', 'message': 'team_id is required'}), 400
+
+    team = Team.query.filter_by(id=team_id, organization_id=user.organization_id).first()
+    if not team:
+        return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
+
+    existing = IncidentTeam.query.filter_by(incident_id=incident.id, team_id=team.id).first()
+    if existing:
+        return jsonify({'error': 'conflict', 'message': 'Team already associated'}), 409
+
+    it = IncidentTeam(incident_id=incident.id, team_id=team.id)
+    db.session.add(it)
+    db.session.commit()
+
+    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+
+    return jsonify(it.to_dict()), 201
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/teams/<uuid:team_id>', methods=['DELETE'])
+@jwt_required()
+@require_incident_access('incidents:update')
+@audit_log('data_modification', 'remove_team', 'incident')
+def remove_incident_team(incident_id, team_id):
+    """Remove a team from an incident."""
+    incident = g.incident
+
+    it = IncidentTeam.query.filter_by(incident_id=incident.id, team_id=team_id).first()
+    if not it:
+        return jsonify({'error': 'not_found', 'message': 'Team association not found'}), 404
+
+    db.session.delete(it)
+    db.session.commit()
+
+    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+
+    return jsonify({'message': 'Team removed from incident'}), 200

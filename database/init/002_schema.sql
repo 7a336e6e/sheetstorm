@@ -131,6 +131,7 @@ CREATE TABLE incident_assignments (
     assigned_by UUID REFERENCES users(id),
     assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     removed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(incident_id, user_id)
 );
 
@@ -152,7 +153,7 @@ CREATE TABLE timeline_events (
     mitre_technique VARCHAR(20),
     phase INTEGER CHECK (phase BETWEEN 1 AND 6),
     is_key_event BOOLEAN DEFAULT FALSE,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -181,7 +182,7 @@ CREATE TABLE compromised_hosts (
     last_seen TIMESTAMP WITH TIME ZONE,
     containment_status VARCHAR(50) DEFAULT 'active' CHECK (containment_status IN ('active', 'isolated', 'reimaged', 'decommissioned')),
     notes TEXT,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -205,7 +206,7 @@ CREATE TABLE compromised_accounts (
     is_privileged BOOLEAN DEFAULT FALSE,
     status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'reset', 'deleted')),
     notes TEXT,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -233,7 +234,7 @@ CREATE TABLE network_indicators (
     description TEXT,
     is_malicious BOOLEAN DEFAULT TRUE,
     threat_intel_source VARCHAR(255),
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -253,7 +254,7 @@ CREATE TABLE host_based_indicators (
     notes TEXT,
     is_malicious BOOLEAN DEFAULT TRUE,
     remediated BOOLEAN DEFAULT FALSE,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -282,7 +283,7 @@ CREATE TABLE malware_tools (
     threat_actor VARCHAR(255),
     is_tool BOOLEAN DEFAULT FALSE,
     sandbox_report_url TEXT,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -316,7 +317,7 @@ CREATE TABLE artifacts (
     is_verified BOOLEAN DEFAULT TRUE,
     verification_status VARCHAR(50) DEFAULT 'verified' CHECK (verification_status IN ('verified', 'mismatch', 'pending')),
     last_verified_at TIMESTAMP WITH TIME ZONE,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     uploaded_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -336,7 +337,7 @@ CREATE TABLE chain_of_custody (
     purpose TEXT,
     recipient_id UUID REFERENCES users(id),
     verification_result VARCHAR(50),
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -362,7 +363,7 @@ CREATE TABLE tasks (
     phase INTEGER CHECK (phase BETWEEN 1 AND 6),
     parent_task_id UUID REFERENCES tasks(id),
     order_index INTEGER DEFAULT 0,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -400,7 +401,7 @@ CREATE TABLE attack_graph_nodes (
     position_y FLOAT DEFAULT 0,
     is_initial_access BOOLEAN DEFAULT FALSE,
     is_objective BOOLEAN DEFAULT FALSE,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -421,7 +422,7 @@ CREATE TABLE attack_graph_edges (
     mitre_technique VARCHAR(20),
     timestamp TIMESTAMP WITH TIME ZONE,
     description TEXT,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -466,7 +467,7 @@ CREATE TABLE notifications (
     message TEXT,
     is_read BOOLEAN DEFAULT FALSE,
     action_url TEXT,
-    metadata JSONB DEFAULT '{}',
+    extra_data JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

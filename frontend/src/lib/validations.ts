@@ -12,6 +12,7 @@ export const createIncidentSchema = z.object({
     required_error: 'Severity is required',
   }),
   classification: z.string().optional(),
+  team_ids: z.array(z.string().uuid()).optional(),
 })
 
 export type CreateIncidentInput = z.infer<typeof createIncidentSchema>

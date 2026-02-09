@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,14 +16,23 @@ import {
 } from '@/components/ui/select'
 import { useIncidentStore, type Incident } from '@/lib/store'
 import { useToast } from '@/components/ui/use-toast'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2, Users } from 'lucide-react'
 import { createIncidentSchema, validate, type CreateIncidentInput } from '@/lib/validations'
+import { apiClient } from '@/lib/api'
+
+interface Team {
+  id: string
+  name: string
+  member_count: number
+}
 
 export default function NewIncidentPage() {
   const router = useRouter()
   const { createIncident } = useIncidentStore()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
+  const [teams, setTeams] = useState<Team[]>([])
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formData, setFormData] = useState<CreateIncidentInput>({
     title: '',
@@ -32,9 +41,22 @@ export default function NewIncidentPage() {
     classification: '',
   })
 
+  useEffect(() => {
+    apiClient.get<{ items: Team[] }>('/api/v1/teams').then(res => {
+      setTeams(res.items || [])
+    }).catch(() => {})
+  }, [])
+
+  const toggleTeam = (teamId: string) => {
+    setSelectedTeamIds(prev =>
+      prev.includes(teamId) ? prev.filter(id => id !== teamId) : [...prev, teamId]
+    )
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const result = validate(createIncidentSchema, formData)
+    const dataWithTeams = { ...formData, team_ids: selectedTeamIds.length > 0 ? selectedTeamIds : undefined }
+    const result = validate(createIncidentSchema, dataWithTeams)
     if (!result.success) {
       setFieldErrors(result.errors)
       const firstError = Object.values(result.errors)[0]
@@ -166,6 +188,37 @@ export default function NewIncidentPage() {
                 </Select>
               </div>
             </div>
+
+            {teams.length > 0 && (
+              <div className="space-y-2">
+                <Label>
+                  <Users className="h-4 w-4 inline mr-1.5" />
+                  Team Access
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Select which teams can access this incident. Leave empty for organization-wide access.
+                </p>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {teams.map(team => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      onClick={() => toggleTeam(team.id)}
+                      disabled={isLoading}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-left transition-colors ${
+                        selectedTeamIds.includes(team.id)
+                          ? 'border-blue-500 bg-blue-500/10 text-blue-400'
+                          : 'border-white/10 bg-white/5 text-muted-foreground hover:border-white/20'
+                      }`}
+                    >
+                      <Users className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{team.name}</span>
+                      <span className="text-xs opacity-60 ml-auto">({team.member_count})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-end gap-4 pt-4">
               <Link href="/dashboard/incidents">

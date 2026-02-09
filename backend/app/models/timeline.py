@@ -21,6 +21,7 @@ class TimelineEvent(BaseModel):
     phase = Column(Integer)
     is_key_event = Column(Boolean, default=False)
     is_ioc = Column(Boolean, default=False)  # Flag if marked as IOC
+    kill_chain_phase = Column(String(50))  # Lockheed Martin kill chain phase
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
@@ -48,6 +49,35 @@ class TimelineEvent(BaseModel):
         'exfiltration',
         'impact'
     ]
+
+    # Lockheed Martin Cyber Kill Chain phases
+    KILL_CHAIN_PHASES = [
+        'reconnaissance',
+        'weaponization',
+        'delivery',
+        'exploitation',
+        'installation',
+        'command-and-control',
+        'actions-on-objectives',
+    ]
+
+    # Map MITRE tactics to kill chain phases
+    TACTIC_TO_KILL_CHAIN = {
+        'reconnaissance': 'reconnaissance',
+        'resource-development': 'weaponization',
+        'initial-access': 'delivery',
+        'execution': 'exploitation',
+        'persistence': 'installation',
+        'privilege-escalation': 'exploitation',
+        'defense-evasion': 'installation',
+        'credential-access': 'exploitation',
+        'discovery': 'actions-on-objectives',
+        'lateral-movement': 'actions-on-objectives',
+        'collection': 'actions-on-objectives',
+        'command-and-control': 'command-and-control',
+        'exfiltration': 'actions-on-objectives',
+        'impact': 'actions-on-objectives',
+    }
 
     # MITRE ATT&CK techniques by tactic
     MITRE_TECHNIQUES = {

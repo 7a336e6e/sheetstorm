@@ -25,9 +25,24 @@ class Integration(BaseModel):
     creator = relationship('User')
 
     INTEGRATION_TYPES = [
-        's3', 'slack', 'openai', 'google_ai',
+        # Storage
+        's3',
+        # AI Providers
+        'openai', 'google_ai',
+        # Communication
+        'slack', 'email_smtp', 'webhook',
+        # Authentication
         'oauth_google', 'oauth_github', 'oauth_azure',
-        'webhook', 'siem', 'google_drive'
+        # Threat Intelligence
+        'misp', 'virustotal', 'mitre_attack',
+        # Forensics & IR
+        'velociraptor', 'thehive', 'cortex',
+        # Ticketing
+        'jira',
+        # Storage / Collaboration
+        'google_drive',
+        # SIEM
+        'siem', 'splunk', 'elastic',
     ]
 
     def __repr__(self):

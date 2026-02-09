@@ -317,6 +317,39 @@ def supabase_auth():
 
             db.session.commit()
 
+        # MFA check: if user has MFA enabled, require code before issuing tokens
+        if user.mfa_enabled and user.mfa_secret:
+            mfa_code = data.get('mfa_code')
+            if not mfa_code:
+                # Generate a short-lived pre-auth token so frontend can retry with MFA code
+                pre_auth_token = create_access_token(
+                    identity=str(user.id),
+                    additional_claims={'pre_auth': True, 'auth_method': 'supabase'},
+                    expires_delta=timedelta(minutes=5)
+                )
+                log_auth_event('supabase_login', user=user, success=False, details={'reason': 'mfa_required'})
+                return jsonify({
+                    'error': 'mfa_required',
+                    'message': 'MFA code is required',
+                    'mfa_required': True,
+                    'pre_auth_token': pre_auth_token,
+                }), 403
+
+            import pyotp
+            totp = pyotp.TOTP(user.mfa_secret)
+            if not totp.verify(str(mfa_code), valid_window=1):
+                # Check backup codes
+                backup_valid = False
+                if user.mfa_backup_codes:
+                    codes = user.mfa_backup_codes.split(',')
+                    if str(mfa_code).upper() in codes:
+                        codes.remove(str(mfa_code).upper())
+                        user.mfa_backup_codes = ','.join(codes)
+                        backup_valid = True
+                if not backup_valid:
+                    log_auth_event('supabase_login', user=user, success=False, details={'reason': 'invalid_mfa_code'})
+                    return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
         # Update last login
         user.last_login = datetime.now(timezone.utc)
         db.session.commit()
@@ -515,6 +548,39 @@ def github_auth_callback():
         user.last_login = datetime.now(timezone.utc)
         db.session.commit()
 
+        # MFA check: if user has MFA enabled, require code
+        if user.mfa_enabled and user.mfa_secret:
+            mfa_code = data.get('mfa_code')
+            if not mfa_code:
+                pre_auth_token = create_access_token(
+                    identity=str(user.id),
+                    additional_claims={'pre_auth': True, 'auth_method': 'github'},
+                    expires_delta=timedelta(minutes=5)
+                )
+                log_auth_event('github_login', user=user, success=False, details={'reason': 'mfa_required'})
+                return jsonify({
+                    'error': 'mfa_required',
+                    'message': 'MFA code is required',
+                    'mfa_required': True,
+                    'pre_auth_token': pre_auth_token,
+                    'user': {'name': user.name, 'email': user.email},
+                }), 403
+
+            import pyotp
+            totp = pyotp.TOTP(user.mfa_secret)
+            if not totp.verify(str(mfa_code), valid_window=1):
+                backup_valid = False
+                if user.mfa_backup_codes:
+                    codes = user.mfa_backup_codes.split(',')
+                    if str(mfa_code).upper() in codes:
+                        codes.remove(str(mfa_code).upper())
+                        user.mfa_backup_codes = ','.join(codes)
+                        db.session.commit()
+                        backup_valid = True
+                if not backup_valid:
+                    log_auth_event('github_login', user=user, success=False, details={'reason': 'invalid_mfa_code'})
+                    return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
         # Generate JWT tokens
         access_token = create_access_token(identity=str(user.id))
         refresh_token = create_refresh_token(identity=str(user.id))
@@ -617,6 +683,71 @@ def mfa_verify():
     log_auth_event('mfa_verify', user=user, success=True)
 
     return jsonify({'message': 'MFA enabled successfully'}), 200
+
+
+@api_bp.route('/auth/mfa/complete', methods=['POST'])
+@limiter.limit("10 per minute")
+def mfa_complete_oauth():
+    """Complete OAuth login by verifying MFA code using a pre-auth token.
+
+    This is called after GitHub/Supabase OAuth returns mfa_required.
+    The frontend sends the pre_auth_token + mfa_code to get full access tokens.
+    """
+    import pyotp
+
+    data = request.get_json() or {}
+    pre_auth_token = data.get('pre_auth_token', '')
+    mfa_code = data.get('mfa_code', '')
+
+    if not pre_auth_token or not mfa_code:
+        return jsonify({'error': 'bad_request', 'message': 'pre_auth_token and mfa_code are required'}), 400
+
+    # Decode the pre-auth token to get user identity
+    try:
+        from flask_jwt_extended import decode_token
+        decoded = decode_token(pre_auth_token)
+        if not decoded.get('pre_auth'):
+            return jsonify({'error': 'bad_request', 'message': 'Invalid pre-auth token'}), 400
+        user_id = decoded.get('sub')
+    except Exception:
+        return jsonify({'error': 'unauthorized', 'message': 'Invalid or expired pre-auth token'}), 401
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
+
+    if not user.mfa_enabled or not user.mfa_secret:
+        return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled for this user'}), 400
+
+    totp = pyotp.TOTP(user.mfa_secret)
+    if not totp.verify(str(mfa_code), valid_window=1):
+        # Check backup codes
+        backup_valid = False
+        if user.mfa_backup_codes:
+            codes = user.mfa_backup_codes.split(',')
+            if str(mfa_code).upper() in codes:
+                codes.remove(str(mfa_code).upper())
+                user.mfa_backup_codes = ','.join(codes)
+                backup_valid = True
+        if not backup_valid:
+            log_auth_event('mfa_complete_oauth', user=user, success=False, details={'reason': 'invalid_mfa_code'})
+            return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
+    # MFA verified — issue full tokens
+    user.last_login = datetime.now(timezone.utc)
+    db.session.commit()
+
+    access_token = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+
+    auth_method = decoded.get('auth_method', 'oauth')
+    log_auth_event(f'{auth_method}_login_mfa', user=user, success=True)
+
+    return jsonify({
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'user': user.to_dict(include_permissions=True),
+    }), 200
 
 
 @api_bp.route('/auth/mfa/disable', methods=['POST'])

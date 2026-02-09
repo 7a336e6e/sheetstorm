@@ -1,5 +1,5 @@
 """Incident model"""
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -47,6 +47,7 @@ class Incident(BaseModel):
     attack_graph_nodes = relationship('AttackGraphNode', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_edges = relationship('AttackGraphEdge', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     reports = relationship('Report', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
+    incident_teams = relationship('IncidentTeam', back_populates='incident', cascade='all, delete-orphan', lazy='joined')
 
     # IR lifecycle phases
     PHASES = {
@@ -72,6 +73,10 @@ class Incident(BaseModel):
         data['phase_name'] = self.phase_name
         data['lead_responder'] = self.lead_responder.to_dict() if self.lead_responder else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data['teams'] = [
+            {'id': str(it.team_id), 'name': it.team.name if it.team else None}
+            for it in (self.incident_teams or [])
+        ]
 
         if include_counts:
             data['counts'] = {
@@ -111,4 +116,29 @@ class IncidentAssignment(BaseModel):
             'assigned_by': str(self.assigned_by) if self.assigned_by else None,
             'assigned_at': self.assigned_at.isoformat() if self.assigned_at else None,
             'removed_at': self.removed_at.isoformat() if self.removed_at else None,
+        }
+
+
+class IncidentTeam(BaseModel):
+    """Junction table linking incidents to teams for access control."""
+    __tablename__ = 'incident_teams'
+    __table_args__ = (
+        UniqueConstraint('incident_id', 'team_id', name='uq_incident_teams'),
+    )
+
+    incident_id = Column(UUID(as_uuid=True), ForeignKey('incidents.id', ondelete='CASCADE'), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey('teams.id', ondelete='CASCADE'), nullable=False)
+
+    # Relationships
+    incident = relationship('Incident', back_populates='incident_teams')
+    team = relationship('Team')
+
+    def to_dict(self):
+        """Convert to dictionary."""
+        return {
+            'id': str(self.id),
+            'incident_id': str(self.incident_id),
+            'team_id': str(self.team_id),
+            'team': self.team.to_dict() if self.team else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }

@@ -41,6 +41,7 @@ const navigation = [
 
 const adminNavigation = [
   { name: 'Users', href: '/dashboard/admin/users', icon: Users },
+  { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
   { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },
   { name: 'Security', href: '/dashboard/admin/security', icon: KeyRound },
   { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings },

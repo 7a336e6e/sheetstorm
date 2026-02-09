@@ -306,6 +306,15 @@ export default function IncidentsPage() {
                           {incident.lead_responder.name}
                         </p>
                       )}
+                      {incident.teams && incident.teams.length > 0 && (
+                        <div className="flex gap-1 mt-1 flex-wrap">
+                          {incident.teams.map(team => (
+                            <span key={team.id} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                              {team.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </Link>
                   </TableCell>
                   <TableCell>

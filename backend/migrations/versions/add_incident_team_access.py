@@ -1,7 +1,7 @@
 """add team based incident access
 
 Revision ID: add_incident_team_access
-Revises: add_performance_indexes
+Revises: rename_metadata_to_extra_data
 Create Date: 2026-02-09
 """
 from alembic import op
@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import UUID
 
 # revision identifiers
 revision = 'add_incident_team_access'
-down_revision = 'add_performance_indexes'
+down_revision = 'rename_metadata_to_extra_data'
 branch_labels = None
 depends_on = None
 

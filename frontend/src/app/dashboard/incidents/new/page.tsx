@@ -18,7 +18,7 @@ import { useIncidentStore, type Incident } from '@/lib/store'
 import { useToast } from '@/components/ui/use-toast'
 import { ArrowLeft, Loader2, Users } from 'lucide-react'
 import { createIncidentSchema, validate, type CreateIncidentInput } from '@/lib/validations'
-import { apiClient } from '@/lib/api'
+import api from '@/lib/api'
 
 interface Team {
   id: string
@@ -42,7 +42,7 @@ export default function NewIncidentPage() {
   })
 
   useEffect(() => {
-    apiClient.get<{ items: Team[] }>('/api/v1/teams').then(res => {
+    api.get<{ items: Team[] }>('/teams').then(res => {
       setTeams(res.items || [])
     }).catch(() => {})
   }, [])

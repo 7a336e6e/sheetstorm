@@ -24,6 +24,8 @@ import {
   ChevronLeft,
   ChevronRight,
   KeyRound,
+  Search,
+  BookOpen,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,11 +37,13 @@ import { NotificationPanel } from '@/components/layout/NotificationPanel'
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Incidents', href: '/dashboard/incidents', icon: AlertTriangle },
+  { name: 'Threat Intel', href: '/dashboard/threat-intel', icon: Search },
+  { name: 'Knowledge Base', href: '/dashboard/knowledge-base', icon: BookOpen },
   { name: 'Reports', href: '/dashboard/reports', icon: FileText },
-  { name: 'Activity', href: '/dashboard/activity', icon: Activity },
 ]
 
 const adminNavigation = [
+  { name: 'Activity', href: '/dashboard/activity', icon: Activity },
   { name: 'Users', href: '/dashboard/admin/users', icon: Users },
   { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
   { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },

@@ -359,3 +359,158 @@ export interface VirusTotalResult {
   reputation?: number
   message?: string
 }
+
+// ---------- Threat Intel Types ----------
+
+export interface CVEResult {
+  cve_id: string
+  found: boolean
+  nvd?: {
+    description: string
+    published: string
+    last_modified: string
+    cvss_score: number | null
+    cvss_severity: string | null
+    cvss_vector: string | null
+    cwes: string[]
+    references: string[]
+  }
+  kev?: {
+    vendor: string
+    product: string
+    vulnerability_name: string
+    date_added: string
+    due_date: string
+    short_description: string
+    required_action: string
+    known_ransomware_use: string
+  }
+  nvd_error?: string
+  kev_error?: string
+}
+
+export interface IPReputationResult {
+  ip: string
+  enriched: boolean
+  sources: {
+    abuseipdb?: {
+      abuse_confidence_score: number
+      total_reports: number
+      country_code: string
+      isp: string
+      domain: string
+      is_tor: boolean
+      is_whitelisted: boolean
+      usage_type: string
+      last_reported_at: string
+    }
+    virustotal?: {
+      malicious: number
+      suspicious: number
+      harmless: number
+      undetected: number
+      reputation: number
+      as_owner: string
+      country: string
+    }
+    geo?: {
+      country: string
+      region: string
+      city: string
+      isp: string
+      org: string
+      as: string
+    }
+  }
+}
+
+export interface DomainReputationResult {
+  domain: string
+  enriched: boolean
+  sources: {
+    virustotal?: {
+      malicious: number
+      suspicious: number
+      harmless: number
+      undetected: number
+      reputation: number
+      registrar: string
+      creation_date: number
+      last_analysis_date: number
+      categories: Record<string, string>
+    }
+  }
+}
+
+export interface EmailReputationResult {
+  email: string
+  enriched: boolean
+  sources: {
+    hibp?: {
+      breach_count: number
+      breaches: {
+        name: string
+        domain: string
+        breach_date: string
+        added_date: string
+        pwn_count: number
+        data_classes: string[]
+        is_verified: boolean
+      }[]
+    }
+  }
+}
+
+export interface RansomwareVictimResult {
+  query: string
+  found: boolean
+  items: {
+    victim: string
+    group: string
+    discovered: string
+    country: string
+    domain: string
+    description: string
+    activity: string
+  }[]
+  total: number
+}
+
+export interface DefangResult {
+  items?: { original: string; defanged: string }[]
+  original?: string
+  defanged?: string
+  total?: number
+}
+
+// ---------- Knowledge Base Types ----------
+
+export interface LOLBASEntry {
+  name: string
+  description: string
+  category: string
+  mitre_id: string
+  path: string
+  commands: string[]
+  detection: string[]
+  os: string
+}
+
+export interface WindowsEventID {
+  event_id: number
+  description: string
+  category: string
+  provider: string
+  severity: 'info' | 'warning' | 'critical'
+}
+
+export interface D3FENDTechnique {
+  id: string
+  name: string
+  tactic: string
+  description: string
+  mitre_attack_mappings: string[]
+  examples: string[]
+  matched_techniques?: string[]
+}
+

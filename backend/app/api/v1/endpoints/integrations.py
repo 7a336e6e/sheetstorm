@@ -317,6 +317,12 @@ def list_integration_types():
              'config_fields': [], 'credential_fields': ['api_key']},
             {'id': 'mitre_attack', 'name': 'MITRE ATT&CK', 'description': 'MITRE ATT&CK framework data feed for tactic/technique mapping', 'category': 'threat_intel',
              'config_fields': ['api_url'], 'credential_fields': []},
+            {'id': 'abuseipdb', 'name': 'AbuseIPDB', 'description': 'IP reputation lookups via AbuseIPDB API', 'category': 'threat_intel',
+             'config_fields': [], 'credential_fields': ['api_key']},
+            {'id': 'hibp', 'name': 'Have I Been Pwned', 'description': 'Email breach lookups via HIBP API', 'category': 'threat_intel',
+             'config_fields': [], 'credential_fields': ['api_key']},
+            {'id': 'shodan', 'name': 'Shodan', 'description': 'Internet-wide scanning data for IP/host intelligence', 'category': 'threat_intel',
+             'config_fields': [], 'credential_fields': ['api_key']},
             # IR Tools
             {'id': 'velociraptor', 'name': 'Velociraptor', 'description': 'Endpoint monitoring and forensic collection via Velociraptor', 'category': 'ir_tools',
              'config_fields': ['api_url', 'verify_ssl'], 'credential_fields': ['api_key']},

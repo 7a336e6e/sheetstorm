@@ -70,6 +70,27 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 </td>
 </tr>
+<tr>
+<td width="50%">
+
+### 🔎 Threat Intelligence
+- CVE lookup with CISA KEV + CVSS scoring
+- IP, domain, email reputation lookups
+- Ransomware victim search (ransomware.live)
+- IOC defanging/refanging for safe sharing
+- Auto-enrichment when integrations configured
+
+</td>
+<td width="50%">
+
+### 📚 Knowledge Base
+- LOLBAS — living-off-the-land binaries & scripts
+- 65+ security-relevant Windows Event IDs
+- MITRE D3FEND defensive countermeasures
+- D3FEND ↔ ATT&CK suggestion engine
+
+</td>
+</tr>
 </table>
 
 ---
@@ -100,13 +121,13 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | **Backend**    | Flask 3.0 · SQLAlchemy · Flask-SocketIO · Flask-JWT-Extended · WeasyPrint · pandas |
 | **Database**   | PostgreSQL 16 · Redis 7 |
 | **AI**         | OpenAI GPT-4 · Google Gemini Pro |
-| **Infra**      | Docker Compose · S3 · Google Drive · Slack |
+| **Infra**      | Docker Compose · Nginx · S3 · Google Drive · Slack |
 
 ---
 
 ## Project Status
 
-**42 / 50** tasks completed across 12 epics.
+**56 / 64** tasks completed across 14 epics.
 
 | Epic | Status |
 |------|--------|
@@ -118,9 +139,11 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | Security (MFA, SSO, sanitization, rate limiting, OAuth MFA) | ✅ 6/6 |
 | Backend documentation | ✅ 1/1 |
 | AI reports & Google Drive | ✅ 4/4 |
-| Integrations expansion (22 types, test buttons, DB config) | ✅ 3/3 |
+| Integrations expansion (25 types, test buttons, DB config) | ✅ 4/4 |
 | RBAC & team-based access control | ✅ 2/2 |
-| Threat intelligence (VT lookup, MISP push, case notes) | 🔄 3/4 |
+| Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
+| Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
+| Auto-enrichment & soft fallback | ✅ 1/1 |
 | Testing | 🔜 0/4 deferred |
 
 ---
@@ -138,14 +161,18 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | P1 | MCP server for AI assistant integration | 📋 [Roadmap](docs/mcp-server-roadmap.md) |
 | P1 | Test suite — pytest · Vitest · Playwright | 🔜 Planned |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |
-| P2 | CVE lookup (CISA KEV + NVD) | 🔜 Planned |
-| P2 | IP / domain / email reputation lookups | 🔜 Planned |
-| P2 | IOC defanging for safe sharing | 🔜 Planned |
+| P1 | CVE lookup (CISA KEV + NVD) | ✅ Done |
+| P1 | IP / domain / email reputation lookups | ✅ Done |
+| P1 | IOC defanging for safe sharing | ✅ Done |
+| P1 | Ransomware victim lookup (ransomware.live) | ✅ Done |
+| P1 | LOLBAS knowledge base | ✅ Done |
+| P1 | Windows Event ID knowledge base | ✅ Done |
+| P1 | MITRE D3FEND defensive countermeasure mapping | ✅ Done |
+| P1 | Auto-enrichment service with soft fallback | ✅ Done |
 | P2 | MITRE ATT&CK navigator heatmap | 🔜 Planned |
 | P2 | Lateral movement graph visualization | 🔜 Planned |
 | P2 | Incident templates (ransomware, phishing, insider threat) | 🔜 Planned |
 | P3 | VERIS incident classification & reporting | 🔜 Planned |
-| P3 | MITRE D3FEND defensive countermeasure mapping | 🔜 Planned |
 | P3 | Dashboard analytics & MTTR charts | 🔜 Planned |
 | P3 | STIX 2.1 export | 🔜 Planned |
 | P3 | Activity distribution plots | 🔜 Planned |

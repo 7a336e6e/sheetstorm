@@ -24,3 +24,5 @@ from app.api.v1.endpoints import google_drive
 from app.api.v1.endpoints import roles
 from app.api.v1.endpoints import case_notes
 from app.api.v1.endpoints import threat_intel
+from app.api.v1.endpoints import knowledge_base
+from app.api.v1.endpoints import defang

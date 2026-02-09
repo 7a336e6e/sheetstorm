@@ -268,3 +268,414 @@ def _misp_type_to_category(ioc_type: str) -> str:
         'regkey': 'Persistence mechanism',
     }
     return mapping.get(ioc_type, 'External analysis')
+
+
+# ---------------------------------------------------------------------------
+# CVE Lookup  (CISA KEV + NVD — no API key required)
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/threat-intel/cve/lookup', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def cve_lookup():
+    """Look up a CVE by ID using public APIs (NVD + CISA KEV).
+
+    Body: { "cve_id": "CVE-2024-1234" }
+    No API key required — uses free public endpoints.
+    """
+    import requests as req
+
+    data = request.get_json() or {}
+    cve_id = data.get('cve_id', '').strip().upper()
+
+    if not cve_id or not cve_id.startswith('CVE-'):
+        return jsonify({'error': 'bad_request', 'message': 'Valid CVE ID required (e.g., CVE-2024-1234)'}), 400
+
+    result = {
+        'cve_id': cve_id,
+        'found': False,
+        'nvd': None,
+        'kev': None,
+    }
+
+    # --- NVD lookup (public, no key needed but rate-limited) ---
+    try:
+        nvd_resp = req.get(
+            f'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}',
+            timeout=15,
+            headers={'User-Agent': 'SheetStorm-IR-Platform'}
+        )
+        if nvd_resp.status_code == 200:
+            nvd_data = nvd_resp.json()
+            vulns = nvd_data.get('vulnerabilities', [])
+            if vulns:
+                cve_item = vulns[0].get('cve', {})
+                descriptions = cve_item.get('descriptions', [])
+                en_desc = next((d['value'] for d in descriptions if d.get('lang') == 'en'), descriptions[0]['value'] if descriptions else '')
+
+                # CVSS extraction — prefer v3.1, fallback to v3.0, then v2.0
+                cvss_score = None
+                cvss_severity = None
+                cvss_vector = None
+                metrics = cve_item.get('metrics', {})
+                for version_key in ('cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'):
+                    metric_list = metrics.get(version_key, [])
+                    if metric_list:
+                        cvss_data = metric_list[0].get('cvssData', {})
+                        cvss_score = cvss_data.get('baseScore')
+                        cvss_severity = cvss_data.get('baseSeverity') or metric_list[0].get('baseSeverity')
+                        cvss_vector = cvss_data.get('vectorString')
+                        break
+
+                # CWE / weakness
+                weaknesses = cve_item.get('weaknesses', [])
+                cwes = []
+                for w in weaknesses:
+                    for desc in w.get('description', []):
+                        if desc.get('value', '').startswith('CWE-'):
+                            cwes.append(desc['value'])
+
+                # References
+                refs = [r.get('url') for r in cve_item.get('references', [])[:10]]
+
+                result['found'] = True
+                result['nvd'] = {
+                    'description': en_desc,
+                    'published': cve_item.get('published'),
+                    'last_modified': cve_item.get('lastModified'),
+                    'cvss_score': cvss_score,
+                    'cvss_severity': cvss_severity,
+                    'cvss_vector': cvss_vector,
+                    'cwes': cwes,
+                    'references': refs,
+                }
+    except req.exceptions.Timeout:
+        result['nvd_error'] = 'NVD request timed out'
+    except Exception as e:
+        result['nvd_error'] = str(e)
+
+    # --- CISA KEV lookup ---
+    try:
+        kev_resp = req.get(
+            'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json',
+            timeout=15,
+            headers={'User-Agent': 'SheetStorm-IR-Platform'}
+        )
+        if kev_resp.status_code == 200:
+            kev_data = kev_resp.json()
+            for vuln in kev_data.get('vulnerabilities', []):
+                if vuln.get('cveID') == cve_id:
+                    result['found'] = True
+                    result['kev'] = {
+                        'vendor': vuln.get('vendorProject'),
+                        'product': vuln.get('product'),
+                        'vulnerability_name': vuln.get('vulnerabilityName'),
+                        'date_added': vuln.get('dateAdded'),
+                        'due_date': vuln.get('dueDate'),
+                        'short_description': vuln.get('shortDescription'),
+                        'required_action': vuln.get('requiredAction'),
+                        'known_ransomware_use': vuln.get('knownRansomwareCampaignUse', 'Unknown'),
+                    }
+                    break
+    except req.exceptions.Timeout:
+        result['kev_error'] = 'CISA KEV request timed out'
+    except Exception as e:
+        result['kev_error'] = str(e)
+
+    status = 200 if result['found'] else 200  # always 200, found flag tells the story
+    return jsonify(result), status
+
+
+# ---------------------------------------------------------------------------
+# IP Reputation Lookup  (AbuseIPDB — requires API key, VT fallback)
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/threat-intel/ip/lookup', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def ip_reputation_lookup():
+    """Look up IP reputation.  Tries AbuseIPDB first (if configured),
+    then VirusTotal, then free ip-api.com for geo only.
+
+    Body: { "ip": "1.2.3.4" }
+    """
+    import requests as req
+
+    user = get_current_user()
+    data = request.get_json() or {}
+    ip = data.get('ip', '').strip()
+
+    if not ip:
+        return jsonify({'error': 'bad_request', 'message': 'IP address required'}), 400
+
+    result = {'ip': ip, 'sources': {}}
+
+    # --- AbuseIPDB (optional) ---
+    abuse_integration = Integration.query.filter_by(
+        organization_id=user.organization_id, type='abuseipdb', is_enabled=True
+    ).first()
+    if abuse_integration and abuse_integration.credentials_encrypted:
+        try:
+            creds = EncryptionService.decrypt_json(abuse_integration.credentials_encrypted)
+            api_key = creds.get('api_key')
+            if api_key:
+                resp = req.get(
+                    'https://api.abuseipdb.com/api/v2/check',
+                    params={'ipAddress': ip, 'maxAgeInDays': 90, 'verbose': ''},
+                    headers={'Key': api_key, 'Accept': 'application/json'},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    d = resp.json().get('data', {})
+                    result['sources']['abuseipdb'] = {
+                        'abuse_confidence_score': d.get('abuseConfidenceScore'),
+                        'total_reports': d.get('totalReports'),
+                        'country_code': d.get('countryCode'),
+                        'isp': d.get('isp'),
+                        'domain': d.get('domain'),
+                        'is_tor': d.get('isTor'),
+                        'is_whitelisted': d.get('isWhitelisted'),
+                        'usage_type': d.get('usageType'),
+                        'last_reported_at': d.get('lastReportedAt'),
+                    }
+        except Exception:
+            pass
+
+    # --- VirusTotal (optional) ---
+    vt_integration = Integration.query.filter_by(
+        organization_id=user.organization_id, type='virustotal', is_enabled=True
+    ).first()
+    if vt_integration and vt_integration.credentials_encrypted:
+        try:
+            creds = EncryptionService.decrypt_json(vt_integration.credentials_encrypted)
+            api_key = creds.get('api_key')
+            if api_key:
+                resp = req.get(
+                    f'https://www.virustotal.com/api/v3/ip_addresses/{ip}',
+                    headers={'x-apikey': api_key},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    attrs = resp.json().get('data', {}).get('attributes', {})
+                    stats = attrs.get('last_analysis_stats', {})
+                    result['sources']['virustotal'] = {
+                        'malicious': stats.get('malicious', 0),
+                        'suspicious': stats.get('suspicious', 0),
+                        'harmless': stats.get('harmless', 0),
+                        'undetected': stats.get('undetected', 0),
+                        'reputation': attrs.get('reputation', 0),
+                        'as_owner': attrs.get('as_owner'),
+                        'country': attrs.get('country'),
+                    }
+        except Exception:
+            pass
+
+    # --- Free geo lookup (always available) ---
+    try:
+        geo_resp = req.get(f'http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org,as,query', timeout=5)
+        if geo_resp.status_code == 200:
+            geo = geo_resp.json()
+            if geo.get('status') == 'success':
+                result['sources']['geo'] = {
+                    'country': geo.get('country'),
+                    'region': geo.get('regionName'),
+                    'city': geo.get('city'),
+                    'isp': geo.get('isp'),
+                    'org': geo.get('org'),
+                    'as': geo.get('as'),
+                }
+    except Exception:
+        pass
+
+    result['enriched'] = len(result['sources']) > 0
+    return jsonify(result), 200
+
+
+# ---------------------------------------------------------------------------
+# Domain Reputation Lookup
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/threat-intel/domain/lookup', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def domain_reputation_lookup():
+    """Look up domain reputation via VirusTotal (if configured).
+
+    Body: { "domain": "evil.com" }
+    """
+    import requests as req
+
+    user = get_current_user()
+    data = request.get_json() or {}
+    domain = data.get('domain', '').strip().lower()
+
+    if not domain:
+        return jsonify({'error': 'bad_request', 'message': 'Domain required'}), 400
+
+    result = {'domain': domain, 'sources': {}}
+
+    # --- VirusTotal (optional) ---
+    vt_integration = Integration.query.filter_by(
+        organization_id=user.organization_id, type='virustotal', is_enabled=True
+    ).first()
+    if vt_integration and vt_integration.credentials_encrypted:
+        try:
+            creds = EncryptionService.decrypt_json(vt_integration.credentials_encrypted)
+            api_key = creds.get('api_key')
+            if api_key:
+                resp = req.get(
+                    f'https://www.virustotal.com/api/v3/domains/{domain}',
+                    headers={'x-apikey': api_key},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    attrs = resp.json().get('data', {}).get('attributes', {})
+                    stats = attrs.get('last_analysis_stats', {})
+                    result['sources']['virustotal'] = {
+                        'malicious': stats.get('malicious', 0),
+                        'suspicious': stats.get('suspicious', 0),
+                        'harmless': stats.get('harmless', 0),
+                        'undetected': stats.get('undetected', 0),
+                        'reputation': attrs.get('reputation', 0),
+                        'registrar': attrs.get('registrar'),
+                        'creation_date': attrs.get('creation_date'),
+                        'last_analysis_date': attrs.get('last_analysis_date'),
+                        'categories': attrs.get('categories', {}),
+                    }
+        except Exception:
+            pass
+
+    result['enriched'] = len(result['sources']) > 0
+    return jsonify(result), 200
+
+
+# ---------------------------------------------------------------------------
+# Email Reputation Lookup
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/threat-intel/email/lookup', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def email_reputation_lookup():
+    """Look up email address in breach databases.
+    Uses Have I Been Pwned API if configured, otherwise returns
+    a stub indicating the integration is not set up.
+
+    Body: { "email": "user@example.com" }
+    """
+    import requests as req
+
+    user = get_current_user()
+    data = request.get_json() or {}
+    email = data.get('email', '').strip().lower()
+
+    if not email or '@' not in email:
+        return jsonify({'error': 'bad_request', 'message': 'Valid email required'}), 400
+
+    result = {'email': email, 'sources': {}}
+
+    # --- Have I Been Pwned (optional — requires paid API key) ---
+    hibp_integration = Integration.query.filter_by(
+        organization_id=user.organization_id, type='hibp', is_enabled=True
+    ).first()
+    if hibp_integration and hibp_integration.credentials_encrypted:
+        try:
+            creds = EncryptionService.decrypt_json(hibp_integration.credentials_encrypted)
+            api_key = creds.get('api_key')
+            if api_key:
+                resp = req.get(
+                    f'https://haveibeenpwned.com/api/v3/breachedaccount/{email}',
+                    headers={
+                        'hibp-api-key': api_key,
+                        'User-Agent': 'SheetStorm-IR-Platform',
+                    },
+                    params={'truncateResponse': 'false'},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    breaches = resp.json()
+                    result['sources']['hibp'] = {
+                        'breach_count': len(breaches),
+                        'breaches': [
+                            {
+                                'name': b.get('Name'),
+                                'domain': b.get('Domain'),
+                                'breach_date': b.get('BreachDate'),
+                                'added_date': b.get('AddedDate'),
+                                'pwn_count': b.get('PwnCount'),
+                                'data_classes': b.get('DataClasses', []),
+                                'is_verified': b.get('IsVerified'),
+                            }
+                            for b in breaches[:20]
+                        ],
+                    }
+                elif resp.status_code == 404:
+                    result['sources']['hibp'] = {'breach_count': 0, 'breaches': []}
+        except Exception:
+            pass
+
+    result['enriched'] = len(result['sources']) > 0
+    return jsonify(result), 200
+
+
+# ---------------------------------------------------------------------------
+# Ransomware Victim Lookup  (ransomware.live — free, no key)
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/threat-intel/ransomware/lookup', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def ransomware_victim_lookup():
+    """Search ransomware.live for victim postings.
+
+    Body: { "query": "company name" }
+    No API key required — public API.
+    """
+    import requests as req
+
+    data = request.get_json() or {}
+    query = data.get('query', '').strip()
+
+    if not query or len(query) < 3:
+        return jsonify({'error': 'bad_request', 'message': 'Search query must be at least 3 characters'}), 400
+
+    try:
+        resp = req.get(
+            f'https://api.ransomware.live/v2/victims/{query}',
+            timeout=15,
+            headers={'User-Agent': 'SheetStorm-IR-Platform'},
+        )
+
+        if resp.status_code == 200:
+            victims = resp.json()
+            if not isinstance(victims, list):
+                victims = []
+
+            results = [
+                {
+                    'victim': v.get('victim', v.get('post_title', 'Unknown')),
+                    'group': v.get('group_name', v.get('group', 'Unknown')),
+                    'discovered': v.get('discovered', v.get('post_date')),
+                    'country': v.get('country'),
+                    'domain': v.get('website', v.get('domain')),
+                    'description': v.get('description'),
+                    'activity': v.get('activity'),
+                }
+                for v in victims[:50]
+            ]
+
+            return jsonify({
+                'query': query,
+                'found': len(results) > 0,
+                'items': results,
+                'total': len(results),
+            }), 200
+        elif resp.status_code == 404:
+            return jsonify({'query': query, 'found': False, 'items': [], 'total': 0}), 200
+        else:
+            return jsonify({'error': 'upstream_error', 'message': f'ransomware.live returned {resp.status_code}'}), 502
+
+    except req.exceptions.Timeout:
+        return jsonify({'error': 'timeout', 'message': 'ransomware.live request timed out'}), 504
+    except Exception as e:
+        return jsonify({'error': 'server_error', 'message': str(e)}), 500

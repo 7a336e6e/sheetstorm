@@ -194,6 +194,7 @@ export interface Incident {
   phase_name: string
   lead_responder?: User
   creator?: { id: string; name: string }
+  teams?: { id: string; name: string | null }[]
   detected_at?: string
   created_at: string
   updated_at?: string

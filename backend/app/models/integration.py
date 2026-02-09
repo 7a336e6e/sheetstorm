@@ -35,6 +35,7 @@ class Integration(BaseModel):
         'oauth_google', 'oauth_github', 'oauth_azure',
         # Threat Intelligence
         'misp', 'virustotal', 'mitre_attack',
+        'abuseipdb', 'hibp', 'shodan',
         # Forensics & IR
         'velociraptor', 'thehive', 'cortex',
         # Ticketing

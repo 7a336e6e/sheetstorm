@@ -250,27 +250,6 @@ def revoke_role(user_id, role_id):
     return jsonify({'message': 'Role revoked successfully'}), 200
 
 
-@api_bp.route('/roles', methods=['GET'])
-@jwt_required()
-@require_permission('users:read')
-def list_roles():
-    """List all available roles."""
-    roles = Role.query.all()
-
-    return jsonify({
-        'items': [
-            {
-                'id': str(r.id),
-                'name': r.name,
-                'description': r.description,
-                'permissions': r.permissions,
-                'is_system': r.is_system
-            }
-            for r in roles
-        ]
-    }), 200
-
-
 @api_bp.route('/users/sync-supabase', methods=['POST'])
 @jwt_required()
 @require_permission('users:manage')

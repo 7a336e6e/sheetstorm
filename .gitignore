@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.agent/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.pytest_cache/
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# Local artifacts
+artifacts/
+.agent/
+.claude/
+.github/agents/
+.github/skills/
+.github/prompts/
+
+# Docker
+docker-compose.override.yml
+
+# Agent related stuff
+tasks.md

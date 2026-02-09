@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light theme (default) */
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary: Electric Cyan */
+    --primary: 189 94% 43%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: Electric Purple */
+    --secondary: 258 90% 66%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 189 94% 43%;
+
+    --radius: 0.5rem;
+  }
+
+  /* Dark theme */
+  .dark {
+    /* Backgrounds: Deep Navy (#0f172a) */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    /* Cards: Slightly lighter navy */
+    --card: 222 47% 13%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Primary: Electric Cyan (#06b6d4) */
+    --primary: 189 94% 43%;
+    --primary-foreground: 222 47% 11%;
+
+    /* Secondary: Electric Purple (#8b5cf6) */
+    --secondary: 258 90% 66%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Muted: Slate 800 */
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Accent: Cyan for hover states */
+    --accent: 189 94% 43%;
+    --accent-foreground: 222 47% 11%;
+
+    /* Destructive: Red 500 */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Borders & Inputs */
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 189 94% 43%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground selection:bg-primary/20 selection:text-primary;
+  }
+
+  /* Typography - Tech Look */
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight font-semibold;
+  }
+}
+
+@layer components {
+  /* Glassmorphism System */
+
+  /* Base Glass */
+  .glass {
+    @apply bg-black/5 dark:bg-white/5 backdrop-blur-md border border-black/10 dark:border-white/10 shadow-lg;
+  }
+
+  /* Heavy Glass (for modals/sidebars) */
+  .glass-heavy {
+    @apply bg-white/80 dark:bg-[#0f172a]/80 backdrop-blur-xl border-r border-black/5 dark:border-white/5;
+  }
+
+  /* Hover Glass (for interactive cards) */
+  .glass-hover {
+    @apply hover:bg-black/5 dark:hover:bg-white/10 hover:border-primary/50 transition-all duration-300;
+  }
+
+  /* Input Glass */
+  .glass-input {
+    @apply bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10 focus:border-primary/50 focus:ring-primary/20 backdrop-blur-sm;
+  }
+
+  /* Panel Glass */
+  .glass-panel {
+    @apply bg-card/40 backdrop-blur-md border border-black/5 dark:border-white/5;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary;
+  }
+  
+  .border-gradient {
+    @apply border-transparent bg-gradient-to-r from-primary to-secondary;
+  }
+
+  .glow-sm {
+    box-shadow: 0 0 10px -2px theme('colors.primary.DEFAULT');
+  }
+  
+  .glow-md {
+    box-shadow: 0 0 20px -4px theme('colors.primary.DEFAULT');
+  }
+}

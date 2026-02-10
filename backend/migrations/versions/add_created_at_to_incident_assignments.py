@@ -15,14 +15,26 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table, column):
+    """Check if a column already exists in a table."""
+    conn = op.get_bind()
+    result = conn.execute(sa.text(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = :table AND column_name = :column"
+    ), {"table": table, "column": column})
+    return result.fetchone() is not None
+
+
 def upgrade():
-    op.add_column('incident_assignments', sa.Column(
-        'created_at',
-        sa.DateTime(timezone=True),
-        server_default=sa.func.now(),
-        nullable=True
-    ))
+    if not _column_exists('incident_assignments', 'created_at'):
+        op.add_column('incident_assignments', sa.Column(
+            'created_at',
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=True
+        ))
 
 
 def downgrade():
-    op.drop_column('incident_assignments', 'created_at')
+    if _column_exists('incident_assignments', 'created_at'):
+        op.drop_column('incident_assignments', 'created_at')

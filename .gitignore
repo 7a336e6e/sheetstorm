@@ -48,5 +48,8 @@ artifacts/
 # Docker
 docker-compose.override.yml
 
+# Persistent data (database, redis)
+data/
+
 # Agent related stuff
 tasks.md

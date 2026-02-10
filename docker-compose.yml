@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-sheetstorm}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
@@ -24,7 +24,7 @@ services:
     container_name: sheetstorm-redis
     command: redis-server --appendonly yes
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -121,6 +121,4 @@ services:
       retries: 3
     restart: unless-stopped
 
-volumes:
-  postgres_data:
-  redis_data:
+

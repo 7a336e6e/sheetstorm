@@ -5,6 +5,9 @@ echo "==================================="
 echo "SheetStorm - Incident Response Platform"
 echo "==================================="
 
+# Ensure persistent data directories exist
+mkdir -p data/postgres data/redis
+
 # Check for .env file
 if [ ! -f .env ]; then
     echo "Creating .env from .env.example..."

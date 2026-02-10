@@ -16,8 +16,44 @@ socketio = SocketIO()
 
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+
+
+def _get_rate_limit_key():
+    """Get a per-user rate limit key.
+    
+    For authenticated requests, use the JWT user ID so each user has their own
+    rate-limit bucket. For unauthenticated requests (login, register), fall back
+    to the real client IP extracted from X-Forwarded-For / X-Real-IP headers
+    (set by the nginx reverse proxy). This prevents the proxy's internal IP from
+    being used as a shared key for all users.
+    """
+    from flask import request
+
+    # For authenticated users, key by user ID
+    try:
+        from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+        verify_jwt_in_request(optional=True)
+        identity = get_jwt_identity()
+        if identity:
+            return f"user:{identity}"
+    except Exception:
+        pass
+
+    # Fall back to real client IP behind proxy
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        # X-Forwarded-For can be "client, proxy1, proxy2" — take the first
+        return forwarded_for.split(',')[0].strip()
+
+    real_ip = request.headers.get('X-Real-IP')
+    if real_ip:
+        return real_ip
+
+    return get_remote_address()
+
+
 limiter = Limiter(
-    key_func=get_remote_address,
+    key_func=_get_rate_limit_key,
     default_limits=["200 per day", "50 per hour"],
     storage_uri=os.getenv('REDIS_URL', 'memory://'),
 )

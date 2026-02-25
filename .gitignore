@@ -53,3 +53,4 @@ data/
 
 # Agent related stuff
 tasks.md
+mcp-server/.venv/

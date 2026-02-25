@@ -28,6 +28,7 @@ import {
   Bug,
   Skull,
   ShieldOff,
+  Shield,
   Loader2,
   AlertTriangle,
   CheckCircle,
@@ -36,9 +37,13 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Send,
+  Plus,
+  Trash2,
 } from 'lucide-react'
+import { useToast } from '@/components/ui/use-toast'
 
-type LookupTab = 'cve' | 'ip' | 'domain' | 'email' | 'hash' | 'ransomware' | 'defang'
+type LookupTab = 'cve' | 'ip' | 'domain' | 'email' | 'hash' | 'ransomware' | 'defang' | 'refang' | 'misp'
 
 const TABS: { id: LookupTab; label: string; icon: React.ElementType; placeholder: string }[] = [
   { id: 'cve', label: 'CVE Lookup', icon: Bug, placeholder: 'CVE-2024-1234' },
@@ -48,17 +53,52 @@ const TABS: { id: LookupTab; label: string; icon: React.ElementType; placeholder
   { id: 'hash', label: 'File Hash', icon: Hash, placeholder: 'SHA256 / MD5 / SHA1' },
   { id: 'ransomware', label: 'Ransomware', icon: Skull, placeholder: 'Company name' },
   { id: 'defang', label: 'Defang IOC', icon: ShieldOff, placeholder: 'evil.com or http://evil.com/path' },
+  { id: 'refang', label: 'Refang IOC', icon: Shield, placeholder: 'evil[.]com or hxxp://evil[.]com/path' },
+  { id: 'misp', label: 'MISP Push', icon: Send, placeholder: '' },
 ]
 
-type LookupResult = CVEResult | IPReputationResult | DomainReputationResult | EmailReputationResult | RansomwareVictimResult | VirusTotalResult | DefangResult
+interface RefangResult {
+  items?: { defanged: string; original: string }[]
+  defanged?: string
+  original?: string
+}
+
+interface MISPPushResult {
+  event_id?: string
+  message?: string
+  attributes_added?: number
+}
+
+type LookupResult = CVEResult | IPReputationResult | DomainReputationResult | EmailReputationResult | RansomwareVictimResult | VirusTotalResult | DefangResult | RefangResult | MISPPushResult
+
+const MISP_IOC_TYPES = [
+  { value: 'ip-dst', label: 'IP (Destination)' },
+  { value: 'ip-src', label: 'IP (Source)' },
+  { value: 'domain', label: 'Domain' },
+  { value: 'hostname', label: 'Hostname' },
+  { value: 'url', label: 'URL' },
+  { value: 'md5', label: 'MD5 Hash' },
+  { value: 'sha1', label: 'SHA1 Hash' },
+  { value: 'sha256', label: 'SHA256 Hash' },
+  { value: 'email-src', label: 'Email (Sender)' },
+  { value: 'filename', label: 'Filename' },
+  { value: 'mutex', label: 'Mutex' },
+  { value: 'regkey', label: 'Registry Key' },
+]
 
 export default function ThreatIntelPage() {
+  const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<LookupTab>('cve')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<LookupResult | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // MISP Push state
+  const [mispIocs, setMispIocs] = useState<{ type: string; value: string; comment: string }[]>([{ type: 'ip-dst', value: '', comment: '' }])
+  const [mispEventInfo, setMispEventInfo] = useState('')
+  const [mispPushing, setMispPushing] = useState(false)
 
   const currentTab = TABS.find(t => t.id === activeTab)!
 
@@ -92,6 +132,12 @@ export default function ThreatIntelPage() {
         case 'defang':
           data = await api.post<DefangResult>('/tools/defang', { values: [query.trim()] })
           break
+        case 'refang':
+          data = await api.post<RefangResult>('/tools/refang', { values: [query.trim()] })
+          break
+        case 'misp':
+          // MISP uses its own handler
+          return
       }
       if (data) setResult(data)
     } catch (err: unknown) {
@@ -105,6 +151,40 @@ export default function ThreatIntelPage() {
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleMispPush = async () => {
+    const validIocs = mispIocs.filter(i => i.value.trim())
+    if (validIocs.length === 0) return
+
+    setMispPushing(true)
+    setError('')
+    setResult(null)
+
+    try {
+      const data = await api.post<MISPPushResult>('/threat-intel/misp/push', {
+        iocs: validIocs.map(i => ({ type: i.type, value: i.value.trim(), comment: i.comment.trim() || undefined })),
+        event_info: mispEventInfo.trim() || undefined,
+      })
+      setResult(data)
+      toast({ title: 'MISP Push Successful', description: `${validIocs.length} IOC(s) pushed to MISP.` })
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'MISP push failed')
+    } finally {
+      setMispPushing(false)
+    }
+  }
+
+  const addMispIocRow = () => {
+    setMispIocs([...mispIocs, { type: 'ip-dst', value: '', comment: '' }])
+  }
+
+  const removeMispIocRow = (index: number) => {
+    setMispIocs(mispIocs.filter((_, i) => i !== index))
+  }
+
+  const updateMispIoc = (index: number, field: string, value: string) => {
+    setMispIocs(mispIocs.map((ioc, i) => i === index ? { ...ioc, [field]: value } : ioc))
   }
 
   return (
@@ -135,24 +215,88 @@ export default function ThreatIntelPage() {
         ))}
       </div>
 
-      {/* Search Input */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleLookup()}
-            placeholder={currentTab.placeholder}
-            className="w-full pl-9 pr-4 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          />
+      {/* Search Input — hidden for MISP Push */}
+      {activeTab !== 'misp' && (
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLookup()}
+              placeholder={currentTab.placeholder}
+              className="w-full pl-9 pr-4 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button onClick={handleLookup} disabled={loading || !query.trim()}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Search className="h-4 w-4 mr-1" />}
+            Lookup
+          </Button>
         </div>
-        <Button onClick={handleLookup} disabled={loading || !query.trim()}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Search className="h-4 w-4 mr-1" />}
-          Lookup
-        </Button>
-      </div>
+      )}
+
+      {/* MISP Push Form */}
+      {activeTab === 'misp' && (
+        <div className="border border-border rounded-lg bg-card p-4 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-foreground">Event Title (optional)</label>
+            <input
+              type="text"
+              value={mispEventInfo}
+              onChange={e => setMispEventInfo(e.target.value)}
+              placeholder="MISP event title, e.g. Incident #123 IOCs"
+              className="w-full mt-1 px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-foreground">IOC Attributes</label>
+              <Button variant="outline" size="sm" onClick={addMispIocRow}>
+                <Plus className="h-3 w-3 mr-1" /> Add Row
+              </Button>
+            </div>
+            {mispIocs.map((ioc, i) => (
+              <div key={i} className="flex gap-2 items-start">
+                <select
+                  value={ioc.type}
+                  onChange={e => updateMispIoc(i, 'type', e.target.value)}
+                  className="px-2 py-2 rounded-md border border-border bg-background text-sm w-40 shrink-0"
+                >
+                  {MISP_IOC_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={ioc.value}
+                  onChange={e => updateMispIoc(i, 'value', e.target.value)}
+                  placeholder="IOC value"
+                  className="flex-1 px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <input
+                  type="text"
+                  value={ioc.comment}
+                  onChange={e => updateMispIoc(i, 'comment', e.target.value)}
+                  placeholder="Comment"
+                  className="flex-1 px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                {mispIocs.length > 1 && (
+                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive shrink-0 mt-0.5" onClick={() => removeMispIocRow(i)}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <Button onClick={handleMispPush} disabled={mispPushing || mispIocs.every(i => !i.value.trim())}>
+            {mispPushing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+            Push to MISP
+          </Button>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -172,6 +316,8 @@ export default function ThreatIntelPage() {
           {activeTab === 'hash' && <HashResultCard data={result as VirusTotalResult} />}
           {activeTab === 'ransomware' && <RansomwareResultCard data={result as RansomwareVictimResult} />}
           {activeTab === 'defang' && <DefangResultCard data={result as DefangResult} onCopy={copyToClipboard} copied={copied} />}
+          {activeTab === 'refang' && <RefangResultCard data={result as RefangResult} onCopy={copyToClipboard} copied={copied} />}
+          {activeTab === 'misp' && <MISPResultCard data={result as MISPPushResult} />}
         </div>
       )}
 
@@ -565,6 +711,68 @@ function DefangResultCard({ data, onCopy, copied }: { data: DefangResult; onCopy
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+/* -- Refang -- */
+function RefangResultCard({ data, onCopy, copied }: { data: RefangResult; onCopy: (s: string) => void; copied: boolean }) {
+  const items = data.items || (data.original ? [{ defanged: data.defanged || '', original: data.original }] : [])
+
+  return (
+    <div className="divide-y divide-border">
+      <div className="p-4 flex items-center gap-2">
+        <Shield className="h-5 w-5 text-muted-foreground" />
+        <span className="font-semibold">Refanged IOC</span>
+      </div>
+      {items.map((item, i) => (
+        <div key={i} className="p-4 space-y-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Defanged Input</p>
+              <code className="text-sm bg-muted px-2 py-1 rounded break-all">{item.defanged}</code>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Original (Active)</p>
+              <div className="flex items-center gap-2">
+                <code className="text-sm bg-muted px-2 py-1 rounded break-all flex-1">{item.original}</code>
+                <Button variant="ghost" size="icon-sm" onClick={() => onCopy(item.original)}>
+                  {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* -- MISP Push -- */
+function MISPResultCard({ data }: { data: MISPPushResult }) {
+  return (
+    <div className="divide-y divide-border">
+      <div className="p-4 flex items-center gap-2">
+        <Send className="h-5 w-5 text-muted-foreground" />
+        <span className="font-semibold">MISP Push Result</span>
+      </div>
+      <div className="p-4 space-y-2">
+        <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+          <CheckCircle className="h-4 w-4" /> {data.message || 'IOCs pushed successfully'}
+        </div>
+        {data.event_id && (
+          <div className="text-sm">
+            <span className="text-muted-foreground">MISP Event ID: </span>
+            <span className="font-mono font-medium">{data.event_id}</span>
+          </div>
+        )}
+        {data.attributes_added !== undefined && (
+          <div className="text-sm">
+            <span className="text-muted-foreground">Attributes added: </span>
+            <span className="font-medium">{data.attributes_added}</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

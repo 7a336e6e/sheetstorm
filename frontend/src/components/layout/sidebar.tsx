@@ -180,19 +180,24 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           "flex items-center mb-3",
           collapsed && "justify-center"
         )}>
-          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
+          <Link
+            href="/dashboard/profile"
+            onClick={onNavigate}
+            className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium hover:ring-2 hover:ring-primary/50 transition-all"
+            title="View profile"
+          >
             {user?.name?.charAt(0).toUpperCase() || 'U'}
-          </div>
+          </Link>
           {!collapsed && (
             <>
-              <div className="ml-3 flex-1 min-w-0">
+              <Link href="/dashboard/profile" onClick={onNavigate} className="ml-3 flex-1 min-w-0 hover:opacity-80 transition-opacity">
                 <p className="text-sm font-medium truncate">
                   {user?.name || 'User'}
                 </p>
                 <p className="text-xs text-muted-foreground truncate">
                   {user?.roles?.[0] || 'Viewer'}
                 </p>
-              </div>
+              </Link>
               <div className="flex items-center gap-1">
                 <ThemeToggle />
                 <Button

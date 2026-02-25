@@ -46,9 +46,23 @@ import {
     AlertTriangle,
     Server,
     Tag,
-    Edit2
+    Edit2,
+    ShieldAlert,
+    Loader2,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { useToast } from '@/components/ui/use-toast'
+
+const ARTIFACT_TYPES = [
+    { value: 'file', label: 'File' },
+    { value: 'registry', label: 'Registry Key' },
+    { value: 'process', label: 'Process' },
+    { value: 'service', label: 'Service' },
+    { value: 'scheduled_task', label: 'Scheduled Task' },
+    { value: 'user_account', label: 'User Account' },
+    { value: 'log_entry', label: 'Log Entry' },
+    { value: 'other', label: 'Other' },
+]
 
 interface EventsTableProps {
     incidentId: string
@@ -56,6 +70,7 @@ interface EventsTableProps {
 
 export function EventsTable({ incidentId }: EventsTableProps) {
     const confirm = useConfirm()
+    const { toast } = useToast()
     const [events, setEvents] = useState<TimelineEvent[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [search, setSearch] = useState('')
@@ -63,6 +78,12 @@ export function EventsTable({ incidentId }: EventsTableProps) {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [hosts, setHosts] = useState<CompromisedHost[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
+
+    // Mark as IOC dialog state
+    const [showIocModal, setShowIocModal] = useState(false)
+    const [iocEvent, setIocEvent] = useState<TimelineEvent | null>(null)
+    const [iocForm, setIocForm] = useState({ artifact_type: 'other', notes: '', is_malicious: true })
+    const [iocSubmitting, setIocSubmitting] = useState(false)
 
     const [form, setForm] = useState({
         timestamp: '',
@@ -175,6 +196,32 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         }
     }
 
+    const handleOpenMarkAsIOC = (event: TimelineEvent) => {
+        setIocEvent(event)
+        setIocForm({ artifact_type: 'other', notes: '', is_malicious: true })
+        setShowIocModal(true)
+    }
+
+    const handleMarkAsIOC = async () => {
+        if (!iocEvent) return
+        setIocSubmitting(true)
+        try {
+            await api.post(`/incidents/${incidentId}/timeline/${iocEvent.id}/mark-as-ioc`, {
+                artifact_type: iocForm.artifact_type,
+                notes: iocForm.notes || undefined,
+                is_malicious: iocForm.is_malicious,
+            })
+            toast({ title: 'IOC Created', description: `Event marked as IOC and host-based indicator created.` })
+            setShowIocModal(false)
+            setIocEvent(null)
+            loadData()
+        } catch (error: any) {
+            toast({ title: 'Error', description: error?.message || 'Failed to mark as IOC', variant: 'destructive' })
+        } finally {
+            setIocSubmitting(false)
+        }
+    }
+
     const resetForm = () => {
         setForm({
             timestamp: '',
@@ -260,10 +307,15 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-1">
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleEditClick(event)}>
+                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleEditClick(event)} title="Edit event">
                                                         <Edit2 className="w-4 h-4" />
                                                     </Button>
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(event.id)}>
+                                                    {!event.is_ioc && (
+                                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-400" onClick={() => handleOpenMarkAsIOC(event)} title="Mark as IOC & create indicator">
+                                                            <ShieldAlert className="w-4 h-4" />
+                                                        </Button>
+                                                    )}
+                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(event.id)} title="Delete event">
                                                         <Trash2 className="w-4 h-4" />
                                                     </Button>
                                                 </div>
@@ -334,6 +386,65 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button>
                         <Button onClick={handleAddEvent} loading={isSubmitting}>Save</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Mark as IOC Dialog */}
+            <Dialog open={showIocModal} onOpenChange={setShowIocModal}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Mark Event as IOC</DialogTitle>
+                        <DialogDescription>
+                            This will flag the event as an IOC and create a host-based indicator record.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogBody className="space-y-4">
+                        {iocEvent && (
+                            <div className="p-3 rounded-md bg-muted/50 text-sm">
+                                <p className="font-medium truncate">{iocEvent.activity}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {formatDateTime(iocEvent.timestamp)}
+                                    {iocEvent.hostname && ` · ${iocEvent.hostname}`}
+                                </p>
+                            </div>
+                        )}
+                        <div className="space-y-2">
+                            <Label>Artifact Type</Label>
+                            <Select value={iocForm.artifact_type} onValueChange={v => setIocForm({ ...iocForm, artifact_type: v })}>
+                                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {ARTIFACT_TYPES.map(t => (
+                                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Notes (optional)</Label>
+                            <Textarea
+                                value={iocForm.notes}
+                                onChange={e => setIocForm({ ...iocForm, notes: e.target.value })}
+                                placeholder="Additional context about this indicator..."
+                                variant="glass"
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={iocForm.is_malicious}
+                                onChange={e => setIocForm({ ...iocForm, is_malicious: e.target.checked })}
+                                className="rounded bg-white/10 border-white/20"
+                            />
+                            <Label>Confirmed malicious</Label>
+                        </div>
+                    </DialogBody>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowIocModal(false)}>Cancel</Button>
+                        <Button onClick={handleMarkAsIOC} disabled={iocSubmitting}>
+                            {iocSubmitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                            Create IOC
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

@@ -74,6 +74,10 @@ import {
   FileText,
   Download,
   Loader2,
+  MessageSquare,
+  Trash2,
+  MoreVertical,
+  Send,
 } from 'lucide-react'
 
 // Import new Tab Components
@@ -85,6 +89,8 @@ import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
 import { EventsTable } from '@/components/incidents/EventsTable'
 import { IOCVisualTimeline } from '@/components/incidents/IOCVisualTimeline'
 
+import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
+import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
 
@@ -236,6 +242,7 @@ export default function IncidentDetailPage() {
   const [showHostModal, setShowHostModal] = useState(false)
   const [editingHost, setEditingHost] = useState<CompromisedHost | null>(null)
   const [showTaskModal, setShowTaskModal] = useState(false)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [showImportModal, setShowImportModal] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -420,6 +427,7 @@ export default function IncidentDetailPage() {
   }
 
   const handleOpenTaskModal = () => {
+    setEditingTask(null)
     setTaskForm({
       title: '',
       description: '',
@@ -473,6 +481,116 @@ export default function IncidentDetailPage() {
       console.error('Failed to add task:', error)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleEditTask = async () => {
+    if (!editingTask || !taskForm.title) return
+    setIsSubmitting(true)
+    try {
+      const payload = {
+        title: taskForm.title,
+        description: taskForm.description,
+        priority: taskForm.priority,
+        assignee_id: taskForm.assignee_id || null,
+        due_date: taskForm.due_date || null,
+        phase: taskForm.phase ? parseInt(taskForm.phase) : null,
+        extra_data: {
+          linked_entities: taskForm.linked_entities.length > 0 ? taskForm.linked_entities : undefined,
+        },
+      }
+      await api.put(`/incidents/${incidentId}/tasks/${editingTask.id}`, payload)
+      const tasksRes = await api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`)
+      setTasks(tasksRes.items || [])
+      setShowTaskModal(false)
+      setEditingTask(null)
+    } catch (error) {
+      console.error('Failed to update task:', error)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await api.delete(`/incidents/${incidentId}/tasks/${taskId}`)
+      setTasks(tasks.filter(t => t.id !== taskId))
+    } catch (error) {
+      console.error('Failed to delete task:', error)
+    }
+  }
+
+  const handleToggleTaskStatus = async (task: Task) => {
+    const nextStatus = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed'
+    try {
+      await api.put(`/incidents/${incidentId}/tasks/${task.id}`, { status: nextStatus })
+      setTasks(tasks.map(t => t.id === task.id ? { ...t, status: nextStatus } : t))
+    } catch (error) {
+      console.error('Failed to toggle task status:', error)
+    }
+  }
+
+  const handleOpenEditTask = (task: Task) => {
+    setEditingTask(task)
+    setTaskForm({
+      title: task.title,
+      description: task.description || '',
+      priority: task.priority,
+      assignee_id: task.assignee?.id || '',
+      due_date: task.due_date || '',
+      phase: task.phase?.toString() || '',
+      linked_entities: task.extra_data?.linked_entities || [],
+    })
+    setLinkEntityType('')
+    loadTaskEntityData()
+    setShowTaskModal(true)
+  }
+
+  const [taskComments, setTaskComments] = useState<Record<string, any[]>>({})
+  const [expandedTaskComments, setExpandedTaskComments] = useState<string | null>(null)
+  const [newComment, setNewComment] = useState('')
+  const [isAddingComment, setIsAddingComment] = useState(false)
+
+  const handleToggleComments = async (taskId: string) => {
+    if (expandedTaskComments === taskId) {
+      setExpandedTaskComments(null)
+      return
+    }
+    setExpandedTaskComments(taskId)
+    if (!taskComments[taskId]) {
+      try {
+        const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
+        setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
+      } catch (error) {
+        console.error('Failed to load comments:', error)
+      }
+    }
+  }
+
+  const handleAddComment = async (taskId: string) => {
+    if (!newComment.trim()) return
+    setIsAddingComment(true)
+    try {
+      await api.post(`/incidents/${incidentId}/tasks/${taskId}/comments`, { content: newComment })
+      const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
+      setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
+      setNewComment('')
+    } catch (error) {
+      console.error('Failed to add comment:', error)
+    } finally {
+      setIsAddingComment(false)
+    }
+  }
+
+  const handleDeleteComment = async (taskId: string, commentId: string) => {
+    try {
+      await api.delete(`/incidents/${incidentId}/tasks/${taskId}/comments/${commentId}`)
+      setTaskComments(prev => ({
+        ...prev,
+        [taskId]: (prev[taskId] || []).filter(c => c.id !== commentId),
+      }))
+    } catch (error) {
+      console.error('Failed to delete comment:', error)
     }
   }
 
@@ -690,6 +808,9 @@ export default function IncidentDetailPage() {
             <TabsTrigger variant="underline" value="artifacts" className="gap-2">
               <FileText className="h-4 w-4" /> Artifacts
             </TabsTrigger>
+            <TabsTrigger variant="underline" value="notes" className="gap-2">
+              <MessageSquare className="h-4 w-4" /> Notes
+            </TabsTrigger>
           </TabsList>
 
           {/* Overview TabContent */}
@@ -759,6 +880,8 @@ export default function IncidentDetailPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                <AssignmentsPanel incidentId={incidentId} />
               </div>
             </div>
           </TabsContent>
@@ -847,49 +970,119 @@ export default function IncidentDetailPage() {
                         medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
                         low: 'bg-green-500/20 text-green-400 border-green-500/30',
                       }
+                      const statusInfo: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+                        pending: { icon: <Circle className="w-5 h-5" />, color: 'text-muted-foreground', label: 'Pending' },
+                        in_progress: { icon: <Clock className="w-5 h-5" />, color: 'text-blue-400', label: 'In Progress' },
+                        completed: { icon: <CheckCircle2 className="w-5 h-5" />, color: 'text-green-400', label: 'Completed' },
+                      }
                       const entityIcons: Record<string, React.ReactNode> = {
                         host: <Server className="w-3 h-3" />,
                         account: <Key className="w-3 h-3" />,
                         malware: <Bug className="w-3 h-3" />,
                         host_indicator: <Fingerprint className="w-3 h-3" />,
                       }
+                      const st = statusInfo[task.status] || statusInfo.pending
+                      const isExpanded = expandedTaskComments === task.id
+                      const comments = taskComments[task.id] || []
                       return (
-                        <div key={task.id} className="rounded-xl bg-white/5 border border-white/10 p-4 flex gap-4">
-                          <div className={`mt-0.5 ${task.status === 'completed' ? 'text-green-400' : 'text-muted-foreground'}`}>
-                            {task.status === 'completed' ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{task.title}</h4>
-                              <Badge className={`${priorityColors[task.priority] || ''} border text-[10px] px-1.5 py-0`}>
-                                {task.priority}
-                              </Badge>
-                            </div>
-                            {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                            <div className="flex items-center gap-3 mt-2 flex-wrap">
-                              {task.assignee && (
-                                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                  <User className="w-3 h-3" /> {task.assignee.name}
-                                </span>
-                              )}
-                              {task.due_date && (
-                                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                  <Calendar className="w-3 h-3" /> {formatDateTime(task.due_date)}
-                                </span>
-                              )}
-                            </div>
-                            {linkedEntities && linkedEntities.length > 0 && (
-                              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                                <Link2 className="w-3 h-3 text-muted-foreground" />
-                                {linkedEntities.map((entity) => (
-                                  <span key={entity.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                                    {entityIcons[entity.type] || null}
-                                    {entity.label}
-                                  </span>
-                                ))}
+                        <div key={task.id} className="rounded-xl bg-white/5 border border-white/10 p-4">
+                          <div className="flex gap-4">
+                            <button
+                              onClick={() => handleToggleTaskStatus(task)}
+                              className={`mt-0.5 ${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
+                              title={`Status: ${st.label} — Click to change`}
+                            >
+                              {st.icon}
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{task.title}</h4>
+                                <Badge className={`${priorityColors[task.priority] || ''} border text-[10px] px-1.5 py-0`}>
+                                  {task.priority}
+                                </Badge>
+                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${st.color}`}>
+                                  {st.label}
+                                </Badge>
                               </div>
-                            )}
+                              {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
+                              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                                {task.assignee && (
+                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <User className="w-3 h-3" /> {task.assignee.name}
+                                  </span>
+                                )}
+                                {task.due_date && (
+                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" /> {formatDateTime(task.due_date)}
+                                  </span>
+                                )}
+                              </div>
+                              {linkedEntities && linkedEntities.length > 0 && (
+                                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                  <Link2 className="w-3 h-3 text-muted-foreground" />
+                                  {linkedEntities.map((entity) => (
+                                    <span key={entity.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                                      {entityIcons[entity.type] || null}
+                                      {entity.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-start gap-1 flex-shrink-0">
+                              <Button variant="ghost" size="sm" onClick={() => handleToggleComments(task.id)} title="Comments">
+                                <MessageSquare className="h-4 w-4" />
+                                {comments.length > 0 && <span className="ml-1 text-xs">{comments.length}</span>}
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleOpenEditTask(task)} title="Edit">
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDeleteTask(task.id)} className="text-red-400 hover:text-red-300" title="Delete">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
+                          {/* Expandable Comments */}
+                          {isExpanded && (
+                            <div className="mt-3 pt-3 border-t border-white/10 ml-9">
+                              {comments.length === 0 ? (
+                                <p className="text-xs text-muted-foreground mb-2">No comments yet</p>
+                              ) : (
+                                <div className="space-y-2 mb-3">
+                                  {comments.map((comment: any) => (
+                                    <div key={comment.id} className="flex items-start gap-2 text-sm">
+                                      <div className="w-6 h-6 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-[10px] font-medium flex-shrink-0">
+                                        {comment.author?.name?.charAt(0) || '?'}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-medium text-foreground">{comment.author?.name || 'Unknown'}</span>
+                                          <span className="text-[10px] text-muted-foreground">{formatRelativeTime(comment.created_at)}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-0.5">{comment.content}</p>
+                                      </div>
+                                      <Button variant="ghost" size="sm" onClick={() => handleDeleteComment(task.id, comment.id)} className="h-6 w-6 p-0 text-red-400 hover:text-red-300">
+                                        <X className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  placeholder="Add a comment..."
+                                  value={newComment}
+                                  onChange={e => setNewComment(e.target.value)}
+                                  variant="glass"
+                                  className="text-xs h-8"
+                                  onKeyDown={e => { if (e.key === 'Enter') handleAddComment(task.id) }}
+                                />
+                                <Button size="sm" onClick={() => handleAddComment(task.id)} disabled={isAddingComment || !newComment.trim()} className="h-8">
+                                  <Send className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -930,6 +1123,10 @@ export default function IncidentDetailPage() {
 
           <TabsContent value="artifacts">
             <ArtifactsTab incidentId={incidentId} />
+          </TabsContent>
+
+          <TabsContent value="notes">
+            <CaseNotesTab incidentId={incidentId} />
           </TabsContent>
 
         </Tabs>
@@ -1047,12 +1244,12 @@ export default function IncidentDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Task Modal */}
-      <Dialog open={showTaskModal} onOpenChange={setShowTaskModal}>
+      {/* Add/Edit Task Modal */}
+      <Dialog open={showTaskModal} onOpenChange={(open) => { if (!open) { setShowTaskModal(false); setEditingTask(null) } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add Task</DialogTitle>
-            <DialogDescription>Create a response task and link it to incident entities</DialogDescription>
+            <DialogTitle>{editingTask ? 'Edit Task' : 'Add Task'}</DialogTitle>
+            <DialogDescription>{editingTask ? 'Update this response task' : 'Create a response task and link it to incident entities'}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2">
@@ -1187,8 +1384,8 @@ export default function IncidentDetailPage() {
             </div>
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowTaskModal(false)}>Cancel</Button>
-            <Button onClick={handleAddTask} loading={isSubmitting}>Add Task</Button>
+            <Button variant="outline" onClick={() => { setShowTaskModal(false); setEditingTask(null) }}>Cancel</Button>
+            <Button onClick={editingTask ? handleEditTask : handleAddTask} loading={isSubmitting}>{editingTask ? 'Update Task' : 'Add Task'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

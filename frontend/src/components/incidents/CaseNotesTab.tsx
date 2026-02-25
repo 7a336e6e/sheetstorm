@@ -187,7 +187,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
 
   const canEdit = (note: CaseNote) => {
     if (!user) return false
-    return note.author?.id === user.id || user.role === 'admin'
+    return note.author?.id === user.id || user.roles?.includes('admin')
   }
 
   if (isLoading) {

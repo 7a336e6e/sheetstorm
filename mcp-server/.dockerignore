@@ -1,0 +1,38 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Test & dev files
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

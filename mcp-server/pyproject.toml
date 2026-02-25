@@ -18,8 +18,19 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
+    "Framework :: FastAPI",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/7a336e6e/sheetstorm"
+Repository = "https://github.com/7a336e6e/sheetstorm/tree/main/mcp-server"
+Issues = "https://github.com/7a336e6e/sheetstorm/issues"
+Documentation = "https://github.com/7a336e6e/sheetstorm/blob/main/mcp-server/README.md"
 dependencies = [
     "mcp[cli]>=1.2.0",
     "httpx>=0.27.0",

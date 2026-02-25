@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import {
   User as UserIcon,
   Mail,
@@ -137,7 +136,7 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            <Separator />
+            <div className="border-t border-border" />
 
             <div className="space-y-3">
               <div className="flex items-center gap-3 text-sm">

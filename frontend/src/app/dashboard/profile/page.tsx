@@ -154,7 +154,7 @@ export default function ProfilePage() {
                 <span className="text-muted-foreground w-24">Roles</span>
                 <div className="flex flex-wrap gap-1">
                   {user?.roles?.map((role) => (
-                    <Badge key={role} variant="secondary" className="text-xs">
+                    <Badge key={role} variant="default" className="text-xs">
                       {role}
                     </Badge>
                   ))}

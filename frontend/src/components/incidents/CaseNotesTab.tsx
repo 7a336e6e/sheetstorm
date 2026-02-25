@@ -141,7 +141,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
     const ok = await confirm({
       title: 'Delete Case Note',
       description: `Are you sure you want to delete "${note.title}"? This cannot be undone.`,
-      confirmText: 'Delete',
+      confirmLabel: 'Delete',
       variant: 'destructive',
     })
     if (!ok) return

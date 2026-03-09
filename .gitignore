@@ -54,3 +54,5 @@ data/
 # Agent related stuff
 tasks.md
 mcp-server/.venv/
+
+.github/copilot-instructions.md

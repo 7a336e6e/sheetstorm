@@ -18,6 +18,7 @@ class CaseNote(BaseModel):
     content = Column(Text, nullable=False)
     category = Column(String(50), default='general')  # general, finding, question, action_item, handoff
     is_pinned = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False, server_default='false')
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
 

@@ -30,8 +30,10 @@ class Config:
     transport: str = field(default_factory=lambda: os.getenv("MCP_TRANSPORT", "stdio"))
     sse_port: int = field(default_factory=lambda: int(os.getenv("SSE_PORT", os.getenv("MCP_SSE_PORT", "8811"))))
 
-    # Transport-level authentication (bearer token gate)
-    auth_token: str | None = field(default_factory=lambda: os.getenv("MCP_AUTH_TOKEN"))
+    # OAuth — issuer URL that the MCP server advertises in its metadata
+    mcp_issuer_url: str = field(
+        default_factory=lambda: os.getenv("MCP_ISSUER_URL", "http://localhost:8811")
+    )
 
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
@@ -42,7 +44,7 @@ class Config:
 
     @property
     def has_credentials(self) -> bool:
-        """Whether we have credentials for auto-login."""
+        """Whether we have credentials for auto-login (legacy fallback)."""
         return bool(self.api_token) or (bool(self.username) and bool(self.password))
 
 

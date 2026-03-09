@@ -1,5 +1,5 @@
 """Incident model"""
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -30,6 +30,7 @@ class Incident(BaseModel):
     lessons_learned = Column(Text)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    is_deleted = Column(Boolean, default=False, server_default='false')
 
     # Relationships
     organization = relationship('Organization', back_populates='incidents')

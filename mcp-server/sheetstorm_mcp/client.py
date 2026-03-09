@@ -1,10 +1,17 @@
 """Async HTTP client for the SheetStorm backend API.
 
 Handles authentication, token refresh, retries, and typed error propagation.
+
+Per-request authentication
+--------------------------
+When the MCP server runs with OAuth enabled, the ``_request_jwt`` ContextVar
+is set *before* each tool handler executes, allowing the shared client to
+forward the authenticated user's SheetStorm JWT without any tool-code changes.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from typing import Any
 
@@ -13,6 +20,12 @@ import httpx
 from sheetstorm_mcp.config import Config
 
 logger = logging.getLogger("sheetstorm_mcp.client")
+
+# Per-request JWT override — set by ``server.get_client()`` from the OAuth context.
+# Takes precedence over the client's stored ``_access_token``.
+_request_jwt: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "sheetstorm_request_jwt", default=None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +144,16 @@ class SheetStormClient:
             self._refresh_token = None
 
     async def ensure_authenticated(self) -> None:
-        """Auto-login using configured credentials if not authenticated."""
+        """Ensure a usable token exists.
+
+        Precedence:
+        1. Per-request JWT from ``_request_jwt`` ContextVar (OAuth flow)
+        2. Client-level ``_access_token`` (set via ``login()`` or config)
+        3. Auto-login with configured credentials (legacy / fallback)
+        """
+        # OAuth per-request JWT takes priority — nothing to do
+        if _request_jwt.get() is not None:
+            return
         if self.is_authenticated:
             return
         cfg = self._config
@@ -139,7 +161,7 @@ class SheetStormClient:
             await self.login(cfg.username, cfg.password)
         else:
             raise AuthenticationError(
-                "Not authenticated. Call login() or set SHEETSTORM_USERNAME/PASSWORD.",
+                "Not authenticated. Please authenticate via the browser OAuth flow.",
                 status_code=401,
             )
 
@@ -173,7 +195,9 @@ class SheetStormClient:
     async def download(self, path: str) -> bytes:
         """Download binary content."""
         await self.ensure_authenticated()
-        headers = {"Authorization": f"Bearer {self._access_token}"}
+        jwt_override = _request_jwt.get()
+        token = jwt_override or self._access_token
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         resp = await self._http.get(path, headers=headers)
         if resp.status_code >= 400:
             self._raise_for_status(resp)
@@ -195,8 +219,11 @@ class SheetStormClient:
         await self.ensure_authenticated()
 
         headers: dict[str, str] = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
+        # Per-request JWT from OAuth context takes priority
+        jwt_override = _request_jwt.get()
+        token = jwt_override or self._access_token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         try:
             resp = await self._http.request(

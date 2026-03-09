@@ -1,38 +1,13 @@
-"""Authentication & session management tools."""
+"""Authentication & session management tools.
+
+With the OAuth 2.0 flow, login is handled automatically via the browser.
+These tools let the user inspect their session and perform logout/revocation.
+"""
 
 from __future__ import annotations
 
-from sheetstorm_mcp.client import AuthenticationError, SheetStormAPIError
+from sheetstorm_mcp.client import SheetStormAPIError
 from sheetstorm_mcp.server import mcp, get_client
-
-
-@mcp.tool()
-async def sheetstorm_login(username: str, password: str, mfa_code: str | None = None) -> str:
-    """Authenticate with SheetStorm and establish a session.
-
-    Args:
-        username: Email address (e.g. admin@sheetstorm.local)
-        password: Account password
-        mfa_code: Optional TOTP MFA code if MFA is enabled
-    """
-    client = get_client()
-    try:
-        result = client.login(username, password, mfa_code)
-        result = await result
-        if result.get("mfa_required"):
-            return "MFA code required. Please call sheetstorm_login again with the mfa_code parameter."
-
-        user = result.get("user", {})
-        return (
-            f"✓ Logged in as {user.get('first_name', '')} {user.get('last_name', '')} "
-            f"({user.get('email', username)})\n"
-            f"Role: {user.get('role', 'N/A')}\n"
-            f"Organization: {user.get('organization', 'N/A')}"
-        )
-    except AuthenticationError as exc:
-        return f"✗ Login failed: {exc}"
-    except SheetStormAPIError as exc:
-        return f"✗ Error: {exc}"
 
 
 @mcp.tool()

@@ -24,33 +24,33 @@ def main() -> None:
     logger.info("Starting SheetStorm MCP server v%s (transport=%s)", "0.1.0", cfg.transport)
 
     if cfg.transport == "sse":
-        _run_sse_with_auth(cfg, logger)
+        _run_sse_with_oauth(cfg, logger)
     else:
         mcp.run(transport="stdio")
 
 
-def _run_sse_with_auth(cfg, logger) -> None:
-    """Run SSE transport wrapped with bearer-token authentication middleware."""
+def _run_sse_with_oauth(cfg, logger) -> None:
+    """Run SSE transport with OAuth authentication and login routes."""
     import uvicorn
-    from sheetstorm_mcp.auth_middleware import BearerTokenMiddleware
-    from sheetstorm_mcp.server import mcp
+    from starlette.routing import Mount
 
-    # Get the raw Starlette SSE app from FastMCP
+    from sheetstorm_mcp.login_routes import create_login_routes
+    from sheetstorm_mcp.server import mcp, _oauth_provider
+
+    # Get the Starlette SSE app from FastMCP (includes built-in OAuth routes)
     app = mcp.sse_app()
 
-    # Wrap with bearer-token auth gate
-    secured_app = BearerTokenMiddleware(app, token=cfg.auth_token)
+    # Mount the custom login routes alongside the SDK's OAuth routes
+    login_routes = create_login_routes(_oauth_provider)
+    app.routes.extend(login_routes)
 
-    if cfg.auth_token:
-        logger.info("MCP transport authentication ENABLED (MCP_AUTH_TOKEN is set)")
-    else:
-        logger.warning(
-            "MCP transport authentication DISABLED — set MCP_AUTH_TOKEN "
-            "to require bearer token for SSE connections"
-        )
+    logger.info(
+        "MCP OAuth authentication ENABLED — login page at %s/sheetstorm-login",
+        cfg.mcp_issuer_url,
+    )
 
     uvicorn.run(
-        secured_app,
+        app,
         host="0.0.0.0",
         port=cfg.sse_port,
         log_level=cfg.log_level.lower(),

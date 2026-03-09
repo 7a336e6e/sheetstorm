@@ -109,11 +109,9 @@ services:
     container_name: sheetstorm-mcp
     environment:
       SHEETSTORM_API_URL: http://backend:5000/api/v1
-      SHEETSTORM_USERNAME: ${ADMIN_EMAIL:-admin@sheetstorm.local}
-      SHEETSTORM_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       MCP_TRANSPORT: sse
       SSE_PORT: "8811"
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_ISSUER_URL: ${MCP_ISSUER_URL:-http://localhost:8811}
       LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
     ports:
       - "127.0.0.1:8811:8811"

@@ -46,9 +46,9 @@ async def analyze_incident(incident_id: str) -> str:
     for endpoint, target in [
         (f"/incidents/{incident_id}/hosts", "hosts"),
         (f"/incidents/{incident_id}/accounts", "accounts"),
-        (f"/incidents/{incident_id}/iocs/network", "network"),
-        (f"/incidents/{incident_id}/iocs/host", "host"),
-        (f"/incidents/{incident_id}/iocs/malware", "malware"),
+        (f"/incidents/{incident_id}/network-iocs", "network"),
+        (f"/incidents/{incident_id}/host-iocs", "host"),
+        (f"/incidents/{incident_id}/malware", "malware"),
         (f"/incidents/{incident_id}/tasks", "tasks"),
         (f"/incidents/{incident_id}/notes", "notes"),
     ]:
@@ -99,7 +99,7 @@ async def analyze_incident(incident_id: str) -> str:
             mitre = ""
             if e.get("mitre_tactic"):
                 mitre = f" [{e['mitre_tactic']}/{e.get('mitre_technique', '?')}]"
-            parts.append(f"- [{e.get('event_timestamp', '?')}] {e.get('description', '?')}{mitre}")
+            parts.append(f"- [{e.get('timestamp', '?')}] {e.get('activity', '?')}{mitre}")
 
     # IOCs
     total_iocs = len(network_iocs) + len(host_iocs) + len(malware_iocs)
@@ -108,23 +108,23 @@ async def analyze_incident(incident_id: str) -> str:
         if network_iocs:
             parts.append("### Network Indicators")
             for i in network_iocs[:30]:
-                parts.append(f"- [{i.get('indicator_type', '?')}] {i.get('value', '?')} — {i.get('description', '')}")
+                parts.append(f"- {i.get('dns_ip', '?')} | {i.get('protocol', '?')}:{i.get('port', '?')} — {i.get('description', '')}")
         if host_iocs:
             parts.append("### Host-Based Indicators")
             for i in host_iocs[:30]:
-                parts.append(f"- [{i.get('indicator_type', '?')}] {i.get('value', '?')} — {i.get('description', '')}")
+                parts.append(f"- [{i.get('artifact_type', '?')}] {i.get('artifact_value', '?')} — {i.get('notes', '')}")
         if malware_iocs:
             parts.append("### Malware/Tools")
             for m in malware_iocs[:20]:
-                parts.append(f"- {m.get('name', '?')} ({m.get('type', '?')}) — {m.get('description', '')}")
+                parts.append(f"- {m.get('file_name', '?')} ({m.get('malware_family', '?')}) — {m.get('description', '')}")
 
     # Assets
     if hosts or accounts:
         parts.append(f"\n## Compromised Assets ({len(hosts)} hosts, {len(accounts)} accounts)")
         for h in hosts[:30]:
-            parts.append(f"- Host: {h.get('hostname', '?')} ({h.get('ip_address', '?')}) — {h.get('compromise_type', '?')}")
+            parts.append(f"- Host: {h.get('hostname', '?')} ({h.get('ip_address', '?')}) — Status: {h.get('containment_status', '?')}")
         for a in accounts[:30]:
-            parts.append(f"- Account: {a.get('account_name', '?')} ({a.get('account_type', '?')}) — {a.get('compromise_type', '?')}")
+            parts.append(f"- Account: {a.get('account_name', '?')} ({a.get('account_type', '?')}) — Status: {a.get('status', '?')}")
 
     # Tasks
     if tasks:
@@ -182,8 +182,8 @@ async def generate_timeline_summary(incident_id: str) -> str:
             if e.get("mitre_tactic"):
                 mitre = f" | MITRE: {e['mitre_tactic']}/{e.get('mitre_technique', '?')}"
             parts.append(
-                f"- **{e.get('event_timestamp', '?')}** [{e.get('event_type', '?')}] "
-                f"{e.get('description', '?')}{mitre}"
+                f"- **{e.get('timestamp', '?')}** "
+                f"{e.get('activity', '?')}{mitre}"
             )
             if e.get("source"):
                 parts[-1] += f" (source: {e['source']})"
@@ -214,9 +214,9 @@ async def suggest_mitre_mapping(incident_id: str) -> str:
 
     ioc_data = {}
     for endpoint, label in [
-        (f"/incidents/{incident_id}/iocs/network", "network"),
-        (f"/incidents/{incident_id}/iocs/host", "host"),
-        (f"/incidents/{incident_id}/iocs/malware", "malware"),
+        (f"/incidents/{incident_id}/network-iocs", "network"),
+        (f"/incidents/{incident_id}/host-iocs", "host"),
+        (f"/incidents/{incident_id}/malware", "malware"),
     ]:
         try:
             data = await client.get(endpoint)
@@ -242,14 +242,18 @@ async def suggest_mitre_mapping(incident_id: str) -> str:
             existing = ""
             if e.get("mitre_tactic"):
                 existing = f" [EXISTING: {e['mitre_tactic']}/{e.get('mitre_technique', '?')}]"
-            parts.append(f"- [{e.get('event_type', '?')}] {e.get('description', '?')}{existing}")
+            parts.append(f"- {e.get('activity', '?')}{existing}")
 
     for label, items in ioc_data.items():
         if items:
             parts.append(f"\n## {label.title()} IOCs")
             for i in items[:20]:
-                parts.append(f"- [{i.get('indicator_type', i.get('type', '?'))}] "
-                             f"{i.get('value', i.get('name', '?'))}")
+                if label == "network":
+                    parts.append(f"- {i.get('dns_ip', '?')} ({i.get('protocol', '?')}:{i.get('port', '?')})")
+                elif label == "host":
+                    parts.append(f"- [{i.get('artifact_type', '?')}] {i.get('artifact_value', '?')}")
+                else:
+                    parts.append(f"- {i.get('file_name', '?')} ({i.get('malware_family', '?')})")
 
     return "\n".join(parts)
 
@@ -304,8 +308,8 @@ async def identify_lateral_movement(incident_id: str) -> str:
         for h in hosts:
             parts.append(
                 f"- {h.get('hostname', '?')} ({h.get('ip_address', '?')}) — "
-                f"Type: {h.get('compromise_type', '?')} | "
-                f"Method: {h.get('access_method', 'N/A')}"
+                f"OS: {h.get('os_version', '?')} | "
+                f"Status: {h.get('containment_status', 'N/A')}"
             )
 
     if accounts:
@@ -313,18 +317,18 @@ async def identify_lateral_movement(incident_id: str) -> str:
         for a in accounts:
             parts.append(
                 f"- {a.get('account_name', '?')} ({a.get('account_type', '?')}) — "
-                f"Compromise: {a.get('compromise_type', '?')}"
+                f"Status: {a.get('status', '?')}"
             )
 
     if events:
         parts.append(f"\n## Timeline Events ({len(events)} total)")
         for e in events[:50]:
             parts.append(
-                f"- [{e.get('event_timestamp', '?')}] [{e.get('event_type', '?')}] "
-                f"{e.get('description', '?')}"
+                f"- [{e.get('timestamp', '?')}] "
+                f"{e.get('activity', '?')}"
             )
-            if e.get("host_name"):
-                parts[-1] += f" (host: {e['host_name']})"
+            if e.get("hostname"):
+                parts[-1] += f" (host: {e['hostname']})"
 
     return "\n".join(parts)
 
@@ -359,7 +363,7 @@ async def draft_executive_summary(incident_id: str) -> str:
         accounts = a.get("items", a) if isinstance(a, dict) else a
     except SheetStormAPIError:
         pass
-    for ep in ["/iocs/network", "/iocs/host", "/iocs/malware"]:
+    for ep in ["/network-iocs", "/host-iocs", "/malware"]:
         try:
             data = await client.get(f"/incidents/{incident_id}{ep}")
             items = data.get("items", data) if isinstance(data, dict) else data

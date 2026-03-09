@@ -14,13 +14,15 @@ def _format_artifact(a: dict) -> str:
         f"(ID: {a.get('id', 'N/A')})",
         f"  Size: {a.get('file_size', 'N/A')} bytes",
     ]
-    if a.get("md5_hash") or a.get("md5"):
-        parts.append(f"  MD5: {a.get('md5_hash', a.get('md5', 'N/A'))}")
-    if a.get("sha256_hash") or a.get("sha256"):
-        parts.append(f"  SHA256: {a.get('sha256_hash', a.get('sha256', 'N/A'))}")
-    parts.append(f"  Uploaded: {a.get('created_at', a.get('uploaded_at', 'N/A'))}")
+    if a.get("md5"):
+        parts.append(f"  MD5: {a['md5']}")
+    if a.get("sha256"):
+        parts.append(f"  SHA256: {a['sha256']}")
+    parts.append(f"  Uploaded: {a.get('created_at', 'N/A')}")
     if a.get("description"):
         parts.append(f"  Description: {a['description']}")
+    if a.get("is_verified"):
+        parts.append(f"  Verified: {a.get('verification_status', 'Yes')}")
     return "\n".join(parts)
 
 
@@ -91,7 +93,7 @@ async def sheetstorm_verify_artifact(incident_id: str, artifact_id: str) -> str:
         status = "PASS ✓" if result.get("verified") or result.get("match") else "FAIL ✗"
         parts = [f"**Integrity Check**: {status}"]
         if result.get("stored_hash") or result.get("original_sha256"):
-            parts.append(f"  Stored SHA256: {result.get('stored_hash', result.get('original_sha256', 'N/A'))}")
+            parts.append(f"  Stored SHA256: {result.get('stored_hash', result.get('sha256', 'N/A'))}")
         if result.get("computed_hash") or result.get("current_sha256"):
             parts.append(f"  Computed SHA256: {result.get('computed_hash', result.get('current_sha256', 'N/A'))}")
         return "\n".join(parts)
@@ -117,10 +119,12 @@ async def sheetstorm_get_chain_of_custody(incident_id: str, artifact_id: str) ->
 
         lines = [f"**Chain of Custody** ({len(events)} events)\n"]
         for e in events:
+            performer = e.get("performer", {})
+            performer_name = performer.get("name", "Unknown") if isinstance(performer, dict) else str(performer or "Unknown")
             lines.append(
-                f"[{e.get('timestamp', e.get('created_at', 'N/A'))}] "
-                f"**{e.get('action', 'N/A')}** by {e.get('user_name', e.get('performed_by', 'Unknown'))}\n"
-                f"  {e.get('details', e.get('description', 'N/A'))}"
+                f"[{e.get('created_at', 'N/A')}] "
+                f"**{e.get('action', 'N/A')}** by {performer_name}\n"
+                f"  Purpose: {e.get('purpose', 'N/A')}"
             )
         return "\n".join(lines)
     except SheetStormAPIError as exc:

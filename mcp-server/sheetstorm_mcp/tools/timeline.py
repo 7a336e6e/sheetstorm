@@ -10,14 +10,16 @@ from sheetstorm_mcp.server import mcp, get_client
 
 def _format_event(e: dict) -> str:
     """Format a timeline event."""
-    parts = [f"[{e.get('event_timestamp', 'N/A')}] {e.get('description', 'N/A')}"]
-    parts.append(f"  ID: {e.get('id', 'N/A')} | Type: {e.get('event_type', 'N/A')}")
+    parts = [f"[{e.get('timestamp', 'N/A')}] {e.get('activity', 'N/A')}"]
+    parts.append(f"  ID: {e.get('id', 'N/A')} | Phase: {e.get('phase', 'N/A')}")
     if e.get("source"):
         parts.append(f"  Source: {e['source']}")
     if e.get("mitre_tactic"):
         parts.append(f"  MITRE: {e['mitre_tactic']} / {e.get('mitre_technique', 'N/A')}")
-    if e.get("host_name"):
-        parts.append(f"  Host: {e['host_name']}")
+    if e.get("hostname"):
+        parts.append(f"  Host: {e['hostname']}")
+    if e.get("is_key_event"):
+        parts.append("  ★ Key Event")
     return "\n".join(parts)
 
 
@@ -60,11 +62,12 @@ async def sheetstorm_list_timeline_events(
 @mcp.tool()
 async def sheetstorm_create_timeline_event(
     incident_id: str,
-    event_timestamp: str,
-    description: str,
-    event_type: str = "other",
+    timestamp: str,
+    activity: str,
     source: Optional[str] = None,
     host_id: Optional[str] = None,
+    phase: Optional[int] = None,
+    is_key_event: bool = False,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
 ) -> str:
@@ -72,25 +75,29 @@ async def sheetstorm_create_timeline_event(
 
     Args:
         incident_id: UUID of the incident
-        event_timestamp: ISO 8601 datetime (e.g. 2026-02-25T10:30:00Z)
-        description: Event description
-        event_type: Event type (detection, lateral_movement, c2, exfiltration, containment, eradication, recovery, other)
+        timestamp: ISO 8601 datetime (e.g. 2026-02-25T10:30:00Z)
+        activity: Event activity description
         source: Event source (e.g. SIEM, EDR, manual)
         host_id: Optional associated host UUID
+        phase: IR phase (1-6)
+        is_key_event: Mark as key event
         mitre_tactic: Optional MITRE ATT&CK tactic
         mitre_technique: Optional MITRE ATT&CK technique
     """
     client = get_client()
     try:
         payload: dict = {
-            "event_timestamp": event_timestamp,
-            "description": description,
-            "event_type": event_type,
+            "timestamp": timestamp,
+            "activity": activity,
         }
         if source:
             payload["source"] = source
         if host_id:
             payload["host_id"] = host_id
+        if phase is not None:
+            payload["phase"] = phase
+        if is_key_event:
+            payload["is_key_event"] = is_key_event
         if mitre_tactic:
             payload["mitre_tactic"] = mitre_tactic
         if mitre_technique:
@@ -106,10 +113,11 @@ async def sheetstorm_create_timeline_event(
 async def sheetstorm_update_timeline_event(
     incident_id: str,
     event_id: str,
-    event_timestamp: Optional[str] = None,
-    description: Optional[str] = None,
-    event_type: Optional[str] = None,
+    timestamp: Optional[str] = None,
+    activity: Optional[str] = None,
     source: Optional[str] = None,
+    phase: Optional[int] = None,
+    is_key_event: Optional[bool] = None,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
 ) -> str:
@@ -118,10 +126,11 @@ async def sheetstorm_update_timeline_event(
     Args:
         incident_id: UUID of the incident
         event_id: UUID of the timeline event
-        event_timestamp: New ISO 8601 datetime
-        description: New description
-        event_type: New event type
+        timestamp: New ISO 8601 datetime
+        activity: New activity description
         source: New source
+        phase: New IR phase (1-6)
+        is_key_event: Mark/unmark as key event
         mitre_tactic: New MITRE tactic
         mitre_technique: New MITRE technique
     """
@@ -129,10 +138,11 @@ async def sheetstorm_update_timeline_event(
     try:
         payload: dict = {}
         for field, value in [
-            ("event_timestamp", event_timestamp),
-            ("description", description),
-            ("event_type", event_type),
+            ("timestamp", timestamp),
+            ("activity", activity),
             ("source", source),
+            ("phase", phase),
+            ("is_key_event", is_key_event),
             ("mitre_tactic", mitre_tactic),
             ("mitre_technique", mitre_technique),
         ]:
@@ -185,15 +195,18 @@ async def sheetstorm_get_mitre_tactics() -> str:
 
 
 @mcp.tool()
-async def sheetstorm_get_mitre_techniques(tactic: str) -> str:
-    """List MITRE ATT&CK techniques for a given tactic.
+async def sheetstorm_get_mitre_techniques(tactic: Optional[str] = None) -> str:
+    """List MITRE ATT&CK techniques, optionally filtered by tactic.
 
     Args:
-        tactic: MITRE tactic identifier (e.g. 'initial-access', 'execution')
+        tactic: Optional MITRE tactic identifier to filter by (e.g. 'initial-access', 'execution')
     """
     client = get_client()
     try:
-        data = await client.get(f"/mitre/techniques/{tactic}")
+        params: dict = {}
+        if tactic:
+            params["tactic"] = tactic
+        data = await client.get("/mitre/techniques", params=params)
         techniques = data if isinstance(data, list) else data.get("techniques", [])
         if not techniques:
             return f"No techniques found for tactic: {tactic}"

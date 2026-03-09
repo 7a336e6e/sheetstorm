@@ -400,17 +400,4 @@ def sync_supabase_users():
         return jsonify({'error': 'server_error', 'message': 'Failed to sync Supabase users'}), 500
 
 
-@api_bp.route('/users/push-roles-to-supabase', methods=['POST'])
-@jwt_required()
-@require_permission('roles:manage')
-@audit_log('admin_action', 'push_roles_to_supabase', 'user')
-def push_roles_to_supabase_bulk():
-    """Push all local role assignments to Supabase app_metadata.
 
-    One-time migration endpoint: for every user that has a ``supabase_id``,
-    writes their current SheetStorm roles into ``app_metadata.sheetstorm_roles``
-    so that roles survive a full database rebuild.
-    """
-    from app.services.supabase_role_sync import push_all_roles_to_supabase
-    stats = push_all_roles_to_supabase()
-    return jsonify({'message': 'Roles pushed to Supabase', **stats}), 200

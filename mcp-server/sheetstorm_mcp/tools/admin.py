@@ -13,9 +13,11 @@ from sheetstorm_mcp.server import mcp, get_client
 # ---------------------------------------------------------------------------
 
 def _format_user(u: dict) -> str:
+    roles = u.get('roles', [])
+    role_str = ', '.join(roles) if isinstance(roles, list) else str(roles)
     return (
-        f"**{u.get('name', u.get('username', 'Unknown'))}** (ID: {u.get('id', 'N/A')})\n"
-        f"  Email: {u.get('email', 'N/A')} | Role: {u.get('role', 'N/A')}\n"
+        f"**{u.get('name', 'Unknown')}** (ID: {u.get('id', 'N/A')})\n"
+        f"  Email: {u.get('email', 'N/A')} | Roles: {role_str}\n"
         f"  Active: {'Yes' if u.get('is_active', True) else 'No'} | "
         f"MFA: {'Enabled' if u.get('mfa_enabled') else 'Disabled'}"
     )
@@ -149,7 +151,7 @@ async def sheetstorm_list_notifications(unread_only: bool = False) -> str:
 
         lines = [f"**Notifications** ({len(items)})\n"]
         for n in items:
-            read_marker = "  " if n.get("read") or n.get("is_read") else "● "
+            read_marker = "  " if n.get("is_read") else "● "
             lines.append(
                 f"{read_marker}[{n.get('created_at', 'N/A')}] "
                 f"**{n.get('title', n.get('type', 'Notification'))}**\n"

@@ -16,11 +16,13 @@ async def sheetstorm_get_current_user() -> str:
     client = get_client()
     try:
         user = await client.get("/auth/me")
+        roles = user.get('roles', [])
+        role_str = ', '.join(roles) if isinstance(roles, list) else str(roles)
         return (
-            f"User: {user.get('first_name', '')} {user.get('last_name', '')}\n"
+            f"User: {user.get('name', 'N/A')}\n"
             f"Email: {user.get('email', 'N/A')}\n"
-            f"Role: {user.get('role', 'N/A')}\n"
-            f"Organization: {user.get('organization_name', 'N/A')}\n"
+            f"Roles: {role_str}\n"
+            f"Organization: {user.get('organization_id', 'N/A')}\n"
             f"MFA Enabled: {user.get('mfa_enabled', False)}\n"
             f"Permissions: {', '.join(user.get('permissions', []))}"
         )

@@ -14,18 +14,21 @@ from sheetstorm_mcp.server import mcp, get_client
 
 def _format_node(n: dict) -> str:
     label = n.get("label", n.get("name", "Unknown"))
+    host_id = n.get("compromised_host_id", "")
+    acct_id = n.get("compromised_account_id", "")
+    entity = host_id or acct_id or "N/A"
     return (
         f"**{label}** (ID: {n.get('id', 'N/A')})\n"
         f"  Type: {n.get('node_type', 'N/A')} | "
-        f"Entity: {n.get('entity_id', 'N/A')}\n"
-        f"  Position: ({n.get('x', '?')}, {n.get('y', '?')})"
+        f"Entity: {entity}\n"
+        f"  Position: ({n.get('position_x', '?')}, {n.get('position_y', '?')})"
     )
 
 
 def _format_edge(e: dict) -> str:
     return (
         f"**{e.get('label', e.get('edge_type', 'N/A'))}** (ID: {e.get('id', 'N/A')})\n"
-        f"  {e.get('source_id', 'N/A')} → {e.get('target_id', 'N/A')}\n"
+        f"  {e.get('source_node_id', 'N/A')} → {e.get('target_node_id', 'N/A')}\n"
         f"  Type: {e.get('edge_type', 'N/A')}"
     )
 
@@ -98,9 +101,10 @@ async def sheetstorm_add_graph_node(
     incident_id: str,
     label: str,
     node_type: str,
-    entity_id: Optional[str] = None,
-    x: Optional[float] = None,
-    y: Optional[float] = None,
+    compromised_host_id: Optional[str] = None,
+    compromised_account_id: Optional[str] = None,
+    position_x: Optional[float] = None,
+    position_y: Optional[float] = None,
     metadata: Optional[str] = None,
 ) -> str:
     """Add a node to the attack graph.
@@ -109,9 +113,10 @@ async def sheetstorm_add_graph_node(
         incident_id: UUID of the incident
         label: Display label for the node
         node_type: Node type (host, account, ioc, malware, process, action, attacker, target, lateral_movement)
-        entity_id: UUID of the related entity
-        x: X coordinate for positioning
-        y: Y coordinate for positioning
+        compromised_host_id: UUID of the related compromised host
+        compromised_account_id: UUID of the related compromised account
+        position_x: X coordinate for positioning
+        position_y: Y coordinate for positioning
         metadata: JSON string with extra metadata
     """
     client = get_client()
@@ -119,12 +124,14 @@ async def sheetstorm_add_graph_node(
         import json as _json
 
         payload: dict = {"label": label, "node_type": node_type}
-        if entity_id:
-            payload["entity_id"] = entity_id
-        if x is not None:
-            payload["x"] = x
-        if y is not None:
-            payload["y"] = y
+        if compromised_host_id:
+            payload["compromised_host_id"] = compromised_host_id
+        if compromised_account_id:
+            payload["compromised_account_id"] = compromised_account_id
+        if position_x is not None:
+            payload["position_x"] = position_x
+        if position_y is not None:
+            payload["position_y"] = position_y
         if metadata:
             try:
                 payload["metadata"] = _json.loads(metadata)
@@ -143,8 +150,8 @@ async def sheetstorm_update_graph_node(
     node_id: str,
     label: Optional[str] = None,
     node_type: Optional[str] = None,
-    x: Optional[float] = None,
-    y: Optional[float] = None,
+    position_x: Optional[float] = None,
+    position_y: Optional[float] = None,
 ) -> str:
     """Update an attack graph node.
 
@@ -153,13 +160,13 @@ async def sheetstorm_update_graph_node(
         node_id: UUID of the node
         label: New label
         node_type: New node type
-        x: New X coordinate
-        y: New Y coordinate
+        position_x: New X coordinate
+        position_y: New Y coordinate
     """
     client = get_client()
     try:
         payload: dict = {}
-        for field, val in [("label", label), ("node_type", node_type), ("x", x), ("y", y)]:
+        for field, val in [("label", label), ("node_type", node_type), ("position_x", position_x), ("position_y", position_y)]:
             if val is not None:
                 payload[field] = val
         if not payload:
@@ -195,8 +202,8 @@ async def sheetstorm_delete_graph_node(incident_id: str, node_id: str) -> str:
 @mcp.tool()
 async def sheetstorm_add_graph_edge(
     incident_id: str,
-    source_id: str,
-    target_id: str,
+    source_node_id: str,
+    target_node_id: str,
     edge_type: str,
     label: Optional[str] = None,
 ) -> str:
@@ -204,16 +211,16 @@ async def sheetstorm_add_graph_edge(
 
     Args:
         incident_id: UUID of the incident
-        source_id: UUID of the source node
-        target_id: UUID of the target node
+        source_node_id: UUID of the source node
+        target_node_id: UUID of the target node
         edge_type: Edge type (compromised, lateral_movement, command_control, data_exfiltration, exploited, spawned, accessed, communicates_with, drops, executes)
         label: Display label for the edge
     """
     client = get_client()
     try:
         payload: dict = {
-            "source_id": source_id,
-            "target_id": target_id,
+            "source_node_id": source_node_id,
+            "target_node_id": target_node_id,
             "edge_type": edge_type,
         }
         if label:

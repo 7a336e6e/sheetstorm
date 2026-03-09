@@ -14,14 +14,21 @@ def _format_task(t: dict) -> str:
         f"**{t.get('title', 'Untitled')}** (ID: {t.get('id', 'N/A')})",
         f"  Status: {t.get('status', 'N/A')} | Priority: {t.get('priority', 'N/A')}",
     ]
-    if t.get("assignee_name") or t.get("assignee"):
-        assignee = t.get("assignee_name") or t.get("assignee", {}).get("name", "Unassigned")
+    assignee = t.get("assignee")
+    if isinstance(assignee, dict):
+        parts.append(f"  Assignee: {assignee.get('name', assignee.get('email', 'Unknown'))}")
+    elif assignee:
         parts.append(f"  Assignee: {assignee}")
     if t.get("due_date"):
         parts.append(f"  Due: {t['due_date']}")
+    if t.get("phase"):
+        parts.append(f"  Phase: {t['phase']}")
     if t.get("description"):
         desc = t["description"][:100] + ("..." if len(t["description"]) > 100 else "")
         parts.append(f"  Description: {desc}")
+    progress = t.get("checklist_progress")
+    if progress:
+        parts.append(f"  Checklist: {progress.get('completed', 0)}/{progress.get('total', 0)} ({progress.get('percentage', 0)}%)")
     return "\n".join(parts)
 
 
@@ -177,8 +184,10 @@ async def sheetstorm_add_task_comment(incident_id: str, task_id: str, content: s
             f"/incidents/{incident_id}/tasks/{task_id}/comments",
             json={"content": content},
         )
+        author = comment.get("author", {})
+        author_name = author.get("name", "You") if isinstance(author, dict) else "You"
         return (
-            f"✓ Comment added by {comment.get('author_name', 'You')}\n"
+            f"✓ Comment added by {author_name}\n"
             f"  {comment.get('content', content)}\n"
             f"  at {comment.get('created_at', 'now')}"
         )
@@ -197,15 +206,17 @@ async def sheetstorm_list_task_comments(incident_id: str, task_id: str) -> str:
     client = get_client()
     try:
         data = await client.get(f"/incidents/{incident_id}/tasks/{task_id}/comments")
-        comments = data if isinstance(data, list) else data.get("comments", [])
+        comments = data if isinstance(data, list) else data.get("items", data.get("comments", []))
 
         if not comments:
             return "No comments on this task."
 
         lines = [f"**Task Comments** ({len(comments)})\n"]
         for c in comments:
+            author = c.get("author", {})
+            author_name = author.get("name", "Unknown") if isinstance(author, dict) else "Unknown"
             lines.append(
-                f"[{c.get('created_at', 'N/A')}] **{c.get('author_name', 'Unknown')}**: "
+                f"[{c.get('created_at', 'N/A')}] **{author_name}**: "
                 f"{c.get('content', 'N/A')}"
             )
         return "\n".join(lines)

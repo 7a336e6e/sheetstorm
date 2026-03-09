@@ -14,20 +14,22 @@ from sheetstorm_mcp.server import mcp, get_client
 
 def _format_network_ioc(i: dict) -> str:
     return (
-        f"**{i.get('value', 'N/A')}** (ID: {i.get('id', 'N/A')})\n"
-        f"  Type: {i.get('indicator_type', 'N/A')} | "
-        f"Protocol: {i.get('protocol', 'N/A')} | Port: {i.get('port', 'N/A')}\n"
-        f"  Source Host: {i.get('source_host_name', i.get('source_host_id', 'N/A'))}\n"
-        f"  Description: {i.get('description', 'N/A')}"
+        f"**{i.get('dns_ip', 'N/A')}** (ID: {i.get('id', 'N/A')})\n"
+        f"  Protocol: {i.get('protocol', 'N/A')} | Port: {i.get('port', 'N/A')} | "
+        f"Direction: {i.get('direction', 'N/A')}\n"
+        f"  Source: {i.get('source_host', 'N/A')} → Dest: {i.get('destination_host', 'N/A')}\n"
+        f"  Description: {i.get('description', 'N/A')} | "
+        f"Malicious: {'Yes' if i.get('is_malicious') else 'No'}"
     )
 
 
 def _format_host_ioc(i: dict) -> str:
     return (
-        f"**{i.get('value', 'N/A')}** (ID: {i.get('id', 'N/A')})\n"
-        f"  Type: {i.get('indicator_type', 'N/A')}\n"
-        f"  Host: {i.get('host_name', i.get('host_id', 'N/A'))}\n"
-        f"  Notes: {i.get('notes', 'N/A')}"
+        f"**{i.get('artifact_value', 'N/A')}** (ID: {i.get('id', 'N/A')})\n"
+        f"  Type: {i.get('artifact_type', 'N/A')}\n"
+        f"  Host: {i.get('host', i.get('host_id', 'N/A'))}\n"
+        f"  Notes: {i.get('notes', 'N/A')} | "
+        f"Malicious: {'Yes' if i.get('is_malicious') else 'No'}"
     )
 
 
@@ -40,7 +42,11 @@ def _format_malware(m: dict) -> str:
         parts.append(f"  MD5: {m['md5']}")
     if m.get("sha256"):
         parts.append(f"  SHA256: {m['sha256']}")
-    parts.append(f"  Host: {m.get('host_name', m.get('host_id', 'N/A'))}")
+    parts.append(f"  Host: {m.get('host', m.get('host_id', 'N/A'))}")
+    if m.get("malware_family"):
+        parts.append(f"  Family: {m['malware_family']}")
+    if m.get("threat_actor"):
+        parts.append(f"  Threat Actor: {m['threat_actor']}")
     if m.get("description"):
         parts.append(f"  Description: {m['description']}")
     return "\n".join(parts)
@@ -75,35 +81,44 @@ async def sheetstorm_list_network_iocs(incident_id: str) -> str:
 @mcp.tool()
 async def sheetstorm_add_network_ioc(
     incident_id: str,
-    indicator_type: str,
-    value: str,
+    dns_ip: str,
     protocol: Optional[str] = None,
     port: Optional[int] = None,
-    source_host_id: Optional[str] = None,
+    source_host: Optional[str] = None,
+    destination_host: Optional[str] = None,
+    direction: Optional[str] = None,
     description: Optional[str] = None,
+    is_malicious: bool = True,
 ) -> str:
     """Add a network IOC (IP address, domain, or URL).
 
     Args:
         incident_id: UUID of the incident
-        indicator_type: Type of indicator (ip, domain, url)
-        value: The indicator value (e.g. 192.168.1.100, evil.com)
+        dns_ip: The indicator value (IP, domain, or URL)
         protocol: Network protocol (TCP, UDP, HTTP, etc.)
         port: Port number
-        source_host_id: UUID of the source host
+        source_host: Source hostname or IP
+        destination_host: Destination hostname or IP
+        direction: Direction (inbound, outbound)
         description: Description
+        is_malicious: Whether this is confirmed malicious
     """
     client = get_client()
     try:
-        payload: dict = {"indicator_type": indicator_type, "value": value}
+        payload: dict = {"dns_ip": dns_ip}
         if protocol:
             payload["protocol"] = protocol
         if port is not None:
             payload["port"] = port
-        if source_host_id:
-            payload["source_host_id"] = source_host_id
+        if source_host:
+            payload["source_host"] = source_host
+        if destination_host:
+            payload["destination_host"] = destination_host
+        if direction:
+            payload["direction"] = direction
         if description:
             payload["description"] = description
+        payload["is_malicious"] = is_malicious
 
         ioc = await client.post(f"/incidents/{incident_id}/network-iocs", json=payload)
         return f"✓ Network IOC added:\n{_format_network_ioc(ioc)}"
@@ -115,10 +130,11 @@ async def sheetstorm_add_network_ioc(
 async def sheetstorm_update_network_ioc(
     incident_id: str,
     ioc_id: str,
-    indicator_type: Optional[str] = None,
-    value: Optional[str] = None,
+    dns_ip: Optional[str] = None,
     protocol: Optional[str] = None,
     port: Optional[int] = None,
+    source_host: Optional[str] = None,
+    destination_host: Optional[str] = None,
     description: Optional[str] = None,
 ) -> str:
     """Update a network IOC.
@@ -126,20 +142,22 @@ async def sheetstorm_update_network_ioc(
     Args:
         incident_id: UUID of the incident
         ioc_id: UUID of the network IOC
-        indicator_type: New type
-        value: New value
+        dns_ip: New indicator value
         protocol: New protocol
         port: New port
+        source_host: New source host
+        destination_host: New destination host
         description: New description
     """
     client = get_client()
     try:
         payload: dict = {}
         for field, val in [
-            ("indicator_type", indicator_type),
-            ("value", value),
+            ("dns_ip", dns_ip),
             ("protocol", protocol),
             ("port", port),
+            ("source_host", source_host),
+            ("destination_host", destination_host),
             ("description", description),
         ]:
             if val is not None:
@@ -197,27 +215,30 @@ async def sheetstorm_list_host_iocs(incident_id: str) -> str:
 @mcp.tool()
 async def sheetstorm_add_host_ioc(
     incident_id: str,
-    indicator_type: str,
-    value: str,
+    artifact_type: str,
+    artifact_value: str,
     host_id: Optional[str] = None,
     notes: Optional[str] = None,
+    is_malicious: bool = True,
 ) -> str:
     """Add a host-based IOC.
 
     Args:
         incident_id: UUID of the incident
-        indicator_type: Type (file_hash, registry_key, process, service, scheduled_task)
-        value: The indicator value
+        artifact_type: Type (file_hash, registry_key, process, service, scheduled_task)
+        artifact_value: The indicator value
         host_id: UUID of the associated host
         notes: Additional notes
+        is_malicious: Whether this is confirmed malicious
     """
     client = get_client()
     try:
-        payload: dict = {"indicator_type": indicator_type, "value": value}
+        payload: dict = {"artifact_type": artifact_type, "artifact_value": artifact_value}
         if host_id:
             payload["host_id"] = host_id
         if notes:
             payload["notes"] = notes
+        payload["is_malicious"] = is_malicious
         ioc = await client.post(f"/incidents/{incident_id}/host-iocs", json=payload)
         return f"✓ Host IOC added:\n{_format_host_ioc(ioc)}"
     except SheetStormAPIError as exc:
@@ -228,8 +249,8 @@ async def sheetstorm_add_host_ioc(
 async def sheetstorm_update_host_ioc(
     incident_id: str,
     ioc_id: str,
-    indicator_type: Optional[str] = None,
-    value: Optional[str] = None,
+    artifact_type: Optional[str] = None,
+    artifact_value: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> str:
     """Update a host-based IOC.
@@ -237,16 +258,16 @@ async def sheetstorm_update_host_ioc(
     Args:
         incident_id: UUID of the incident
         ioc_id: UUID of the host IOC
-        indicator_type: New type
-        value: New value
+        artifact_type: New type
+        artifact_value: New value
         notes: New notes
     """
     client = get_client()
     try:
         payload: dict = {}
         for field, val in [
-            ("indicator_type", indicator_type),
-            ("value", value),
+            ("artifact_type", artifact_type),
+            ("artifact_value", artifact_value),
             ("notes", notes),
         ]:
             if val is not None:

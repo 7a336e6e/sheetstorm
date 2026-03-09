@@ -414,3 +414,417 @@ async def draft_executive_summary(incident_id: str) -> str:
         parts.extend(phase_dates)
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Full IR Report (Phase 4)
+# ---------------------------------------------------------------------------
+
+@mcp.prompt()
+async def full_ir_report(incident_id: str) -> str:
+    """Generate a comprehensive incident response report with all evidence, analysis, and recommendations.
+
+    Args:
+        incident_id: UUID of the incident
+    """
+    client = get_client()
+    try:
+        incident = await client.get(f"/incidents/{incident_id}")
+    except SheetStormAPIError as exc:
+        return f"Could not fetch incident data: {exc}"
+
+    # Gather everything
+    data_sections = {}
+    endpoints = {
+        'timeline': f"/incidents/{incident_id}/timeline",
+        'hosts': f"/incidents/{incident_id}/hosts",
+        'accounts': f"/incidents/{incident_id}/accounts",
+        'network_iocs': f"/incidents/{incident_id}/network-iocs",
+        'host_iocs': f"/incidents/{incident_id}/host-iocs",
+        'malware': f"/incidents/{incident_id}/malware",
+        'tasks': f"/incidents/{incident_id}/tasks",
+        'notes': f"/incidents/{incident_id}/notes",
+        'artifacts': f"/incidents/{incident_id}/artifacts",
+    }
+
+    for key, endpoint in endpoints.items():
+        try:
+            resp = await client.get(endpoint)
+            data_sections[key] = resp.get("items", resp) if isinstance(resp, dict) else resp
+        except SheetStormAPIError:
+            data_sections[key] = []
+
+    timeline = data_sections.get('timeline', [])
+    hosts = data_sections.get('hosts', [])
+    accounts = data_sections.get('accounts', [])
+    network_iocs = data_sections.get('network_iocs', [])
+    host_iocs = data_sections.get('host_iocs', [])
+    malware = data_sections.get('malware', [])
+    tasks = data_sections.get('tasks', [])
+    notes = data_sections.get('notes', [])
+    artifacts = data_sections.get('artifacts', [])
+
+    parts = [
+        "You are an expert incident response analyst. Using ALL the evidence below, write a "
+        "**comprehensive IR report** suitable for legal, compliance, insurance, and management audiences.\n\n"
+        "## Required Sections:\n"
+        "1. **Executive Summary** (1 paragraph, non-technical)\n"
+        "2. **Incident Classification** (type, severity, scope, regulatory impact)\n"
+        "3. **Timeline of Events** (narrative, chronological, with MITRE ATT&CK mapping)\n"
+        "4. **Attack Vector & Root Cause** (how the attacker gained initial access)\n"
+        "5. **Indicators of Compromise** (tables of IPs, domains, hashes, artifacts)\n"
+        "6. **Affected Systems & Accounts** (inventory with impact assessment)\n"
+        "7. **Malware Analysis** (samples found, capabilities, attribution)\n"
+        "8. **Containment & Eradication Actions** (what was done)\n"
+        "9. **Evidence Preservation** (chain of custody, artifacts collected)\n"
+        "10. **Impact Assessment** (data exposure, operational impact, business loss)\n"
+        "11. **Recommendations** (immediate, short-term, long-term)\n"
+        "12. **Appendices** (IOC tables, affected host list, reference links)\n\n"
+        "Use professional formatting with headers, tables, and bullet points.\n",
+        f"---\n\n# INCIDENT DATA\n",
+        f"**Title**: {incident.get('title', 'Unknown')}",
+        f"**ID**: {incident.get('id')}",
+        f"**Status**: {incident.get('status')} | **Phase**: {incident.get('phase_name', incident.get('phase'))} | "
+        f"**Severity**: {incident.get('severity')}",
+        f"**Classification**: {incident.get('classification', 'N/A')}",
+        f"**Created**: {incident.get('created_at')} | **Updated**: {incident.get('updated_at')}",
+    ]
+
+    if incident.get("description"):
+        parts.append(f"\n**Description**:\n{incident['description']}")
+    if incident.get("executive_summary"):
+        parts.append(f"\n**Executive Summary (existing)**:\n{incident['executive_summary']}")
+    if incident.get("lessons_learned"):
+        parts.append(f"\n**Lessons Learned (existing)**:\n{incident['lessons_learned']}")
+
+    # Phase dates
+    for field, label in [("detected_at", "Detected"), ("contained_at", "Contained"),
+                         ("eradicated_at", "Eradicated"), ("recovered_at", "Recovered"), ("closed_at", "Closed")]:
+        if incident.get(field):
+            parts.append(f"**{label}**: {incident[field]}")
+
+    # Timeline
+    if timeline:
+        parts.append(f"\n## Timeline ({len(timeline)} events)")
+        for e in timeline[:80]:
+            mitre = f" [{e.get('mitre_tactic', '')}/{e.get('mitre_technique', '')}]" if e.get('mitre_tactic') else ""
+            src = f" (source: {e['source']})" if e.get('source') else ""
+            host = f" @{e['hostname']}" if e.get('hostname') else ""
+            parts.append(f"- [{e.get('timestamp', '?')}]{host} {e.get('activity', '?')}{mitre}{src}")
+
+    # IOCs
+    total_iocs = len(network_iocs) + len(host_iocs) + len(malware)
+    if total_iocs:
+        parts.append(f"\n## Indicators of Compromise ({total_iocs} total)")
+        if network_iocs:
+            parts.append("### Network Indicators")
+            for i in network_iocs:
+                parts.append(f"- {i.get('dns_ip')} | {i.get('protocol', '?')}:{i.get('port', '?')} | "
+                             f"Direction: {i.get('direction', '?')} | Malicious: {i.get('is_malicious', '?')} | {i.get('description', '')}")
+        if host_iocs:
+            parts.append("### Host-Based Indicators")
+            for i in host_iocs:
+                parts.append(f"- [{i.get('artifact_type')}] {i.get('artifact_value')} | Host: {i.get('host', '?')} | "
+                             f"Malicious: {i.get('is_malicious', '?')} | {i.get('notes', '')}")
+        if malware:
+            parts.append("### Malware & Tools")
+            for m in malware:
+                hashes = f"MD5:{m.get('md5', 'N/A')} SHA256:{m.get('sha256', 'N/A')}"
+                parts.append(f"- {m.get('file_name')} | Path: {m.get('file_path', '?')} | Family: {m.get('malware_family', '?')} | {hashes}")
+
+    # Hosts
+    if hosts:
+        parts.append(f"\n## Compromised Hosts ({len(hosts)})")
+        for h in hosts:
+            parts.append(f"- {h.get('hostname')} ({h.get('ip_address', '?')}) | OS: {h.get('os_version', '?')} | "
+                         f"Type: {h.get('system_type', '?')} | Containment: {h.get('containment_status', '?')}")
+
+    # Accounts
+    if accounts:
+        parts.append(f"\n## Compromised Accounts ({len(accounts)})")
+        for a in accounts:
+            parts.append(f"- {a.get('domain', '')}\\{a.get('account_name')} | Type: {a.get('account_type', '?')} | "
+                         f"Status: {a.get('status', '?')} | Privilege: {a.get('privilege_level', '?')}")
+
+    # Tasks
+    if tasks:
+        parts.append(f"\n## Response Tasks ({len(tasks)})")
+        for t in tasks:
+            parts.append(f"- [{t.get('status', '?')}] {t.get('title')} (Priority: {t.get('priority', '?')})")
+
+    # Artifacts
+    if artifacts:
+        parts.append(f"\n## Collected Artifacts ({len(artifacts)})")
+        for a in artifacts:
+            parts.append(f"- {a.get('filename', '?')} | Type: {a.get('artifact_type', '?')} | "
+                         f"Hash: {a.get('sha256_hash', 'N/A')}")
+
+    # Notes
+    if notes:
+        parts.append(f"\n## Case Notes ({len(notes)})")
+        for n in notes:
+            parts.append(f"- **{n.get('title')}** ({n.get('category', '?')}): {(n.get('content', '') or '')[:200]}")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Lessons Learned (Phase 4)
+# ---------------------------------------------------------------------------
+
+@mcp.prompt()
+async def lessons_learned(incident_id: str) -> str:
+    """Generate a lessons learned analysis for a closed or near-closed incident.
+
+    Args:
+        incident_id: UUID of the incident
+    """
+    client = get_client()
+    try:
+        incident = await client.get(f"/incidents/{incident_id}")
+    except SheetStormAPIError as exc:
+        return f"Could not fetch incident data: {exc}"
+
+    timeline = []
+    tasks = []
+    notes = []
+    try:
+        tl = await client.get(f"/incidents/{incident_id}/timeline")
+        timeline = tl.get("items", tl) if isinstance(tl, dict) else tl
+    except SheetStormAPIError:
+        pass
+    try:
+        t = await client.get(f"/incidents/{incident_id}/tasks")
+        tasks = t.get("items", t) if isinstance(t, dict) else t
+    except SheetStormAPIError:
+        pass
+    try:
+        n = await client.get(f"/incidents/{incident_id}/notes")
+        notes = n.get("items", n) if isinstance(n, dict) else n
+    except SheetStormAPIError:
+        pass
+
+    parts = [
+        "You are a senior incident response manager conducting a **Lessons Learned / Post-Incident Review** "
+        "(NIST SP 800-61 Phase 6).\n\n"
+        "## Analyze and produce:\n"
+        "1. **Incident Summary** — brief recap (what, when, how, impact)\n"
+        "2. **What Went Well** — effective detection, response, communication\n"
+        "3. **What Could Be Improved** — gaps, delays, miscommunication, tool limitations\n"
+        "4. **Root Cause Analysis** — primary cause + contributing factors (use 5 Whys method)\n"
+        "5. **Detection Gap Analysis** — how was it found, could it have been caught earlier?\n"
+        "6. **Response Timeline Analysis** — time from detection to containment to resolution\n"
+        "7. **Process Improvements** — specific changes to playbooks, tools, training\n"
+        "8. **Technical Improvements** — detection rules, hardening, monitoring gaps\n"
+        "9. **Action Items** — SMART goals with owners and deadlines\n"
+        "10. **Metrics** — MTTD, MTTC, MTTR, total IOCs, affected systems\n\n",
+        f"---\n\n# Incident: {incident.get('title', 'Unknown')}",
+        f"**Severity**: {incident.get('severity')} | **Status**: {incident.get('status')} | "
+        f"**Phase**: {incident.get('phase_name', incident.get('phase'))}",
+        f"**Classification**: {incident.get('classification', 'N/A')}",
+    ]
+
+    # Calculate response metrics
+    for field, label in [("created_at", "Created"), ("detected_at", "Detected"),
+                         ("contained_at", "Contained"), ("eradicated_at", "Eradicated"),
+                         ("recovered_at", "Recovered"), ("closed_at", "Closed")]:
+        if incident.get(field):
+            parts.append(f"**{label}**: {incident[field]}")
+
+    if incident.get("lessons_learned"):
+        parts.append(f"\n**Existing Lessons Learned notes**:\n{incident['lessons_learned']}")
+
+    if timeline:
+        parts.append(f"\n## Timeline ({len(timeline)} events)")
+        for e in timeline[:60]:
+            parts.append(f"- [{e.get('timestamp', '?')}] {e.get('activity', '?')}")
+
+    if tasks:
+        completed = sum(1 for t in tasks if t.get('status') == 'completed')
+        parts.append(f"\n## Tasks ({completed}/{len(tasks)} completed)")
+        for t in tasks:
+            parts.append(f"- [{t.get('status')}] {t.get('title')} — {t.get('priority', '?')}")
+
+    if notes:
+        parts.append(f"\n## Case Notes")
+        for n in notes:
+            parts.append(f"- {n.get('title')}: {(n.get('content', '') or '')[:200]}")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Containment Checklist (Phase 4)
+# ---------------------------------------------------------------------------
+
+@mcp.prompt()
+async def containment_checklist(incident_id: str) -> str:
+    """Generate a containment checklist based on incident IOCs, hosts, and scope.
+
+    Args:
+        incident_id: UUID of the incident
+    """
+    client = get_client()
+    try:
+        incident = await client.get(f"/incidents/{incident_id}")
+    except SheetStormAPIError as exc:
+        return f"Could not fetch incident data: {exc}"
+
+    hosts = []
+    accounts = []
+    network_iocs = []
+    host_iocs = []
+    malware = []
+    for endpoint, key in [
+        (f"/incidents/{incident_id}/hosts", "hosts"),
+        (f"/incidents/{incident_id}/accounts", "accounts"),
+        (f"/incidents/{incident_id}/network-iocs", "network"),
+        (f"/incidents/{incident_id}/host-iocs", "host"),
+        (f"/incidents/{incident_id}/malware", "malware"),
+    ]:
+        try:
+            data = await client.get(endpoint)
+            items = data.get("items", data) if isinstance(data, dict) else data
+            if key == "hosts":
+                hosts = items
+            elif key == "accounts":
+                accounts = items
+            elif key == "network":
+                network_iocs = items
+            elif key == "host":
+                host_iocs = items
+            elif key == "malware":
+                malware = items
+        except SheetStormAPIError:
+            pass
+
+    parts = [
+        "You are an incident response containment specialist. Based on the compromised assets and IOCs below, "
+        "generate a **prioritized containment checklist**.\n\n"
+        "## Checklist Requirements:\n"
+        "1. **Immediate Actions** (within 1 hour) — isolate critical systems, block known-bad IPs/domains\n"
+        "2. **Short-term Actions** (within 24 hours) — credential resets, EDR sweeps, firewall rules\n"
+        "3. **Network Containment** — specific IPs/domains to block with firewall rules\n"
+        "4. **Host Containment** — specific hosts to isolate, processes to kill, files to quarantine\n"
+        "5. **Account Containment** — accounts to disable/reset, MFA enforcement\n"
+        "6. **Detection Rules** — SIEM/EDR rules to deploy for monitoring\n"
+        "7. **Communication Steps** — who to notify, escalation path\n"
+        "8. **Verification Steps** — how to confirm containment is effective\n\n"
+        "Format each item as a checkbox: `[ ] Action — Justification`\n",
+        f"---\n\n# Incident: {incident.get('title', 'Unknown')}",
+        f"**Severity**: {incident.get('severity')} | **Classification**: {incident.get('classification', 'N/A')}",
+        f"**Current Phase**: {incident.get('phase_name', incident.get('phase'))}\n",
+    ]
+
+    if hosts:
+        parts.append(f"## Compromised Hosts ({len(hosts)})")
+        for h in hosts:
+            parts.append(f"- {h.get('hostname')} ({h.get('ip_address', '?')}) — "
+                         f"OS: {h.get('os_version', '?')} | Type: {h.get('system_type', '?')} | "
+                         f"Containment: {h.get('containment_status', 'unknown')}")
+
+    if accounts:
+        parts.append(f"\n## Compromised Accounts ({len(accounts)})")
+        for a in accounts:
+            parts.append(f"- {a.get('domain', '')}\\{a.get('account_name')} — "
+                         f"Type: {a.get('account_type', '?')} | Privilege: {a.get('privilege_level', '?')}")
+
+    if network_iocs:
+        parts.append(f"\n## Network IOCs to Block ({len(network_iocs)})")
+        for i in network_iocs:
+            parts.append(f"- {i.get('dns_ip')} | {i.get('protocol', '?')}:{i.get('port', '?')} | {i.get('direction', '?')}")
+
+    if host_iocs:
+        parts.append(f"\n## Host Artifacts to Remediate ({len(host_iocs)})")
+        for i in host_iocs:
+            parts.append(f"- [{i.get('artifact_type')}] {i.get('artifact_value')}")
+
+    if malware:
+        parts.append(f"\n## Malware to Quarantine ({len(malware)})")
+        for m in malware:
+            parts.append(f"- {m.get('file_name')} | Path: {m.get('file_path', '?')} | "
+                         f"MD5: {m.get('md5', 'N/A')} | Family: {m.get('malware_family', '?')}")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# IOC Summary (Phase 4)
+# ---------------------------------------------------------------------------
+
+@mcp.prompt()
+async def ioc_summary(incident_id: str) -> str:
+    """Generate a structured IOC summary for threat intelligence sharing.
+
+    Args:
+        incident_id: UUID of the incident
+    """
+    client = get_client()
+    try:
+        incident = await client.get(f"/incidents/{incident_id}")
+    except SheetStormAPIError as exc:
+        return f"Could not fetch incident data: {exc}"
+
+    network_iocs = []
+    host_iocs = []
+    malware = []
+    for endpoint, key in [
+        (f"/incidents/{incident_id}/network-iocs", "network"),
+        (f"/incidents/{incident_id}/host-iocs", "host"),
+        (f"/incidents/{incident_id}/malware", "malware"),
+    ]:
+        try:
+            data = await client.get(endpoint)
+            items = data.get("items", data) if isinstance(data, dict) else data
+            if key == "network":
+                network_iocs = items
+            elif key == "host":
+                host_iocs = items
+            elif key == "malware":
+                malware = items
+        except SheetStormAPIError:
+            pass
+
+    total = len(network_iocs) + len(host_iocs) + len(malware)
+
+    parts = [
+        "You are a threat intelligence analyst. Using the IOCs below, produce a "
+        "**structured IOC summary** suitable for sharing with ISACs, CERTs, or partner organizations.\n\n"
+        "## Required Output:\n"
+        "1. **IOC Overview** — total count by type, confidence assessment\n"
+        "2. **Network Indicators Table** — IP, domain, port, protocol, direction, first seen, malicious confidence\n"
+        "3. **File Indicators Table** — filename, path, MD5, SHA256, type, malware family\n"
+        "4. **Host Artifacts Table** — artifact type, value, host, remediation status\n"
+        "5. **TTPs Observed** — MITRE ATT&CK techniques associated with the IOCs\n"
+        "6. **Attribution Assessment** — if possible, suspected threat actor/campaign\n"
+        "7. **STIX/OpenIOC Patterns** — generate detection patterns for each key IOC\n"
+        "8. **Sharing Recommendations** — TLP marking, distribution scope\n\n"
+        "Use tables for structured data. Include confidence levels (High/Medium/Low).\n",
+        f"---\n\n# Incident: {incident.get('title', 'Unknown')}",
+        f"**Classification**: {incident.get('classification', 'N/A')} | **Severity**: {incident.get('severity')}",
+        f"**Total IOCs**: {total}\n",
+    ]
+
+    if network_iocs:
+        parts.append(f"## Network IOCs ({len(network_iocs)})")
+        for i in network_iocs:
+            parts.append(f"- {i.get('dns_ip')} | Protocol: {i.get('protocol', '?')} | Port: {i.get('port', '?')} | "
+                         f"Direction: {i.get('direction', '?')} | Malicious: {i.get('is_malicious', '?')} | "
+                         f"Source: {i.get('threat_intel_source', 'N/A')} | {i.get('description', '')}")
+
+    if host_iocs:
+        parts.append(f"\n## Host IOCs ({len(host_iocs)})")
+        for i in host_iocs:
+            parts.append(f"- [{i.get('artifact_type')}] {i.get('artifact_value')} | Host: {i.get('host', '?')} | "
+                         f"Malicious: {i.get('is_malicious', '?')} | Remediated: {i.get('remediated', '?')} | "
+                         f"{i.get('notes', '')}")
+
+    if malware:
+        parts.append(f"\n## Malware/Tools ({len(malware)})")
+        for m in malware:
+            parts.append(f"- **{m.get('file_name')}** | Path: {m.get('file_path', '?')} | "
+                         f"Family: {m.get('malware_family', '?')} | Actor: {m.get('threat_actor', '?')}\n"
+                         f"  MD5: {m.get('md5', 'N/A')} | SHA256: {m.get('sha256', 'N/A')} | "
+                         f"Size: {m.get('file_size', '?')} bytes")
+
+    return "\n".join(parts)

@@ -1,4 +1,4 @@
-"""Knowledge base tools — LOLBAS, Windows Event IDs, MITRE D3FEND reference data."""
+"""Knowledge base tools — LOLBAS, Windows Event IDs, MITRE ATT&CK, MITRE D3FEND reference data."""
 
 from __future__ import annotations
 
@@ -183,6 +183,79 @@ async def sheetstorm_kb_d3fend_suggest(
                 f"{t.get('description', '')}\n"
                 f"**Addresses**: {matched}\n"
                 f"**Examples**: {', '.join(t.get('examples', []))}\n"
+            )
+
+        return "\n".join(parts)
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# MITRE ATT&CK — Enterprise Techniques & Tactics
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def sheetstorm_get_mitre_tactics() -> str:
+    """List all 14 MITRE ATT&CK Enterprise tactics with their IDs and descriptions."""
+    client = get_client()
+    try:
+        data = await client.get("/knowledge-base/mitre-attack/tactics")
+        items = data.get("items", [])
+
+        if not items:
+            return "No ATT&CK tactics available."
+
+        parts = [f"**MITRE ATT&CK Tactics** ({len(items)} total)\n"]
+        for t in items:
+            parts.append(
+                f"**{t['id']}** — {t['name']}\n"
+                f"  {t.get('description', '')}\n"
+            )
+
+        return "\n".join(parts)
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_get_mitre_techniques(
+    search: Optional[str] = None,
+    tactic: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> str:
+    """Search MITRE ATT&CK Enterprise techniques with detection guidance.
+
+    Returns techniques with ID, name, tactic, description, platforms, and detection hints.
+
+    Args:
+        search: Optional free-text search across technique ID, name, description
+        tactic: Optional tactic name filter (e.g., "Initial Access", "Execution", "Persistence")
+        platform: Optional platform filter (Windows, Linux, macOS, Cloud, Network, Containers)
+    """
+    client = get_client()
+    try:
+        params: dict = {}
+        if search:
+            params["search"] = search
+        if tactic:
+            params["tactic"] = tactic
+        if platform:
+            params["platform"] = platform
+
+        data = await client.get("/knowledge-base/mitre-attack", params=params)
+        items = data.get("items", [])
+
+        if not items:
+            return "No matching ATT&CK techniques found."
+
+        parts = [f"**MITRE ATT&CK Techniques** ({data.get('total', len(items))} results)\n"]
+        for t in items:
+            platforms = ", ".join(t.get("platforms", []))
+            parts.append(
+                f"### {t['id']} — {t['name']} ({t.get('tactic', 'N/A')})\n"
+                f"{t.get('description', '')}\n"
+                f"**Platforms**: {platforms}\n"
+                f"**Detection**: {t.get('detection', 'N/A')}\n"
             )
 
         return "\n".join(parts)

@@ -30,6 +30,9 @@ class Config:
     transport: str = field(default_factory=lambda: os.getenv("MCP_TRANSPORT", "stdio"))
     sse_port: int = field(default_factory=lambda: int(os.getenv("SSE_PORT", os.getenv("MCP_SSE_PORT", "8811"))))
 
+    # Transport-level authentication (bearer token gate)
+    auth_token: str | None = field(default_factory=lambda: os.getenv("MCP_AUTH_TOKEN"))
+
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
 

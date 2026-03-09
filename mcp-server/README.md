@@ -42,6 +42,7 @@ Key settings:
 | `SHEETSTORM_PASSWORD` | — | Auto-login password |
 | `SHEETSTORM_API_TOKEN` | — | Pre-existing JWT token |
 | `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `sse` |
+| `MCP_AUTH_TOKEN` | — | Bearer token for SSE transport auth (required for production) |
 
 ### Run
 
@@ -74,7 +75,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## VS Code Configuration
 
-Add to `.vscode/mcp.json`:
+For local stdio transport, add to `.vscode/mcp.json`:
 
 ```json
 {
@@ -90,6 +91,23 @@ Add to `.vscode/mcp.json`:
   }
 }
 ```
+
+For remote SSE transport (e.g. via Docker or remote server), use the VS Code command:
+
+```bash
+code --add-mcp '{
+  "name": "sheetstorm",
+  "type": "sse",
+  "url": "https://your-domain.example.com/sse",
+  "headers": {
+    "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
+  }
+}'
+```
+
+> **Security**: When using SSE transport, always set `MCP_AUTH_TOKEN` in your
+> `.env` file. Without it, anyone who can reach the `/sse` endpoint can
+> discover and invoke all tools with the server's auto-authenticated session.
 
 ## Tool Categories
 

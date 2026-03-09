@@ -131,9 +131,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                             {/* Expanded detail panel */}
                             {isOpen && (
                                 <div className="ml-[142px] mr-3 mb-2 px-3 py-2 rounded border border-white/5 bg-white/[0.02] text-xs space-y-1">
-                                    {event.description && (
-                                        <p className="text-muted-foreground leading-relaxed">{event.description}</p>
-                                    )}
                                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground/80">
                                         {event.host && (
                                             <span><strong className="text-foreground/70">Host:</strong> {event.host.hostname} {event.host.ip_address && `(${event.host.ip_address})`}</span>
@@ -146,6 +143,9 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                         )}
                                         {event.source && (
                                             <span><strong className="text-foreground/70">Source:</strong> {event.source}</span>
+                                        )}
+                                        {event.kill_chain_phase && (
+                                            <span><strong className="text-foreground/70">Kill Chain:</strong> {event.kill_chain_phase}</span>
                                         )}
                                     </div>
                                 </div>

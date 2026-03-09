@@ -19,7 +19,9 @@ Flow
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -38,6 +40,9 @@ from mcp.server.auth.provider import (
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 logger = logging.getLogger("sheetstorm_mcp.oauth")
+
+# Redis key prefix for OAuth client registrations
+_REDIS_CLIENT_PREFIX = "mcp:oauth:client:"
 
 # ---------------------------------------------------------------------------
 # In-memory stores (replaced by Redis/DB in production scale-out)
@@ -86,13 +91,27 @@ class SheetStormOAuthProvider(
     SheetStorm backend (``/auth/login``, ``/auth/me``, ``/auth/refresh``).
     """
 
-    def __init__(self, *, api_url: str, mcp_issuer_url: str) -> None:
+    def __init__(self, *, api_url: str, mcp_issuer_url: str, redis_url: str | None = None) -> None:
         self._api_url = api_url.rstrip("/")
         self._mcp_issuer_url = mcp_issuer_url.rstrip("/")
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(20))
 
-        # In-memory stores – keyed by the relevant identifier
+        # Redis for persistent client storage (survives container restarts)
+        self._redis = None
+        if redis_url:
+            try:
+                import redis
+                self._redis = redis.Redis.from_url(redis_url, decode_responses=True)
+                self._redis.ping()
+                logger.info("Connected to Redis for OAuth client persistence")
+            except Exception:
+                logger.exception("Failed to connect to Redis — client registrations will be in-memory only")
+                self._redis = None
+
+        # In-memory cache (populated from Redis on get_client)
         self._clients: dict[str, OAuthClientInformationFull] = {}
+
+        # In-memory stores – keyed by the relevant identifier
         self._auth_codes: dict[str, StoredAuthCode] = {}
         self._access_tokens: dict[str, AccessToken] = {}
         self._refresh_tokens: dict[str, StoredRefreshToken] = {}
@@ -109,16 +128,45 @@ class SheetStormOAuthProvider(
 
     async def close(self) -> None:
         await self._http.aclose()
+        if self._redis:
+            self._redis.close()
 
     # -----------------------------------------------------------------------
-    # Client registration (RFC 7591 dynamic registration)
+    # Client registration (RFC 7591 — persisted in Redis)
     # -----------------------------------------------------------------------
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        # Check in-memory cache first
+        cached = self._clients.get(client_id)
+        if cached:
+            return cached
+
+        # Fall back to Redis
+        if self._redis:
+            try:
+                raw = self._redis.get(f"{_REDIS_CLIENT_PREFIX}{client_id}")
+                if raw:
+                    info = OAuthClientInformationFull.model_validate(json.loads(raw))
+                    self._clients[client_id] = info  # warm cache
+                    return info
+            except Exception:
+                logger.exception("Failed to load OAuth client %s from Redis", client_id)
+
+        return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         self._clients[client_info.client_id] = client_info
+
+        # Persist to Redis (no expiry — clients live until explicitly deleted)
+        if self._redis:
+            try:
+                self._redis.set(
+                    f"{_REDIS_CLIENT_PREFIX}{client_info.client_id}",
+                    json.dumps(client_info.model_dump(mode="json")),
+                )
+            except Exception:
+                logger.exception("Failed to persist OAuth client to Redis")
+
         logger.info("Registered OAuth client %s", client_info.client_id)
 
     # -----------------------------------------------------------------------

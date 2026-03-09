@@ -91,6 +91,7 @@ _cfg = get_config()
 _oauth_provider = SheetStormOAuthProvider(
     api_url=_cfg.api_url,
     mcp_issuer_url=_cfg.mcp_issuer_url,
+    redis_url=_cfg.redis_url,
 )
 
 mcp = FastMCP(

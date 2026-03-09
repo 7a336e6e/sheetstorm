@@ -102,6 +102,7 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+
   mcp-server:
     build:
       context: ./mcp-server
@@ -112,11 +113,14 @@ services:
       MCP_TRANSPORT: sse
       SSE_PORT: "8811"
       MCP_ISSUER_URL: ${MCP_ISSUER_URL:-http://localhost:8811}
+      REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
     ports:
       - "127.0.0.1:8811:8811"
     depends_on:
       backend:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "from sheetstorm_mcp.server import mcp; print('ok')"]
@@ -125,6 +129,7 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+
 
   proxy:
     build:

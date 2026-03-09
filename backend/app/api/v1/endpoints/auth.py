@@ -309,11 +309,16 @@ def supabase_auth():
             db.session.add(user)
             db.session.flush()
 
-            # Assign default Viewer role
-            viewer_role = Role.query.filter_by(name='Viewer').first()
-            if viewer_role:
-                user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
-                db.session.add(user_role)
+            # Restore roles from Supabase app_metadata, fall back to Viewer
+            from app.services.supabase_role_sync import roles_from_supabase_metadata, assign_roles_from_list
+            sb_roles = roles_from_supabase_metadata(sb_user)
+            if sb_roles:
+                assign_roles_from_list(user, sb_roles, organization_id=org.id)
+            else:
+                viewer_role = Role.query.filter_by(name='Viewer').first()
+                if viewer_role:
+                    user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
+                    db.session.add(user_role)
 
             db.session.commit()
 

@@ -225,6 +225,10 @@ def assign_role(user_id):
     db.session.add(user_role)
     db.session.commit()
 
+    # Push updated roles to Supabase app_metadata
+    from app.services.supabase_role_sync import push_roles_to_supabase
+    push_roles_to_supabase(user)
+
     return jsonify({'message': 'Role assigned successfully'}), 201
 
 
@@ -246,6 +250,10 @@ def revoke_role(user_id, role_id):
 
     db.session.delete(user_role)
     db.session.commit()
+
+    # Push updated roles to Supabase app_metadata
+    from app.services.supabase_role_sync import push_roles_to_supabase
+    push_roles_to_supabase(user)
 
     return jsonify({'message': 'Role revoked successfully'}), 200
 
@@ -310,6 +318,10 @@ def sync_supabase_users():
 
         viewer_role = Role.query.filter_by(name='Viewer').first()
 
+        from app.services.supabase_role_sync import (
+            roles_from_supabase_metadata, assign_roles_from_list,
+        )
+
         for sb_user in all_sb_users:
             email = sb_user.get('email')
             if not email:
@@ -320,6 +332,15 @@ def sync_supabase_users():
                 # Update supabase_id if missing
                 if not existing.supabase_id and sb_user.get('id'):
                     existing.supabase_id = sb_user['id']
+                # Restore roles from Supabase app_metadata if user has none
+                if not existing.user_roles:
+                    sb_roles = roles_from_supabase_metadata(sb_user)
+                    if sb_roles:
+                        assign_roles_from_list(
+                            existing, sb_roles,
+                            organization_id=existing.organization_id,
+                            granted_by=current.id,
+                        )
                 skipped += 1
                 continue
 
@@ -345,7 +366,15 @@ def sync_supabase_users():
             db.session.add(new_user)
             db.session.flush()
 
-            if viewer_role:
+            # Assign roles from Supabase app_metadata, fall back to Viewer
+            sb_roles = roles_from_supabase_metadata(sb_user)
+            if sb_roles:
+                assign_roles_from_list(
+                    new_user, sb_roles,
+                    organization_id=org.id,
+                    granted_by=current.id,
+                )
+            elif viewer_role:
                 ur = UserRole(
                     user_id=new_user.id,
                     role_id=viewer_role.id,
@@ -369,3 +398,19 @@ def sync_supabase_users():
         db.session.rollback()
         current_app.logger.error(f"Supabase sync error: {e}")
         return jsonify({'error': 'server_error', 'message': 'Failed to sync Supabase users'}), 500
+
+
+@api_bp.route('/users/push-roles-to-supabase', methods=['POST'])
+@jwt_required()
+@require_permission('roles:manage')
+@audit_log('admin_action', 'push_roles_to_supabase', 'user')
+def push_roles_to_supabase_bulk():
+    """Push all local role assignments to Supabase app_metadata.
+
+    One-time migration endpoint: for every user that has a ``supabase_id``,
+    writes their current SheetStorm roles into ``app_metadata.sheetstorm_roles``
+    so that roles survive a full database rebuild.
+    """
+    from app.services.supabase_role_sync import push_all_roles_to_supabase
+    stats = push_all_roles_to_supabase()
+    return jsonify({'message': 'Roles pushed to Supabase', **stats}), 200

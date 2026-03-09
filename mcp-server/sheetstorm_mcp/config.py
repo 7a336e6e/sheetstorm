@@ -35,6 +35,11 @@ class Config:
         default_factory=lambda: os.getenv("MCP_ISSUER_URL", "http://localhost:8811")
     )
 
+    # Redis — used for persistent OAuth client registrations
+    redis_url: str | None = field(
+        default_factory=lambda: os.getenv("REDIS_URL")
+    )
+
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
 

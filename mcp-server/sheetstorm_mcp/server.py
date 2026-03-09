@@ -58,10 +58,14 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict]:
 # MCP Server instance
 # ---------------------------------------------------------------------------
 
+_cfg = get_config()
+
 mcp = FastMCP(
     "sheetstorm-mcp",
     instructions=f"SheetStorm MCP Server v{__version__} — Incident Response Platform tools",
     lifespan=server_lifespan,
+    host="0.0.0.0",
+    port=_cfg.sse_port,
 )
 
 

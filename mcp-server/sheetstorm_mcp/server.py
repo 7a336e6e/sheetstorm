@@ -86,6 +86,11 @@ def _register_all_tools() -> None:
     from sheetstorm_mcp.tools import reports  # noqa: F401
     from sheetstorm_mcp.tools import admin  # noqa: F401
     from sheetstorm_mcp.tools import resources  # noqa: F401
+    from sheetstorm_mcp.tools import case_notes  # noqa: F401
+    from sheetstorm_mcp.tools import threat_intel  # noqa: F401
+    from sheetstorm_mcp.tools import knowledge_base  # noqa: F401
+    from sheetstorm_mcp.tools import defang  # noqa: F401
+    from sheetstorm_mcp.tools import prompts  # noqa: F401
 
 
 _register_all_tools()

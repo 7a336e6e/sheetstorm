@@ -1,17 +1,22 @@
 """Threat intelligence endpoints for IOC enrichment and sharing."""
-from flask import jsonify, request
+import logging
+
+from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db
+from app import db, limiter
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 from app.services.encryption_service import EncryptionService
 
+logger = logging.getLogger(__name__)
+
 
 @api_bp.route('/threat-intel/virustotal/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('10/minute')
 def virustotal_lookup():
     """Look up a hash, URL, domain, or IP on VirusTotal.
     
@@ -139,12 +144,14 @@ def virustotal_lookup():
     except req.exceptions.Timeout:
         return jsonify({'error': 'timeout', 'message': 'VirusTotal request timed out'}), 504
     except Exception as e:
-        return jsonify({'error': 'server_error', 'message': str(e)}), 500
+        logger.exception('VirusTotal lookup failed')
+        return jsonify({'error': 'server_error', 'message': 'VirusTotal lookup failed'}), 500
 
 
 @api_bp.route('/threat-intel/misp/push', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:update')
+@limiter.limit('5/minute')
 @audit_log('data_modification', 'push_ioc', 'misp')
 def misp_push_ioc():
     """Push IOCs to MISP as events/attributes.
@@ -245,7 +252,8 @@ def misp_push_ioc():
     except req.exceptions.Timeout:
         return jsonify({'error': 'timeout', 'message': 'MISP request timed out'}), 504
     except Exception as e:
-        return jsonify({'error': 'server_error', 'message': str(e)}), 500
+        logger.exception('MISP push failed')
+        return jsonify({'error': 'server_error', 'message': 'MISP push failed'}), 500
 
 
 def _misp_type_to_category(ioc_type: str) -> str:
@@ -277,6 +285,7 @@ def _misp_type_to_category(ioc_type: str) -> str:
 @api_bp.route('/threat-intel/cve/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('15/minute')
 def cve_lookup():
     """Look up a CVE by ID using public APIs (NVD + CISA KEV).
 
@@ -352,7 +361,8 @@ def cve_lookup():
     except req.exceptions.Timeout:
         result['nvd_error'] = 'NVD request timed out'
     except Exception as e:
-        result['nvd_error'] = str(e)
+        logger.exception('NVD CVE lookup failed for %s', cve_id)
+        result['nvd_error'] = 'NVD lookup failed'
 
     # --- CISA KEV lookup ---
     try:
@@ -380,7 +390,8 @@ def cve_lookup():
     except req.exceptions.Timeout:
         result['kev_error'] = 'CISA KEV request timed out'
     except Exception as e:
-        result['kev_error'] = str(e)
+        logger.exception('CISA KEV lookup failed for %s', cve_id)
+        result['kev_error'] = 'KEV lookup failed'
 
     status = 200 if result['found'] else 200  # always 200, found flag tells the story
     return jsonify(result), status
@@ -393,6 +404,7 @@ def cve_lookup():
 @api_bp.route('/threat-intel/ip/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('10/minute')
 def ip_reputation_lookup():
     """Look up IP reputation.  Tries AbuseIPDB first (if configured),
     then VirusTotal, then free ip-api.com for geo only.
@@ -498,6 +510,7 @@ def ip_reputation_lookup():
 @api_bp.route('/threat-intel/domain/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('10/minute')
 def domain_reputation_lookup():
     """Look up domain reputation via VirusTotal (if configured).
 
@@ -556,6 +569,7 @@ def domain_reputation_lookup():
 @api_bp.route('/threat-intel/email/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('10/minute')
 def email_reputation_lookup():
     """Look up email address in breach databases.
     Uses Have I Been Pwned API if configured, otherwise returns
@@ -625,6 +639,7 @@ def email_reputation_lookup():
 @api_bp.route('/threat-intel/ransomware/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@limiter.limit('10/minute')
 def ransomware_victim_lookup():
     """Search ransomware.live for victim postings.
 
@@ -678,4 +693,5 @@ def ransomware_victim_lookup():
     except req.exceptions.Timeout:
         return jsonify({'error': 'timeout', 'message': 'ransomware.live request timed out'}), 504
     except Exception as e:
-        return jsonify({'error': 'server_error', 'message': str(e)}), 500
+        logger.exception('Ransomware victim lookup failed')
+        return jsonify({'error': 'server_error', 'message': 'Ransomware lookup failed'}), 500

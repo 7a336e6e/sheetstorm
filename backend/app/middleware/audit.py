@@ -1,8 +1,11 @@
 """Audit logging middleware"""
+import logging
 from functools import wraps
 from flask import request, g
 from app import db
 from app.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 
 def audit_log(event_type, action, resource_type=None):
@@ -53,10 +56,10 @@ def audit_log(event_type, action, resource_type=None):
                 )
                 db.session.add(log_entry)
                 db.session.commit()
-            except Exception as e:
+            except Exception:
                 # Don't fail the request if audit logging fails
                 db.session.rollback()
-                print(f"Audit logging error: {e}")
+                logger.exception('Audit logging error')
 
             return result
         return decorated_function
@@ -105,9 +108,9 @@ def log_audit_event(
         db.session.add(log_entry)
         db.session.commit()
         return log_entry
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        print(f"Audit logging error: {e}")
+        logger.exception('Audit logging error')
         return None
 
 

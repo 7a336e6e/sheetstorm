@@ -10,7 +10,7 @@ A **Model Context Protocol (MCP) server** for SheetStorm enables AI assistants (
 ┌──────────────────────┐      MCP Protocol       ┌──────────────────────┐
 │  AI Client           │ ◄──────────────────────► │  SheetStorm MCP      │
 │  (Claude, Cursor,    │   stdio / SSE / HTTP     │  Server              │
-│   custom agents)     │                          │                      │
+│   custom agents)     │                          │  (Python + FastMCP)  │
 └──────────────────────┘                          └──────┬───────────────┘
                                                          │
                                                          │ REST API + JWT
@@ -23,74 +23,99 @@ A **Model Context Protocol (MCP) server** for SheetStorm enables AI assistants (
 
 The MCP server acts as a bridge between AI assistants and the SheetStorm REST API, translating natural language tool calls into authenticated API requests.
 
-## Phase 1 — Core Read Tools (v0.1)
+**Runtime:** Python 3.12+ with `mcp` SDK (FastMCP high-level API)  
+**Transport:** SSE on port 8811 (proxied via nginx at `/mcp/`)  
+**Deployment:** Docker container in the same compose network as the backend  
 
-**Target:** 2 weeks  
-**Goal:** AI can query and analyze incident data
+## Current Implementation Status
 
-### Tools
+### Implemented Tools (70+)
 
-| Tool | Description | API Endpoint |
-|------|-------------|--------------|
-| `list_incidents` | List incidents with filters (status, severity, phase) | `GET /api/v1/incidents` |
-| `get_incident` | Get full incident details by ID | `GET /api/v1/incidents/{id}` |
-| `list_timeline_events` | Get chronological events for an incident | `GET /api/v1/incidents/{id}/events` |
-| `list_compromised_hosts` | List affected systems | `GET /api/v1/incidents/{id}/hosts` |
-| `list_iocs` | List network/host IOCs for an incident | `GET /api/v1/incidents/{id}/network-iocs` |
-| `list_tasks` | Get incident tasks and their status | `GET /api/v1/incidents/{id}/tasks` |
-| `list_artifacts` | List evidence artifacts | `GET /api/v1/incidents/{id}/artifacts` |
-| `get_attack_graph` | Get attack graph nodes and edges | `GET /api/v1/incidents/{id}/attack-graph` |
-| `list_case_notes` | Get analyst case notes | `GET /api/v1/incidents/{id}/notes` |
+The MCP server is fully operational with the following tool modules:
 
-### Resources
+| Module | Tools | Status |
+|--------|-------|--------|
+| **auth** | `login`, `logout`, `whoami` | ✅ Complete |
+| **incidents** | `list`, `get`, `create`, `update`, `update_status`, `delete`, `search` | ✅ Complete |
+| **timeline** | `list`, `create`, `update`, `delete`, `list_mitre_tactics`, `list_mitre_techniques` | ✅ Complete |
+| **tasks** | `list`, `get`, `create`, `update`, `delete`, `add_comment`, `list_comments` | ✅ Complete |
+| **assets** | `list_hosts`, `get_host`, `create_host`, `update_host`, `delete_host`, `list_accounts`, `create_account`, `delete_account` | ✅ Complete |
+| **iocs** | `list_network`, `create_network`, `delete_network`, `list_host`, `create_host`, `delete_host`, `list_malware`, `create_malware`, `delete_malware` | ✅ Complete |
+| **artifacts** | `list`, `upload`, `download`, `verify_integrity`, `chain_of_custody` | ✅ Complete |
+| **attack_graph** | `get_graph`, `create_node`, `update_node`, `delete_node`, `create_edge`, `delete_edge`, `auto_generate`, `list_node_types`, `list_edge_types` | ✅ Complete |
+| **reports** | `list`, `generate_pdf`, `generate_ai_summary` | ✅ Complete |
+| **admin** | `list_users`, `list_notifications`, `mark_notification_read`, `get_audit_logs`, `health_check` | ✅ Complete |
+| **resources** | `ir_phases`, `severity_levels`, `incident_statuses`, `mitre_tactics_resource`, `mitre_techniques_resource` | ✅ Complete |
+| **case_notes** | `list`, `get`, `create`, `update`, `delete` | ✅ Complete |
+| **threat_intel** | `virustotal_lookup`, `misp_push_iocs`, `cve_lookup`, `ip_reputation`, `domain_reputation`, `email_reputation`, `ransomware_lookup` | ✅ Complete |
+| **knowledge_base** | `kb_lolbas`, `kb_event_ids`, `kb_d3fend`, `kb_d3fend_suggest` | ✅ Complete |
+| **defang** | `defang_iocs`, `refang_iocs` | ✅ Complete |
 
-| Resource | Description |
-|----------|-------------|
-| `incident://{id}` | Full incident context as a document |
-| `timeline://{incident_id}` | Complete timeline as structured text |
-| `attack-graph://{incident_id}` | Attack graph as DOT/Mermaid notation |
+### Implemented Prompts
+
+| Prompt | Description | Status |
+|--------|-------------|--------|
+| `analyze_incident` | Comprehensive incident analysis with timeline, IOCs, assets, recommendations | ✅ Complete |
+| `generate_timeline_summary` | Narrative timeline summary with MITRE ATT&CK mapping | ✅ Complete |
+| `suggest_mitre_mapping` | Suggest ATT&CK technique mappings for incident events | ✅ Complete |
+| `identify_lateral_movement` | Analyze incident for lateral movement evidence | ✅ Complete |
+| `draft_executive_summary` | Executive summary for management/stakeholders | ✅ Complete |
+
+### Implemented Resources
+
+| Resource | Description | Status |
+|----------|-------------|--------|
+| IR Phases | Incident response phases (1-6) with descriptions | ✅ Complete |
+| Severity Levels | Severity level definitions | ✅ Complete |
+| Incident Statuses | Valid incident status values | ✅ Complete |
+| MITRE Tactics | ATT&CK tactic reference data | ✅ Complete |
+| MITRE Techniques | ATT&CK technique reference data | ✅ Complete |
 
 ### Authentication
 
-- MCP server authenticates to SheetStorm via a **service account JWT** stored in server config
-- Service account has `mcp_service` role with read-only permissions
-- JWT refresh handled internally by the MCP server
+- Auto-authentication via service account credentials in environment config
+- JWT token management with automatic refresh
+- Credentials configured via `SHEETSTORM_EMAIL` / `SHEETSTORM_PASSWORD` env vars
+- Falls back to manual `login` tool if auto-auth fails
 
-## Phase 2 — Write Tools + Enrichment (v0.2)
+## Project Structure
 
-**Target:** 3 weeks  
-**Goal:** AI can create, update, and enrich incident data
+```
+mcp-server/
+├── sheetstorm_mcp/
+│   ├── __init__.py         # Package version
+│   ├── __main__.py         # Entry point
+│   ├── server.py           # FastMCP server + lifespan
+│   ├── client.py           # SheetStorm API client (httpx)
+│   ├── config.py           # Configuration from env
+│   └── tools/
+│       ├── auth.py         # Authentication tools
+│       ├── incidents.py    # Incident CRUD + search
+│       ├── timeline.py     # Timeline event management
+│       ├── tasks.py        # Task management
+│       ├── assets.py       # Hosts + accounts
+│       ├── iocs.py         # Network/host/malware IOCs
+│       ├── artifacts.py    # Evidence artifacts + CoC
+│       ├── attack_graph.py # Attack graph nodes + edges
+│       ├── reports.py      # Report generation
+│       ├── admin.py        # User/notification/audit admin
+│       ├── resources.py    # Reference data resources
+│       ├── case_notes.py   # Case notes CRUD
+│       ├── threat_intel.py # VT, MISP, CVE, IP/domain/email
+│       ├── knowledge_base.py # LOLBAS, Event IDs, D3FEND
+│       ├── defang.py       # IOC defang/refang utilities
+│       └── prompts.py      # IR analysis prompt templates
+├── Dockerfile
+├── pyproject.toml
+└── README.md
+```
 
-### Tools
+## Phase 3 — Velociraptor Integration (Future)
 
-| Tool | Description | API Endpoint |
-|------|-------------|--------------|
-| `create_timeline_event` | Add event to incident timeline | `POST /api/v1/incidents/{id}/events` |
-| `create_case_note` | Document findings as case notes | `POST /api/v1/incidents/{id}/notes` |
-| `update_incident_status` | Change incident status/phase | `PATCH /api/v1/incidents/{id}/status` |
-| `create_task` | Create response tasks | `POST /api/v1/incidents/{id}/tasks` |
-| `complete_task` | Mark task as complete | `PATCH /api/v1/incidents/{id}/tasks/{tid}` |
-| `add_ioc` | Add IOC (network or host-based) | `POST /api/v1/incidents/{id}/network-iocs` |
-| `virustotal_lookup` | Enrich hash/domain/IP via VirusTotal | `POST /api/v1/threat-intel/virustotal/lookup` |
-| `misp_push` | Push IOCs to MISP platform | `POST /api/v1/threat-intel/misp/push` |
-| `add_compromised_host` | Register a compromised system | `POST /api/v1/incidents/{id}/hosts` |
-
-### Prompts
-
-| Prompt | Description |
-|--------|-------------|
-| `analyze_incident` | Generate comprehensive incident analysis with recommendations |
-| `generate_timeline_summary` | Produce human-readable timeline narrative |
-| `suggest_mitre_mapping` | Map observed activities to MITRE ATT&CK |
-| `identify_lateral_movement` | Analyze host connections for lateral movement paths |
-| `draft_executive_summary` | Write executive summary from incident data |
-
-## Phase 3 — Velociraptor Integration (v0.3)
-
-**Target:** 4 weeks  
+**Status:** Not started  
 **Goal:** Direct forensic collection and endpoint querying through MCP
 
-### Tools
+### Planned Tools
 
 | Tool | Description |
 |------|-------------|
@@ -106,88 +131,39 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 - API key with appropriate Velociraptor ACLs
 - Network connectivity from MCP server → Velociraptor API
 
-## Phase 4 — Report Generation + Advanced Analysis (v0.4)
+## Phase 4 — Advanced Analysis (Future)
 
-**Target:** 3 weeks  
-**Goal:** End-to-end report generation and advanced correlation
+**Status:** Not started  
+**Goal:** Cross-incident correlation and advanced export capabilities
 
-### Tools
+### Planned Tools
 
 | Tool | Description |
 |------|-------------|
-| `generate_report` | Create full IR report (PDF/DOCX) | 
 | `correlate_iocs` | Cross-reference IOCs across incidents |
-| `search_audit_logs` | Query audit trail |
-| `export_incident` | Export incident as structured JSON |
+| `export_incident` | Export incident as structured JSON/STIX |
+| `bulk_enrich` | Batch IOC enrichment across multiple sources |
+| `search_across_incidents` | Full-text search across all incident data |
 
-### Prompts
+### Planned Prompts
 
 | Prompt | Description |
 |--------|-------------|
 | `full_ir_report` | Generate complete incident response report |
 | `lessons_learned` | Produce lessons learned document |
 | `containment_checklist` | Generate containment action checklist |
-| `ioc_summary` | Compile IOC list for threat sharing |
+| `ioc_summary` | Compile IOC list for threat sharing (STIX/CSV) |
 
-## Implementation Details
-
-### Technology Stack
-
-- **Runtime:** Python 3.12+ or TypeScript (Node.js 20+)
-- **MCP SDK:** `@modelcontextprotocol/sdk` (TS) or `mcp` (Python)
-- **Transport:** stdio (default for Claude Code), SSE for web clients
-- **HTTP Client:** `httpx` (Python) or `fetch` (Node.js)
-- **Config:** JSON config file for server URL, service account token
-
-### Project Structure
-
-```
-mcp-server/
-├── src/
-│   ├── server.ts          # MCP server entry point
-│   ├── tools/
-│   │   ├── incidents.ts   # Incident CRUD tools
-│   │   ├── timeline.ts    # Timeline tools
-│   │   ├── enrichment.ts  # VT/MISP tools
-│   │   ├── forensics.ts   # Velociraptor tools
-│   │   └── reports.ts     # Report generation tools
-│   ├── resources/
-│   │   ├── incident.ts    # Incident resource provider
-│   │   └── graph.ts       # Attack graph resource
-│   ├── prompts/
-│   │   ├── analysis.ts    # Analysis prompts
-│   │   └── reporting.ts   # Report prompts
-│   ├── api-client.ts      # SheetStorm API wrapper
-│   └── config.ts          # Configuration
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
-### Example Usage
-
-```
-User: "Show me all critical incidents from this week"
-
-→ MCP calls list_incidents(severity="critical", since="7d")
-→ Returns formatted incident list
-
-User: "Look up hash abc123def on VirusTotal and add findings to incident INC-42"
-
-→ MCP calls virustotal_lookup(type="hash", value="abc123def")
-→ MCP calls create_case_note(incident_id="...", title="VT Lookup: abc123def", content="...")
-→ Returns enrichment results
-```
-
-### Security Considerations
+## Security Considerations
 
 1. **Least Privilege:** MCP service account gets only required permissions
 2. **Audit Trail:** All MCP actions logged via existing audit middleware
-3. **Rate Limiting:** Inherits backend rate limits; additional MCP-level throttling
-4. **Token Rotation:** Service account JWT rotated on schedule
+3. **Rate Limiting:** Inherits backend rate limits; additional MCP-level throttling possible
+4. **Token Rotation:** JWT auto-refreshed by the MCP client
 5. **Input Validation:** All tool inputs validated before API calls
-6. **Sensitive Data:** Credentials never exposed through MCP resources
+6. **Sensitive Data:** Credentials never exposed through MCP resources or tool outputs
 7. **Network Isolation:** MCP server runs in same Docker network as backend
+8. **Error Handling:** Generic error messages returned to clients; details logged server-side
 
 ## Success Metrics
 
@@ -200,10 +176,9 @@ User: "Look up hash abc123def on VirusTotal and add findings to incident INC-42"
 
 ## Timeline Summary
 
-| Phase | Duration | Status |
-|-------|----------|--------|
-| Phase 1 — Core Read Tools | 2 weeks | 🔲 Not Started |
-| Phase 2 — Write + Enrichment | 3 weeks | 🔲 Not Started |
-| Phase 3 — Velociraptor | 4 weeks | 🔲 Not Started |
-| Phase 4 — Reports + Advanced | 3 weeks | 🔲 Not Started |
-| **Total** | **12 weeks** | |
+| Phase | Scope | Status |
+|-------|-------|--------|
+| Phase 1 — Core Read Tools | Incident, timeline, IOC, task, artifact, attack graph queries | ✅ Complete |
+| Phase 2 — Write + Enrichment | Full CRUD, threat intel, knowledge base, defang, prompts | ✅ Complete |
+| Phase 3 — Velociraptor | Direct endpoint forensics via Velociraptor API | 🔲 Not Started |
+| Phase 4 — Advanced Analysis | Cross-incident correlation, bulk enrichment, advanced export | 🔲 Not Started |

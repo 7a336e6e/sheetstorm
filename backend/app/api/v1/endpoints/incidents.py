@@ -1,4 +1,5 @@
 """Incident management endpoints"""
+import logging
 from datetime import datetime, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
@@ -9,6 +10,8 @@ from app.middleware.rbac import require_permission, require_incident_access, get
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -27,7 +30,7 @@ def list_incidents():
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 20, type=int), 100)
 
-    query = Incident.query.filter_by(organization_id=user.organization_id)
+    query = Incident.query.filter_by(organization_id=user.organization_id, is_deleted=False)
 
     # For Operators/Viewers, only show directly assigned incidents
     if user.has_role('Operator') or user.has_role('Viewer'):
@@ -92,10 +95,12 @@ def list_incidents():
     # Search
     search = request.args.get('search')
     if search:
+        # Escape LIKE wildcards to prevent LIKE injection
+        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
         query = query.filter(
             db.or_(
-                Incident.title.ilike(f'%{search}%'),
-                Incident.description.ilike(f'%{search}%')
+                Incident.title.ilike(f'%{search_escaped}%'),
+                Incident.description.ilike(f'%{search_escaped}%')
             )
         )
 
@@ -289,14 +294,16 @@ def update_incident_status(incident_id):
 @require_permission('incidents:delete')
 @audit_log('data_modification', 'delete', 'incident')
 def delete_incident(incident_id):
-    """Delete an incident."""
+    """Soft-delete an incident."""
     user = get_current_user()
-    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id).first()
+    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_deleted=False).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
 
-    db.session.delete(incident)
+    incident.is_deleted = True
+    incident.updated_at = datetime.now(timezone.utc)
+    incident.updated_by = user.id
     db.session.commit()
 
     return jsonify({'message': 'Incident deleted successfully'}), 200
@@ -359,6 +366,7 @@ def assign_user(incident_id):
 
     # Notify assigned user
     notify_user_assigned(str(target_user.id), incident)
+    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
 
     return jsonify(assignment.to_dict()), 201
 
@@ -382,6 +390,8 @@ def remove_assignment(incident_id, assignment_id):
 
     assignment.removed_at = datetime.now(timezone.utc)
     db.session.commit()
+
+    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
 
     return jsonify({'message': 'Assignment removed'}), 200
 
@@ -413,14 +423,14 @@ def import_incident_data(incident_id):
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception('Excel import failed for incident %s', incident_id)
         return jsonify({'error': 'server_error', 'message': 'Import failed'}), 500
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/import/parse', methods=['POST'])
 @jwt_required()
 @require_incident_access('incidents:update')
+@audit_log('data_modification', 'parse_import_file', 'incident')
 def parse_import_file(incident_id):
     """Parse Excel file and return raw structure."""
     if 'file' not in request.files:
@@ -435,7 +445,8 @@ def parse_import_file(incident_id):
         return jsonify(data), 200
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
-    except Exception as e:
+    except Exception:
+        logger.exception('Excel parse failed')
         return jsonify({'error': 'server_error', 'message': 'Parse failed'}), 500
 
 
@@ -459,7 +470,8 @@ def submit_import_data(incident_id):
         }), 200
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
-    except Exception as e:
+    except Exception:
+        logger.exception('Bulk import failed for incident %s', incident_id)
         return jsonify({'error': 'server_error', 'message': 'Import failed'}), 500
 
 

@@ -18,7 +18,7 @@ def list_case_notes(incident_id):
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     category = request.args.get('category')
 
-    query = CaseNote.query.filter_by(incident_id=incident_id)
+    query = CaseNote.query.filter_by(incident_id=incident_id, is_deleted=False)
 
     if category:
         query = query.filter(CaseNote.category == category)
@@ -44,6 +44,8 @@ def create_case_note(incident_id):
     """Create a case note."""
     user = get_current_user()
     data = request.get_json()
+    if not data:
+        return jsonify({'error': 'bad_request', 'message': 'Request body required'}), 400
 
     title = data.get('title', '').strip()
     content = data.get('content', '').strip()
@@ -76,7 +78,7 @@ def create_case_note(incident_id):
 @require_incident_access('incidents:read')
 def get_case_note(incident_id, note_id):
     """Get a single case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id).first()
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
@@ -89,22 +91,31 @@ def get_case_note(incident_id, note_id):
 @audit_log('data_modification', 'update', 'case_note')
 def update_case_note(incident_id, note_id):
     """Update a case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id).first()
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
     data = request.get_json()
+    if not data:
+        return jsonify({'error': 'bad_request', 'message': 'Request body required'}), 400
 
     if 'title' in data:
-        note.title = data['title'].strip()
+        title = data['title'].strip()
+        if not title:
+            return jsonify({'error': 'bad_request', 'message': 'Title cannot be empty'}), 400
+        note.title = title
     if 'content' in data:
-        note.content = data['content'].strip()
+        content = data['content'].strip()
+        if not content:
+            return jsonify({'error': 'bad_request', 'message': 'Content cannot be empty'}), 400
+        note.content = content
     if 'category' in data and data['category'] in CaseNote.CATEGORIES:
         note.category = data['category']
     if 'is_pinned' in data:
         note.is_pinned = bool(data['is_pinned'])
 
     note.updated_at = datetime.now(timezone.utc)
+    note.updated_by = get_current_user().id
     db.session.commit()
 
     socketio.emit('case_note_updated', note.to_dict(), room=f'incident_{incident_id}')
@@ -117,12 +128,16 @@ def update_case_note(incident_id, note_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'delete', 'case_note')
 def delete_case_note(incident_id, note_id):
-    """Delete a case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id).first()
+    """Soft-delete a case note."""
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
-    db.session.delete(note)
+    note.is_deleted = True
+    note.updated_at = datetime.now(timezone.utc)
+    note.updated_by = get_current_user().id
     db.session.commit()
+
+    socketio.emit('case_note_deleted', {'id': str(note_id), 'incident_id': str(incident_id)}, room=f'incident_{incident_id}')
 
     return jsonify({'message': 'Case note deleted'}), 200

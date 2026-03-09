@@ -141,10 +141,10 @@ def generate_pdf_report(incident_id):
         from weasyprint import HTML
         pdf_bytes = HTML(string=html_content).write_pdf()
     except Exception as e:
-        current_app.logger.error(f"PDF generation failed: {e}")
+        current_app.logger.exception('PDF generation failed')
         return jsonify({
             'error': 'server_error',
-            'message': f'PDF generation failed: {str(e)}'
+            'message': 'PDF generation failed. Please try again or contact support.'
         }), 500
 
     # ── Step 4: Save report record ───────────────────────────────────
@@ -173,6 +173,7 @@ def generate_pdf_report(incident_id):
 @api_bp.route('/incidents/<uuid:incident_id>/reports/ai-generate', methods=['POST'])
 @jwt_required()
 @require_incident_access('reports:generate')
+@audit_log('data_modification', 'generate_ai_summary', 'report')
 def generate_ai_summary(incident_id):
     """Generate an AI summary for an incident (returns JSON text, not PDF)."""
     incident = g.incident
@@ -304,13 +305,14 @@ def download_report(incident_id, report_id):
 @require_incident_access('reports:generate')
 @audit_log('data_modification', 'delete', 'report')
 def delete_report(incident_id, report_id):
-    """Delete a report record."""
+    """Soft-delete a report record."""
     incident = g.incident
-    report = Report.query.filter_by(id=report_id, incident_id=incident.id).first()
+    report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_deleted=False).first()
     if not report:
         return jsonify({'error': 'not_found', 'message': 'Report not found'}), 404
 
-    db.session.delete(report)
+    report.is_deleted = True
+    report.updated_at = datetime.now(timezone.utc)
     db.session.commit()
 
     return jsonify({'message': 'Report deleted'}), 200

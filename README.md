@@ -13,7 +13,8 @@
   <a href="docs/api-reference.md">API Reference</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/development.md">Development</a> ·
-  <a href="docs/configuration.md">Configuration</a>
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="docs/mcp-server-roadmap.md">MCP Server</a>
 </p>
 
 ---
@@ -91,6 +92,18 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 </td>
 </tr>
+<tr>
+<td colspan="2">
+
+### 🤖 MCP Server — AI Assistant Integration
+- **70+ tools** across 17 modules for full platform control via natural language
+- Claude, Cursor, and custom AI agents can query incidents, enrich IOCs, build attack graphs, and generate reports
+- SSE transport with OAuth 2.1 authentication and Redis-backed client persistence
+- 5 IR-focused prompt templates (incident analysis, timeline summary, MITRE mapping, lateral movement, executive summary)
+- 5 reference data resources (IR phases, severities, statuses, MITRE tactics & techniques)
+
+</td>
+</tr>
 </table>
 
 ---
@@ -102,12 +115,13 @@ git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
 chmod +x start.sh && ./start.sh
 ```
 
-That's it. The script generates secrets, builds 4 Docker containers, runs migrations, and seeds an admin user.
+That's it. The script generates secrets, builds 6 Docker containers, runs migrations, and seeds an admin user.
 
-| Service  | URL                          |
-|----------|------------------------------|
-| Frontend | http://127.0.0.1:3000        |
-| API      | http://127.0.0.1:5000/api/v1 |
+| Service    | URL                              |
+|------------|----------------------------------|
+| Frontend   | http://127.0.0.1:3000            |
+| API        | http://127.0.0.1:5000/api/v1     |
+| MCP Server | http://127.0.0.1:8811/sse        |
 
 > **Default login:** `admin@sheetstorm.local` · password in `ADMIN_PASSWORD` from `.env`
 
@@ -119,6 +133,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 |----------------|-------|
 | **Frontend**   | Next.js 14 · TypeScript · Tailwind CSS · Zustand · React Flow · Radix UI · Framer Motion |
 | **Backend**    | Flask 3.0 · SQLAlchemy · Flask-SocketIO · Flask-JWT-Extended · WeasyPrint · pandas |
+| **MCP Server** | Python 3.12 · FastMCP SDK · httpx · SSE transport · OAuth 2.1 |
 | **Database**   | PostgreSQL 16 · Redis 7 |
 | **AI**         | OpenAI GPT-4 · Google Gemini Pro |
 | **Infra**      | Docker Compose · Nginx · S3 · Google Drive · Slack |
@@ -127,7 +142,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 
 ## Project Status
 
-**56 / 64** tasks completed across 14 epics.
+**76 / 84** tasks completed across 15 epics.
 
 | Epic | Status |
 |------|--------|
@@ -144,7 +159,43 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
 | Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
 | Auto-enrichment & soft fallback | ✅ 1/1 |
+| MCP server (70+ tools, 5 prompts, 5 resources, OAuth, Docker) | ✅ 20/20 |
 | Testing | 🔜 0/4 deferred |
+
+---
+
+## MCP Server
+
+SheetStorm includes a fully operational **Model Context Protocol (MCP) server** that enables AI assistants (Claude, Cursor, custom agents) to interact with the incident response platform through natural language.
+
+```
+AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Server  ──── REST + JWT ────►  Flask Backend
+```
+
+### Capabilities
+
+| Module | Tools | Description |
+|--------|-------|-------------|
+| **auth** | 3 | Login, logout, session info |
+| **incidents** | 7 | Full incident CRUD + search |
+| **timeline** | 6 | Timeline events + MITRE tactic/technique lookup |
+| **tasks** | 7 | Task management with comments |
+| **assets** | 8 | Compromised hosts + accounts |
+| **iocs** | 9 | Network IOCs, host IOCs, malware |
+| **artifacts** | 5 | Evidence upload/download + chain of custody |
+| **attack_graph** | 9 | Nodes, edges, auto-generation |
+| **reports** | 3 | PDF + AI report generation |
+| **admin** | 5 | Users, notifications, audit logs |
+| **case_notes** | 5 | Case note CRUD |
+| **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |
+| **knowledge_base** | 4 | LOLBAS, Event IDs, D3FEND |
+| **defang** | 2 | IOC defanging/refanging |
+| **prompts** | 5 | IR analysis templates |
+| **resources** | 5 | Reference data (phases, severities, MITRE) |
+
+**Transport:** SSE on port 8811 · **Auth:** OAuth 2.1 with Redis-backed client persistence · **Runtime:** Python 3.12 + FastMCP SDK
+
+> See [MCP Server Roadmap](docs/mcp-server-roadmap.md) for full tool reference, future phases (Velociraptor, cross-incident correlation), and architecture details.
 
 ---
 
@@ -158,7 +209,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
 | P1 | Case notes & kill chain phase per event | ✅ Done |
 | P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
-| P1 | MCP server for AI assistant integration | 📋 [Roadmap](docs/mcp-server-roadmap.md) |
+| P1 | MCP server for AI assistant integration (70+ tools) | ✅ Done |
 | P1 | Test suite — pytest · Vitest · Playwright | 🔜 Planned |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |
 | P1 | CVE lookup (CISA KEV + NVD) | ✅ Done |
@@ -188,7 +239,7 @@ That's it. The script generates secrets, builds 4 Docker containers, runs migrat
 | [WebSocket Events](docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
 | [Configuration](docs/configuration.md) | Environment variables and database schema |
 | [Development](docs/development.md) | Setup guide, useful commands, migration workflow |
-| [MCP Server Roadmap](docs/mcp-server-roadmap.md) | AI assistant integration via Model Context Protocol |
+| [MCP Server Roadmap](docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and future phases |
 
 ---
 

@@ -75,9 +75,15 @@ def create_app(config_name=None):
     jwt.init_app(app)
 
     # CORS configuration
+    cors_origins_str = os.getenv('CORS_ORIGINS', '')
+    if cors_origins_str:
+        cors_origins = [o.strip() for o in cors_origins_str.split(',') if o.strip()]
+    else:
+        cors_origins = "*"
+    
     CORS(app, resources={
         r"/api/*": {
-            "origins": ["http://127.0.0.1:3000", "http://localhost:3000"],
+            "origins": cors_origins,
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
             "supports_credentials": True
@@ -87,7 +93,7 @@ def create_app(config_name=None):
     # Initialize SocketIO with Redis message queue for scaling
     socketio.init_app(
         app,
-        cors_allowed_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+        cors_allowed_origins=cors_origins,
         message_queue=app.config.get('REDIS_URL'),
         async_mode='eventlet'
     )

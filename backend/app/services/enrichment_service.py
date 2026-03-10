@@ -9,7 +9,8 @@ import logging
 from typing import Optional
 from app import db
 from app.models import Integration
-from app.services.encryption_service import EncryptionService
+import json
+from app.services.encryption_service import encryption_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class EnrichmentService:
             ).first()
             if not integration or not integration.credentials_encrypted:
                 return None
-            creds = EncryptionService.decrypt_json(integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(integration.credentials_encrypted))
             return creds.get('api_key')
         except Exception:
             return None

@@ -8,7 +8,8 @@ from app import db, limiter
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
-from app.services.encryption_service import EncryptionService
+import json
+from app.services.encryption_service import encryption_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def virustotal_lookup():
     api_key = None
     if integration and integration.credentials_encrypted:
         try:
-            creds = EncryptionService.decrypt_json(integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(integration.credentials_encrypted))
             api_key = creds.get('api_key')
         except Exception:
             pass
@@ -190,7 +191,7 @@ def misp_push_ioc():
 
     if integration.credentials_encrypted:
         try:
-            creds = EncryptionService.decrypt_json(integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(integration.credentials_encrypted))
             api_key = creds.get('api_key')
         except Exception:
             pass
@@ -428,7 +429,7 @@ def ip_reputation_lookup():
     ).first()
     if abuse_integration and abuse_integration.credentials_encrypted:
         try:
-            creds = EncryptionService.decrypt_json(abuse_integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(abuse_integration.credentials_encrypted))
             api_key = creds.get('api_key')
             if api_key:
                 resp = req.get(
@@ -459,7 +460,7 @@ def ip_reputation_lookup():
     ).first()
     if vt_integration and vt_integration.credentials_encrypted:
         try:
-            creds = EncryptionService.decrypt_json(vt_integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(vt_integration.credentials_encrypted))
             api_key = creds.get('api_key')
             if api_key:
                 resp = req.get(
@@ -534,7 +535,7 @@ def domain_reputation_lookup():
     if vt_integration and vt_integration.credentials_encrypted:
         result['vt_configured'] = True
         try:
-            creds = EncryptionService.decrypt_json(vt_integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(vt_integration.credentials_encrypted))
             api_key = creds.get('api_key')
             if api_key:
                 resp = req.get(
@@ -599,7 +600,7 @@ def email_reputation_lookup():
     ).first()
     if hibp_integration and hibp_integration.credentials_encrypted:
         try:
-            creds = EncryptionService.decrypt_json(hibp_integration.credentials_encrypted)
+            creds = json.loads(encryption_service.decrypt(hibp_integration.credentials_encrypted))
             api_key = creds.get('api_key')
             if api_key:
                 resp = req.get(

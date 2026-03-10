@@ -34,29 +34,38 @@ def _run_sse_with_oauth(cfg, logger) -> None:
 
     Mounts both SSE (/sse, /messages/) and Streamable HTTP (/mcp)
     endpoints so that clients using either transport can connect.
+
+    The Streamable HTTP app is used as the primary Starlette application
+    because its lifespan initialises the session manager task group that
+    the /mcp endpoint requires.  The SSE endpoints (/sse, /messages) are
+    then grafted in — they manage their own per-connection lifecycle and
+    do not need the session manager.
     """
     import uvicorn
 
     from sheetstorm_mcp.login_routes import create_login_routes
     from sheetstorm_mcp.server import mcp, _oauth_provider
 
-    # Get the Starlette SSE app from FastMCP (includes built-in OAuth routes)
-    app = mcp.sse_app()
+    # Use the Streamable HTTP app as the primary — its lifespan runs
+    # session_manager.run() which creates the required task group.
+    app = mcp.streamable_http_app()
 
-    # Also mount the Streamable HTTP /mcp endpoint for clients that use it
-    # (e.g. Gemini CLI, newer MCP clients). Both transports share the same
-    # underlying MCP server, so state/tools are identical.
-    http_app = mcp.streamable_http_app()
-    for route in http_app.routes:
-        if getattr(route, "path", "") == "/mcp":
+    # Grab /sse and /messages routes from the SSE app and add them
+    # to the primary app so legacy SSE clients still work.
+    sse_app = mcp.sse_app()
+    for route in sse_app.routes:
+        path = getattr(route, "path", "")
+        if path in ("/sse", "/messages"):
             app.routes.insert(-1, route)
-            logger.info("Mounted Streamable HTTP endpoint at /mcp")
-            break
+            logger.info("Mounted SSE endpoint at %s", path)
 
     # Mount the custom login routes alongside the SDK's OAuth routes
     login_routes = create_login_routes(_oauth_provider)
     app.routes.extend(login_routes)
 
+    logger.info(
+        "MCP dual-transport server ready — SSE at /sse, Streamable HTTP at /mcp",
+    )
     logger.info(
         "MCP OAuth authentication ENABLED — login page at %s/sheetstorm-login",
         cfg.mcp_issuer_url,

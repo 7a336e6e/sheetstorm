@@ -78,6 +78,7 @@ import {
   Trash2,
   MoreVertical,
   Send,
+  Search,
 } from 'lucide-react'
 
 // Import new Tab Components
@@ -235,6 +236,7 @@ export default function IncidentDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [hosts, setHosts] = useState<CompromisedHost[]>([])
+  const [hostSearch, setHostSearch] = useState('')
 
   // Modal States
   const [showEditModal, setShowEditModal] = useState(false)
@@ -898,61 +900,73 @@ export default function IncidentDetailPage() {
 
           {/* Hosts Tab */}
           <TabsContent value="hosts">
-            <Card>
-              <CardHeader className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Compromised Hosts</CardTitle>
-                  <CardDescription>Systems affected by this incident</CardDescription>
-                </div>
-                <Button onClick={() => handleOpenHostModal()}><Plus className="mr-2 h-4 w-4" /> Add Host</Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <GlassTable className="border-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Hostname</TableHead>
-                        <TableHead>IP</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Containment</TableHead>
-                        <TableHead>First Seen</TableHead>
-                        <TableHead className="w-[50px]"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {hosts.length === 0 ? (
-                        <TableRow><TableCell colSpan={6}>
-                          <TableEmpty
-                            title="No compromised hosts"
-                            description="Record systems that have been identified as compromised during this incident investigation."
-                            icon={<Server className="w-8 h-8" />}
-                          />
-                        </TableCell></TableRow>
-                      ) : (
-                        hosts.map(host => (
-                          <TableRow key={host.id} className="group">
-                            <TableCell className="font-medium">{host.hostname}</TableCell>
-                            <TableCell>{host.ip_address}</TableCell>
-                            <TableCell>{host.system_type}</TableCell>
-                            <TableCell>
-                              <Badge variant={host.containment_status === 'isolated' ? 'default' : 'destructive'}>
-                                {host.containment_status || 'Active'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>{host.first_seen ? formatDateTime(host.first_seen) : '-'}</TableCell>
-                            <TableCell>
-                              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenHostModal(host)}>
-                                <MoreHorizontal className="w-4 h-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </GlassTable>
-              </CardContent>
-            </Card>
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex flex-col lg:flex-row gap-4 justify-between">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search hosts, IPs..."
+                        value={hostSearch}
+                        onChange={(e) => setHostSearch(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                    <Button onClick={() => handleOpenHostModal()}><Plus className="mr-2 h-4 w-4" /> Add Host</Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-0">
+                  <GlassTable className="border-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Hostname</TableHead>
+                          <TableHead>IP</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Containment</TableHead>
+                          <TableHead>First Seen</TableHead>
+                          <TableHead className="w-[50px]"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {hosts.filter(h => !hostSearch || h.hostname?.toLowerCase().includes(hostSearch.toLowerCase()) || h.ip_address?.toLowerCase().includes(hostSearch.toLowerCase()) || h.system_type?.toLowerCase().includes(hostSearch.toLowerCase())).length === 0 ? (
+                          <TableRow><TableCell colSpan={6}>
+                            <TableEmpty
+                              title={hostSearch ? 'No matching hosts' : 'No compromised hosts'}
+                              description={hostSearch ? 'Try adjusting your search criteria.' : 'Record systems that have been identified as compromised during this incident investigation.'}
+                              icon={<Server className="w-8 h-8" />}
+                            />
+                          </TableCell></TableRow>
+                        ) : (
+                          hosts.filter(h => !hostSearch || h.hostname?.toLowerCase().includes(hostSearch.toLowerCase()) || h.ip_address?.toLowerCase().includes(hostSearch.toLowerCase()) || h.system_type?.toLowerCase().includes(hostSearch.toLowerCase())).map(host => (
+                            <TableRow key={host.id} className="group">
+                              <TableCell className="font-medium">{host.hostname}</TableCell>
+                              <TableCell>{host.ip_address}</TableCell>
+                              <TableCell>{host.system_type}</TableCell>
+                              <TableCell>
+                                <Badge variant={host.containment_status === 'isolated' ? 'default' : 'destructive'}>
+                                  {host.containment_status || 'Active'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>{host.first_seen ? formatDateTime(host.first_seen) : '-'}</TableCell>
+                              <TableCell>
+                                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenHostModal(host)}>
+                                  <MoreHorizontal className="w-4 h-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </GlassTable>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* Tasks Tab */}

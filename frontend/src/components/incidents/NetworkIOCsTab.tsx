@@ -199,8 +199,8 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
         <div className="space-y-4">
             <Card>
                 <CardContent className="p-4">
-                    <div className="flex justify-between">
-                        <div className="relative w-72">
+                    <div className="flex justify-between gap-4">
+                        <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search IPs, domains..." className="pl-10" variant="glass" />
                         </div>

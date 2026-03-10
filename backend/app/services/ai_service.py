@@ -24,6 +24,100 @@ class AIService:
     )
 
     REPORT_PROMPTS: Dict[str, str] = {
+        "full": """Generate a **Full Incident Report** — the single comprehensive document that captures the entire incident investigation.
+
+## Structure your report EXACTLY as follows (use these Markdown headings):
+
+### 1. Executive Overview
+- One-paragraph synopsis: what happened, when it was detected, current status
+- Incident classification and severity justification
+- Business impact summary
+
+### 2. Incident Summary & Metrics
+| Metric | Value |
+|--------|-------|
+| Detection Date | (date) |
+| Current Phase | (phase) |
+| Total Timeline Events | (count) |
+| Compromised Hosts | (count) |
+| Compromised Accounts | (count) |
+| Network IOCs | (count) |
+| Host-Based IOCs | (count) |
+| Malware/Tools Identified | (count) |
+
+### 3. Timeline of Events
+- Chronological narrative of the incident from first event to latest
+- Highlight the key inflection points (initial access, lateral movement, detection, containment)
+- Use a table where appropriate:
+| Timestamp | Phase | Event | Host/Source | Details |
+|-----------|-------|-------|-------------|---------|
+
+### 4. Attack Chain & MITRE ATT&CK Mapping
+- Full kill chain reconstruction: Initial Access → Execution → Persistence → Privilege Escalation → Lateral Movement → Collection → Exfiltration → Impact
+- Map each observed technique to MITRE ATT&CK:
+| Tactic | Technique ID | Technique Name | Evidence |
+|--------|-------------|----------------|----------|
+
+### 5. Compromised Hosts Analysis
+For each compromised host:
+| Hostname | IP Address | OS | System Type | Containment Status | First Seen |
+|----------|------------|----|-----------  |-------------------|------------|
+- Summarize how each host was compromised and its role in the attack chain
+- Containment actions taken per host
+
+### 6. Compromised Accounts Analysis
+| Account | Type | Domain | Privileged | Status | Associated Host |
+|---------|------|--------|------------|--------|-----------------|
+- Credential compromise assessment
+- Lateral movement via compromised accounts
+
+### 7. Network Indicators of Compromise
+| Type | Value | Port/Protocol | Direction | Description | Threat Level |
+|------|-------|---------------|-----------|-------------|--------------|
+- C2 infrastructure analysis
+- Network traffic patterns
+
+### 8. Host-Based Indicators of Compromise
+| Type | Value | Host | Description | Malicious | Remediated |
+|------|-------|------|-------------|-----------|------------|
+- Persistence mechanisms
+- File system artifacts
+
+### 9. Malware & Tools Analysis
+| Name | SHA256 | Family | Associated Actor | Hosts Affected | Description |
+|------|--------|--------|-----------------|----------------|-------------|
+- Malware capabilities and behavior
+- Legitimate tools used maliciously (LOLBins)
+
+### 10. IOC Cross-Correlation
+- Relationships between network IOCs, host IOCs, and compromised systems
+- Common patterns and shared infrastructure
+- Attack infrastructure mapping
+
+### 11. Containment & Remediation Status
+- Actions taken so far (isolation, credential resets, blocklists)
+- Remediation progress by host and account
+- Outstanding actions required
+
+### 12. Risk Assessment
+- Residual risk evaluation
+- Potential for data exfiltration or further compromise
+- Regulatory / compliance implications
+
+### 13. Recommendations
+- **Immediate** (0-24 hours): Critical containment actions
+- **Short-term** (1-7 days): Remediation and hardening
+- **Long-term** (30+ days): Architecture and process improvements
+- Detection rule improvements
+- Monitoring gaps to address
+
+### 14. Lessons Learned
+- What went well in the response
+- What could be improved
+- Process and tooling gaps identified
+
+**IMPORTANT**: This is the DEFINITIVE incident report — it must be thorough and complete. Include ALL data provided. Use tables extensively. This report will be used by the incident response team, management, legal, and potentially regulators. Aim for 4-8 pages when rendered. Do NOT omit sections even if data is limited — state what is known and what remains under investigation.""",
+
         "executive": """Generate a professional **Executive Summary Report** for the security incident below.
 
 ## Structure your report EXACTLY as follows (use these Markdown headings):

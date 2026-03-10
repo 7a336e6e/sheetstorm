@@ -271,32 +271,63 @@ export default function ReportsPage() {
                 </div>
             </div>
 
-            {/* Report Types */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                {reportTypes.map((report) => (
-                    <Card key={report.id} className="hover:bg-muted/50 transition-colors cursor-pointer">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="flex items-center gap-2 text-base">
-                                <report.icon className="h-5 w-5 text-muted-foreground" />
-                                {report.title}
-                            </CardTitle>
-                            <CardDescription>{report.description}</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-sm text-muted-foreground mb-4">{report.detail}</p>
+            {/* Full Incident Report — Primary CTA */}
+            {(() => {
+                const full = reportTypes[0]
+                return (
+                    <Card key={full.id} className="border-primary/20 bg-primary/[0.03]">
+                        <CardContent className="p-5 flex items-center justify-between gap-6">
+                            <div className="flex items-center gap-4 min-w-0">
+                                <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-lg bg-primary/10 text-primary">
+                                    <full.icon className="h-5 w-5" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="font-medium text-sm">{full.title}</p>
+                                    <p className="text-xs text-muted-foreground truncate">{full.description}</p>
+                                </div>
+                            </div>
                             <Button
                                 size="sm"
-                                variant="outline"
-                                className="w-full"
-                                onClick={() => handleGenerate(report.id, report.title)}
-                                disabled={generating === report.id || !selectedIncidentId}
+                                onClick={() => handleGenerate(full.id, full.title)}
+                                disabled={generating === full.id || !selectedIncidentId}
                             >
-                                {generating === report.id ? (
+                                {generating === full.id ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : (
                                     <Download className="mr-2 h-4 w-4" />
                                 )}
-                                {generating === report.id ? 'Generating...' : 'Generate'}
+                                {generating === full.id ? 'Generating...' : 'Generate Report'}
+                            </Button>
+                        </CardContent>
+                    </Card>
+                )
+            })()}
+
+            {/* Sub-reports */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {reportTypes.slice(1).map((report) => (
+                    <Card key={report.id} className="hover:bg-muted/30 transition-colors">
+                        <CardContent className="p-4 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <report.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate">{report.title}</p>
+                                    <p className="text-xs text-muted-foreground truncate">{report.description}</p>
+                                </div>
+                            </div>
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                className="shrink-0 text-xs h-8 px-3"
+                                onClick={() => handleGenerate(report.id, report.title)}
+                                disabled={generating === report.id || !selectedIncidentId}
+                            >
+                                {generating === report.id ? (
+                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                ) : (
+                                    <Download className="mr-1 h-3 w-3" />
+                                )}
+                                {generating === report.id ? '...' : 'Generate'}
                             </Button>
                         </CardContent>
                     </Card>

@@ -216,53 +216,61 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex items-center justify-between">
-          <div>
-            <CardTitle>Case Notes</CardTitle>
-            <CardDescription>Investigation notes, findings, and observations</CardDescription>
-          </div>
-          <Button onClick={handleOpenCreate}>
-            <Plus className="mr-2 h-4 w-4" /> Add Note
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {/* Filters */}
-          <div className="flex items-center gap-3 mb-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search notes..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="pl-10"
-                variant="glass"
-              />
+      <div className="space-y-4">
+        {/* Filters & Action */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col lg:flex-row gap-4 justify-between">
+              <div className="flex flex-col lg:flex-row gap-4 flex-1">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search notes..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="pl-10"
+                    variant="glass"
+                  />
+                </div>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <Filter className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {CATEGORY_OPTIONS.map(cat => (
+                      <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleOpenCreate}>
+                <Plus className="mr-2 h-4 w-4" /> Add Note
+              </Button>
             </div>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger variant="glass" className="w-[160px]">
-                <Filter className="h-4 w-4 mr-2" />
-                <SelectValue placeholder="Category" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {CATEGORY_OPTIONS.map(cat => (
-                  <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          </CardContent>
+        </Card>
 
-          {/* Notes List */}
-          {filteredNotes.length === 0 ? (
-            <TableEmpty
-              title={search || categoryFilter !== 'all' ? 'No matching notes' : 'No case notes yet'}
-              description={search || categoryFilter !== 'all' ? 'Try adjusting your search or filter criteria.' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
-              icon={<StickyNote className="w-8 h-8" />}
-            />
-          ) : (
-            <div className="space-y-3">
-              {filteredNotes.map(note => {
+        {/* Notes List */}
+        {filteredNotes.length === 0 ? (
+          <Card>
+            <CardContent className="p-0">
+              <TableEmpty
+                title={search || categoryFilter !== 'all' ? 'No matching notes' : 'No case notes yet'}
+                description={search || categoryFilter !== 'all' ? 'Try adjusting your search or filter criteria.' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
+                icon={<StickyNote className="w-8 h-8" />}
+                action={!(search || categoryFilter !== 'all') && (
+                  <Button size="sm" variant="outline" onClick={handleOpenCreate}>
+                    <Plus className="mr-2 h-3.5 w-3.5" /> Add Note
+                  </Button>
+                )}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {filteredNotes.map(note => {
                 const catInfo = getCategoryInfo(note.category)
                 const CatIcon = catInfo.icon
                 return (
@@ -325,8 +333,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
               })}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
       {/* Create/Edit Modal */}
       <Dialog open={showModal} onOpenChange={(open) => { if (!open) { setShowModal(false); resetForm() } }}>

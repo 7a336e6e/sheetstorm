@@ -89,6 +89,8 @@ async def sheetstorm_add_network_ioc(
     direction: Optional[str] = None,
     description: Optional[str] = None,
     is_malicious: bool = True,
+    host_id: Optional[str] = None,
+    timestamp: Optional[str] = None,
 ) -> str:
     """Add a network IOC (IP address, domain, or URL).
 
@@ -97,19 +99,28 @@ async def sheetstorm_add_network_ioc(
         dns_ip: The indicator value (IP, domain, or URL)
         protocol: Network protocol (TCP, UDP, HTTP, etc.)
         port: Port number
-        source_host: Source hostname or IP
+        source_host: Source hostname or IP (legacy; prefer host_id for correlation)
         destination_host: Destination hostname or IP
-        direction: Direction (inbound, outbound)
+        direction: Direction (inbound, outbound, lateral)
         description: Description
         is_malicious: Whether this is confirmed malicious
+        host_id: UUID of a compromised host to correlate with (shown in UI)
+        timestamp: ISO-8601 timestamp when the IOC was observed (defaults to now)
     """
+    from datetime import datetime as dt, timezone
+
     client = get_client()
     try:
-        payload: dict = {"dns_ip": dns_ip}
+        payload: dict = {
+            "dns_ip": dns_ip,
+            "timestamp": timestamp or dt.now(timezone.utc).isoformat(),
+        }
         if protocol:
             payload["protocol"] = protocol
         if port is not None:
             payload["port"] = port
+        if host_id:
+            payload["host_id"] = host_id
         if source_host:
             payload["source_host"] = source_host
         if destination_host:

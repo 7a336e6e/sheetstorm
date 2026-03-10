@@ -23,12 +23,23 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ### 1. Install
 
+The easiest way — run the setup script:
+
 ```bash
 cd mcp-bridge
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+bash setup.sh
 ```
+
+Or manually:
+
+```bash
+cd mcp-bridge
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -e .
+```
+
+> **Important**: Use `.venv/bin/pip` (not just `pip`) to ensure packages install into the venv, not system Python.
 
 ### 2. Configure
 
@@ -101,7 +112,7 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 |----------|-------|-------------|
 | Auth | 2 | Get current user, logout |
 | Incidents | 6 | CRUD, status updates, search |
-| Timeline | 6 | Event management, MITRE tactics/techniques |
+| Timeline | 4 | Event management within incidents |
 | Tasks | 6 | Task management, comments |
 | Assets | 7 | Compromised hosts, accounts |
 | IOCs | 12 | Network IOCs, host IOCs, malware |
@@ -151,6 +162,26 @@ mcp-bridge/
 
 ## Troubleshooting
 
+**"No module named sheetstorm_bridge"**: This is the most common issue. It means the package isn't installed in the venv that Claude Desktop is using. Fix:
+
+```bash
+cd mcp-bridge
+# Verify the package is installed:
+.venv/bin/pip show sheetstorm-mcp-bridge
+
+# If not found, install it:
+.venv/bin/pip install -e .
+
+# Verify it works:
+.venv/bin/python -c "from sheetstorm_bridge.server import mcp; print('OK:', mcp.name)"
+```
+
+If you see `No module named 'mcp'` or other import errors, the dependencies didn't install. Re-run:
+```bash
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -e .
+```
+
 **"No credentials configured"**: Set either `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
 
 **Authentication failures**: Verify your credentials work by logging into the SheetStorm web UI. Check the API URL includes `/api/v1`.
@@ -158,6 +189,21 @@ mcp-bridge/
 **Connection errors**: Ensure the SheetStorm backend is reachable from your machine. Test with `curl $SHEETSTORM_API_URL/health`.
 
 **Claude Desktop doesn't show tools**: Check the config JSON syntax. Ensure the Python path is absolute. Check Claude Desktop logs for errors.
+
+### Diagnostic Command
+
+Run this one-liner to check everything at once:
+
+```bash
+cd mcp-bridge && .venv/bin/python -c "
+import sys; print('Python:', sys.executable)
+try:
+    import mcp; print('mcp:', mcp.__version__)
+except: print('ERROR: mcp not installed')
+try:
+    from sheetstorm_bridge.server import mcp as s; print('Bridge:', s.name, '- OK')
+except Exception as e: print('ERROR:', e)
+"
 
 ## License
 

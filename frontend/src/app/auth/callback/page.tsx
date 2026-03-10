@@ -47,7 +47,7 @@ export default function AuthCallbackPage() {
           return
         }
 
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api/v1'
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
         const res = await fetch(`${apiUrl}/auth/supabase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -82,7 +82,7 @@ export default function AuthCallbackPage() {
     setError(null)
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api/v1'
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
       const res = await fetch(`${apiUrl}/auth/mfa/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

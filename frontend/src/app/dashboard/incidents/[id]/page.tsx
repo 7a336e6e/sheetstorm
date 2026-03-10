@@ -608,7 +608,7 @@ export default function IncidentDetailPage() {
     const typeName = REPORT_TYPE_OPTIONS.find(r => r.id === selectedReportType)?.label || 'Report'
     toast({ title: 'Generating Report', description: `AI is generating ${typeName}...` })
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api/v1'
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
       const token = api.getToken()
       const response = await fetch(`${API_URL}/incidents/${incidentId}/reports/generate-pdf`, {
         method: 'POST',

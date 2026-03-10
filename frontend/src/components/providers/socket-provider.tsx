@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, ReactNode, useC
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/store'
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://127.0.0.1:5000'
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -52,7 +52,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     setStatus('connecting')
 
-    const socket = io(WS_URL, {
+    const socket = io(WS_URL || undefined, {
       query: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,

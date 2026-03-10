@@ -132,7 +132,7 @@ export default function ReportsPage() {
         if (!selectedIncidentId) return
         setDownloadingReportId(report.id)
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api/v1'
+            const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
             const token = api.getToken()
             const response = await fetch(
                 `${API_URL}/incidents/${selectedIncidentId}/reports/${report.id}/download`,
@@ -189,7 +189,7 @@ export default function ReportsPage() {
         toast({ title: 'Generating Report', description: `Starting AI-powered generation of ${title}...` })
 
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api/v1'
+            const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
             const token = api.getToken()
             const response = await fetch(`${API_URL}/incidents/${selectedIncidentId}/reports/generate-pdf`, {
                 method: 'POST',

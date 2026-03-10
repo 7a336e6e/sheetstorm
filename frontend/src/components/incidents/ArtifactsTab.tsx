@@ -14,10 +14,11 @@ import { useToast } from '@/components/ui/use-toast'
 import api from '@/lib/api'
 import { formatDateTime, formatBytes } from '@/lib/utils'
 import type { Artifact } from '@/types'
+import { Input } from '@/components/ui/input'
 import {
   Upload, Download, FileText, Shield, ShieldCheck, ShieldX, Trash2, Loader2,
   Clock, User, ChevronRight, AlertTriangle, CheckCircle2, XCircle,
-  HardDrive, FolderOpen, ExternalLink,
+  HardDrive, FolderOpen, ExternalLink, Search,
 } from 'lucide-react'
 
 interface ArtifactsTabProps {
@@ -42,6 +43,7 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
   const [verifying, setVerifying] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [search, setSearch] = useState('')
 
   // Custody dialog
   const [custodyArtifact, setCustodyArtifact] = useState<Artifact | null>(null)
@@ -235,26 +237,44 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
     }
   }
 
+  const filteredArtifacts = artifacts.filter(a =>
+    !search ||
+    a.original_filename?.toLowerCase().includes(search.toLowerCase()) ||
+    a.description?.toLowerCase().includes(search.toLowerCase()) ||
+    a.sha256?.toLowerCase().includes(search.toLowerCase())
+  )
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex items-center justify-between">
-          <div>
-            <CardTitle>Evidence & Artifacts</CardTitle>
-            <CardDescription>Upload, verify, and manage digital evidence</CardDescription>
-          </div>
-          <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-            {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-            Upload File
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => handleUpload(e.target.files)}
-          />
-        </CardHeader>
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col lg:flex-row gap-4 justify-between">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search artifacts, hashes..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                Upload File
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handleUpload(e.target.files)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
         <CardContent className="space-y-4">
           {/* Drop zone */}
           <div
@@ -345,18 +365,18 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                       ))}
                     </TableRow>
                   ))
-                ) : artifacts.length === 0 ? (
+                ) : filteredArtifacts.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6}>
                       <TableEmpty
-                        title="No artifacts yet"
-                        description="Upload digital evidence files to maintain a verified chain of custody for this incident."
+                        title={search ? 'No matching artifacts' : 'No artifacts yet'}
+                        description={search ? 'Try adjusting your search criteria.' : 'Upload digital evidence files to maintain a verified chain of custody for this incident.'}
                         icon={<FileText className="w-8 h-8" />}
                       />
                     </TableCell>
                   </TableRow>
                 ) : (
-                  artifacts.map(artifact => (
+                  filteredArtifacts.map(artifact => (
                     <TableRow key={artifact.id} className="group">
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -433,7 +453,8 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
             </Table>
           </GlassTable>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
 
       {/* Chain of Custody Dialog */}
       <Dialog open={!!custodyArtifact} onOpenChange={() => setCustodyArtifact(null)}>

@@ -75,7 +75,7 @@ async def sheetstorm_add_host(
     ip_address: Optional[str] = None,
     os_version: Optional[str] = None,
     system_type: Optional[str] = None,
-    containment_status: str = "compromised",
+    containment_status: str = "active",
     notes: Optional[str] = None,
 ) -> str:
     """Add a compromised host to an incident.
@@ -86,7 +86,7 @@ async def sheetstorm_add_host(
         ip_address: IP address
         os_version: Operating system version
         system_type: System type (e.g. workstation, server)
-        containment_status: Host status (compromised, contained, cleaned)
+        containment_status: Host status — one of: active, compromised, isolated, contained, reimaged, cleaned, decommissioned
         notes: Additional notes
     """
     client = get_client()
@@ -127,7 +127,7 @@ async def sheetstorm_update_host(
         ip_address: New IP address
         os_version: New OS version
         system_type: New system type
-        containment_status: New status (compromised, contained, cleaned)
+        containment_status: New status — one of: active, compromised, isolated, contained, reimaged, cleaned, decommissioned
         notes: New notes
     """
     client = get_client()

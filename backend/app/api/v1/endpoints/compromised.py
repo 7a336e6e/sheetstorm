@@ -70,6 +70,14 @@ def create_compromised_host(incident_id):
     if not hostname:
         return jsonify({'error': 'bad_request', 'message': 'hostname is required'}), 400
 
+    status = data.get('containment_status', 'active')
+    if status not in CompromisedHost.CONTAINMENT_STATUSES:
+        return jsonify({
+            'error': 'bad_request',
+            'message': f'Invalid containment_status: {status}. '
+                       f'Valid values: {CompromisedHost.CONTAINMENT_STATUSES}'
+        }), 400
+
     host = CompromisedHost(
         incident_id=incident.id,
         hostname=hostname,
@@ -106,6 +114,14 @@ def update_compromised_host(incident_id, host_id):
     host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
     if not host:
         return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+
+    # Validate containment_status before applying
+    if 'containment_status' in data and data['containment_status'] not in CompromisedHost.CONTAINMENT_STATUSES:
+        return jsonify({
+            'error': 'bad_request',
+            'message': f"Invalid containment_status: {data['containment_status']}. "
+                       f'Valid values: {CompromisedHost.CONTAINMENT_STATUSES}'
+        }), 400
 
     # Update fields
     for field in ['hostname', 'ip_address', 'mac_address', 'system_type', 'os_version',

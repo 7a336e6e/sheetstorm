@@ -35,7 +35,7 @@ class CompromisedHost(BaseModel):
     malware_tools = relationship('MalwareTool', back_populates='host_ref', lazy='dynamic')
     host_indicators = relationship('HostBasedIndicator', back_populates='host_ref', lazy='dynamic')
 
-    CONTAINMENT_STATUSES = ['active', 'isolated', 'reimaged', 'decommissioned']
+    CONTAINMENT_STATUSES = ['active', 'compromised', 'isolated', 'contained', 'reimaged', 'cleaned', 'decommissioned']
     SYSTEM_TYPES = ['workstation', 'server', 'domain_controller', 'database', 'web_server', 
                     'file_server', 'mail_server', 'laptop', 'virtual_machine', 'container', 'other']
 

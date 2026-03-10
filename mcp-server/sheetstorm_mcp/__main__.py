@@ -30,15 +30,28 @@ def main() -> None:
 
 
 def _run_sse_with_oauth(cfg, logger) -> None:
-    """Run SSE transport with OAuth authentication and login routes."""
+    """Run HTTP transport with OAuth authentication and login routes.
+
+    Mounts both SSE (/sse, /messages/) and Streamable HTTP (/mcp)
+    endpoints so that clients using either transport can connect.
+    """
     import uvicorn
-    from starlette.routing import Mount
 
     from sheetstorm_mcp.login_routes import create_login_routes
     from sheetstorm_mcp.server import mcp, _oauth_provider
 
     # Get the Starlette SSE app from FastMCP (includes built-in OAuth routes)
     app = mcp.sse_app()
+
+    # Also mount the Streamable HTTP /mcp endpoint for clients that use it
+    # (e.g. Gemini CLI, newer MCP clients). Both transports share the same
+    # underlying MCP server, so state/tools are identical.
+    http_app = mcp.streamable_http_app()
+    for route in http_app.routes:
+        if getattr(route, "path", "") == "/mcp":
+            app.routes.insert(-1, route)
+            logger.info("Mounted Streamable HTTP endpoint at /mcp")
+            break
 
     # Mount the custom login routes alongside the SDK's OAuth routes
     login_routes = create_login_routes(_oauth_provider)

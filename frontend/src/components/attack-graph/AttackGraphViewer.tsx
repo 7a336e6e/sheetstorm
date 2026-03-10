@@ -469,7 +469,17 @@ function GraphInner({ incidentId }: { incidentId: string }) {
 
   const handleAutoLayout = useCallback(async () => {
     if (nodes.length === 0) return
-    // Simple hierarchical layout
+
+    // Dynamic spacing based on node count — more nodes = more spread
+    const nodeCount = nodes.length
+    const baseSpacing = 280
+    const scaleFactor = Math.max(1, Math.sqrt(nodeCount / 6))
+    const hostSpacingX = baseSpacing * scaleFactor
+    const hostSpacingY = baseSpacing * scaleFactor
+    const satelliteRadius = 220 * scaleFactor
+    // How many hosts per row — grows with count to keep layout balanced
+    const hostsPerRow = Math.max(2, Math.ceil(Math.sqrt(nodeCount / 3)))
+
     const sorted = [...nodes].sort((a, b) => {
       if (a.data.isInitialAccess) return -1
       if (b.data.isInitialAccess) return 1
@@ -480,21 +490,40 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     const hostNodes = sorted.filter(n => hostNodeTypes.includes(n.type || ''))
     const otherNodes = sorted.filter(n => !hostNodeTypes.includes(n.type || ''))
 
+    // Build adjacency map: which satellite nodes connect to which host
+    const hostConnections = new Map<string, string[]>()
+    for (const host of hostNodes) {
+      hostConnections.set(host.id, [])
+    }
+    for (const other of otherNodes) {
+      const connectedEdge = edges.find(
+        e => e.source === other.id || e.target === other.id
+      )
+      const connectedHostId = connectedEdge
+        ? connectedEdge.source === other.id
+          ? connectedEdge.target
+          : connectedEdge.source
+        : null
+      if (connectedHostId && hostConnections.has(connectedHostId)) {
+        hostConnections.get(connectedHostId)!.push(other.id)
+      }
+    }
+
     const updatedNodes = nodes.map(n => {
       const hostIdx = hostNodes.findIndex(h => h.id === n.id)
       if (hostIdx >= 0) {
         return {
           ...n,
           position: {
-            x: 300 + (hostIdx % 4) * 350,
-            y: 200 + Math.floor(hostIdx / 4) * 350,
+            x: 300 + (hostIdx % hostsPerRow) * hostSpacingX,
+            y: 200 + Math.floor(hostIdx / hostsPerRow) * hostSpacingY,
           },
         }
       }
 
       const otherIdx = otherNodes.findIndex(o => o.id === n.id)
       if (otherIdx >= 0) {
-        // Find connected host and position nearby
+        // Find connected host and position around it
         const connectedEdge = edges.find(
           e => e.source === n.id || e.target === n.id
         )
@@ -506,21 +535,35 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         const host = connectedHostId ? nodes.find(h => h.id === connectedHostId) : null
 
         if (host) {
-          const angle = (otherIdx * 0.8) + Math.random() * 0.3
+          // Even-spread satellites around the host using golden angle for uniform distribution
+          const siblings = hostConnections.get(host.id) || [n.id]
+          const siblingIdx = siblings.indexOf(n.id)
+          const siblingCount = siblings.length
+          const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+          const angle = siblingIdx * goldenAngle
+          // Increase radius slightly if many siblings to avoid overlap
+          const adjustedRadius = satelliteRadius * (1 + Math.floor(siblingIdx / 6) * 0.5)
+
+          const hostPosition = {
+            x: 300 + (hostNodes.indexOf(hostNodes.find(h => h.id === host.id)!) % hostsPerRow) * hostSpacingX,
+            y: 200 + Math.floor(hostNodes.indexOf(hostNodes.find(h => h.id === host.id)!) / hostsPerRow) * hostSpacingY,
+          }
+
           return {
             ...n,
             position: {
-              x: host.position.x + Math.cos(angle) * 180,
-              y: host.position.y + Math.sin(angle) * 180,
+              x: hostPosition.x + Math.cos(angle) * adjustedRadius,
+              y: hostPosition.y + Math.sin(angle) * adjustedRadius,
             },
           }
         }
 
+        // Unconnected nodes: spread in a row at the bottom
         return {
           ...n,
           position: {
-            x: 100 + (otherIdx % 6) * 200,
-            y: 600 + Math.floor(otherIdx / 6) * 150,
+            x: 100 + (otherIdx % (hostsPerRow * 2)) * (hostSpacingX * 0.6),
+            y: 200 + (Math.ceil(hostNodes.length / hostsPerRow) + 1) * hostSpacingY + Math.floor(otherIdx / (hostsPerRow * 2)) * 180,
           },
         }
       }

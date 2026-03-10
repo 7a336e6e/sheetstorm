@@ -921,7 +921,18 @@ export default function IncidentDetailPage() {
                     </TableHeader>
                     <TableBody>
                       {hosts.length === 0 ? (
-                        <TableRow><TableCell colSpan={4}><TableEmpty title="No hosts" icon={<Server className="w-10 h-10" />} /></TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6}>
+                          <TableEmpty
+                            title="No compromised hosts"
+                            description="Record systems that have been identified as compromised during this incident investigation."
+                            icon={<Server className="w-8 h-8" />}
+                            action={
+                              <Button size="sm" variant="outline" onClick={() => handleOpenHostModal()}>
+                                <Plus className="mr-2 h-3.5 w-3.5" /> Add Host
+                              </Button>
+                            }
+                          />
+                        </TableCell></TableRow>
                       ) : (
                         hosts.map(host => (
                           <TableRow key={host.id} className="group">
@@ -960,7 +971,18 @@ export default function IncidentDetailPage() {
                 <Button onClick={handleOpenTaskModal}><Plus className="mr-2 h-4 w-4" /> Add Task</Button>
               </CardHeader>
               <CardContent>
-                {tasks.length === 0 ? <TableEmpty title="No tasks" icon={<CheckSquare className="w-10 h-10" />} /> : (
+                {tasks.length === 0 ? (
+                  <TableEmpty
+                    title="No tasks yet"
+                    description="Create tasks to track response actions, assignments, and progress for this incident."
+                    icon={<CheckSquare className="w-8 h-8" />}
+                    action={
+                      <Button size="sm" variant="outline" onClick={handleOpenTaskModal}>
+                        <Plus className="mr-2 h-3.5 w-3.5" /> Add Task
+                      </Button>
+                    }
+                  />
+                ) : (
                   <div className="space-y-3">
                     {tasks.map(task => {
                       const linkedEntities = task.extra_data?.linked_entities

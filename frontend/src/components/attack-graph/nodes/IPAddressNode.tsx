@@ -19,7 +19,7 @@ function IPAddressNode({ data, selected }: NodeProps<GraphNode>) {
 
   return (
     <div
-      className={`relative w-[160px] bg-card rounded-md shadow-lg border ${
+      className={`relative min-w-[160px] max-w-[200px] bg-card rounded-md shadow-lg border ${
         selected ? 'border-cyan-500/50' : 'border-border'
       }`}
     >
@@ -40,15 +40,15 @@ function IPAddressNode({ data, selected }: NodeProps<GraphNode>) {
         </div>
 
         {/* Extra info row: protocol/port + direction */}
-        <div className="flex items-center gap-1 mt-0.5 ml-[18px]">
+        <div className="flex items-center gap-1 mt-0.5 ml-[18px] flex-wrap">
           {!!(d.extra_data?.protocol || d.extra_data?.port) && (
-            <span className="text-[9px] text-slate-500 font-mono">
+            <span className="text-[9px] text-slate-500 font-mono shrink-0">
               {!!d.extra_data?.protocol && String(d.extra_data.protocol)}
               {!!d.extra_data?.port && `:${String(d.extra_data.port)}`}
             </span>
           )}
           {!!d.extra_data?.direction && (
-            <span className={`text-[9px] px-1 py-0.5 rounded-full font-medium ${
+            <span className={`text-[9px] px-1 py-0.5 rounded-full font-medium shrink-0 ${
               d.extra_data.direction === 'inbound'
                 ? 'bg-blue-500/20 text-blue-400'
                 : d.extra_data.direction === 'outbound'
@@ -59,7 +59,7 @@ function IPAddressNode({ data, selected }: NodeProps<GraphNode>) {
             </span>
           )}
           {!!d.extra_data?.is_malicious && (
-            <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
+            <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium shrink-0">
               malicious
             </span>
           )}

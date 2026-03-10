@@ -20,7 +20,7 @@ function DomainControllerNode({ data, selected }: NodeProps<GraphNode>) {
 
   return (
     <div
-      className={`relative w-[180px] bg-card rounded-lg shadow-lg border overflow-hidden ${selected ? 'border-cyan-500/50' : isAdminCompromise ? 'border-amber-500/40' : 'border-border'
+      className={`relative min-w-[180px] max-w-[220px] bg-card rounded-lg shadow-lg border ${selected ? 'border-cyan-500/50' : isAdminCompromise ? 'border-amber-500/40' : 'border-border'
         }`}
     >
       {/* Gradient header strip */}

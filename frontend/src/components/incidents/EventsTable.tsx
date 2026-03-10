@@ -270,7 +270,18 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                             </TableHeader>
                             <TableBody>
                                 {isLoading ? <SkeletonTableRow columns={6} /> : filteredEvents.length === 0 ? (
-                                    <TableRow><TableCell colSpan={6}><TableEmpty title="No events" icon={<Clock className="w-10 h-10" />} /></TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={6}>
+                                        <TableEmpty
+                                            title={search ? 'No matching events' : 'No timeline events'}
+                                            description={search ? 'Try adjusting your search criteria' : 'Build a chronological timeline of attacker activity, system events, and investigation milestones.'}
+                                            icon={<Clock className="w-8 h-8" />}
+                                            action={!search && (
+                                                <Button size="sm" variant="outline" onClick={() => { setEditingId(null); resetForm(); setShowAddModal(true); }}>
+                                                    <Plus className="mr-2 h-3.5 w-3.5" /> Add Event
+                                                </Button>
+                                            )}
+                                        />
+                                    </TableCell></TableRow>
                                 ) : (
                                     filteredEvents.map(event => (
                                         <TableRow key={event.id} className="group">

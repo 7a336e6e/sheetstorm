@@ -23,7 +23,7 @@ function AccountNode({ data, selected }: NodeProps<GraphNode>) {
 
   return (
     <div
-      className={`relative w-[140px] bg-card rounded-full shadow-lg border overflow-hidden ${selected ? 'border-cyan-500/50' : 'border-border'
+      className={`relative min-w-[140px] max-w-[180px] bg-card rounded-full shadow-lg border ${selected ? 'border-cyan-500/50' : 'border-border'
         }`}
     >
       {/* Gradient header strip - thin top line for pill shape */}

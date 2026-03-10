@@ -273,7 +273,18 @@ export function HostBasedIOCsTab({ incidentId }: HostBasedIOCsTabProps) {
                                     </TableHeader>
                                     <TableBody>
                                         {isLoading ? <SkeletonTableRow columns={6} /> : filteredIndicators.length === 0 ? (
-                                            <TableRow><TableCell colSpan={6}><TableEmpty title="No Host IOCs" icon={<HardDrive className="w-10 h-10" />} /></TableCell></TableRow>
+                                            <TableRow><TableCell colSpan={6}>
+                                                <TableEmpty
+                                                    title={search || typeFilter !== 'all' ? 'No matching host IOCs' : 'No host-based IOCs'}
+                                                    description={search || typeFilter !== 'all' ? 'Try adjusting your search or filter criteria' : 'Document file artifacts, registry keys, processes, and other host-based indicators of compromise.'}
+                                                    icon={<HardDrive className="w-8 h-8" />}
+                                                    action={!search && typeFilter === 'all' && (
+                                                        <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
+                                                            <Plus className="mr-2 h-3.5 w-3.5" /> Add IOC
+                                                        </Button>
+                                                    )}
+                                                />
+                                            </TableCell></TableRow>
                                         ) : (
                                             filteredIndicators.map(item => (
                                                 <TableRow key={item.id} className="group">

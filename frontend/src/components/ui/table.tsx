@@ -126,19 +126,19 @@ const TableEmpty = React.forwardRef<HTMLDivElement, TableEmptyProps>(
     <div
       ref={ref}
       className={cn(
-        "flex flex-col items-center justify-center py-12 px-4 text-center",
+        "flex flex-col items-center justify-center py-16 px-6 text-center",
         className
       )}
       {...props}
     >
       {icon && (
-        <div className="mb-4 p-3 rounded-md bg-muted text-muted-foreground">
+        <div className="mb-5 p-4 rounded-xl bg-muted/60 text-muted-foreground/70">
           {icon}
         </div>
       )}
-      <h3 className="text-base font-medium mb-1">{title}</h3>
+      <h3 className="text-sm font-medium text-foreground/80 mb-1">{title}</h3>
       {description && (
-        <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+        <p className="text-xs text-muted-foreground/60 mb-5 max-w-xs leading-relaxed">
           {description}
         </p>
       )}

@@ -314,20 +314,19 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                     </>
                                 ) : filteredAccounts.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-[300px]">
+                                        <TableCell colSpan={7}>
                                             <TableEmpty
-                                                icon={<User className="h-10 w-10" />}
+                                                icon={<User className="h-8 w-8" />}
                                                 title={search || typeFilter !== 'all' ? 'No matching accounts' : 'No compromised accounts'}
                                                 description={
                                                     search || typeFilter !== 'all'
-                                                        ? 'Try adjusting your filters'
-                                                        : 'Record any compromised accounts discovered during the investigation'
+                                                        ? 'Try adjusting your search or filter criteria'
+                                                        : 'Record user and service accounts that have been compromised or are under investigation.'
                                                 }
                                                 action={
                                                     !search && typeFilter === 'all' && (
-                                                        <Button size="sm" onClick={() => handleOpenModal()}>
-                                                            <Plus className="mr-2 h-4 w-4" />
-                                                            Add Account
+                                                        <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
+                                                            <Plus className="mr-2 h-3.5 w-3.5" /> Add Account
                                                         </Button>
                                                     )
                                                 }

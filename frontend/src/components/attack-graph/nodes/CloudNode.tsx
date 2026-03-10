@@ -27,7 +27,7 @@ function CloudNode({ data, selected }: NodeProps<GraphNode>) {
 
   return (
     <div
-      className={`relative w-[160px] bg-card rounded-lg shadow-lg border overflow-hidden ${selected ? 'border-cyan-500/50' : 'border-border'
+      className={`relative min-w-[160px] max-w-[200px] bg-card rounded-lg shadow-lg border ${selected ? 'border-cyan-500/50' : 'border-border'
         }`}
     >
       {/* Cyan gradient header strip */}

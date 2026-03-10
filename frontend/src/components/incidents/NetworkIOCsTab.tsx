@@ -226,7 +226,18 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                             </TableHeader>
                             <TableBody>
                                 {isLoading ? <SkeletonTableRow columns={7} /> : filteredIndicators.length === 0 ? (
-                                    <TableRow><TableCell colSpan={7}><TableEmpty title="No network IOCs" icon={<Network className="w-10 h-10" />} /></TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={7}>
+                                        <TableEmpty
+                                            title={search ? 'No matching network IOCs' : 'No network IOCs'}
+                                            description={search ? 'Try adjusting your search criteria' : 'Track IP addresses, domains, and URLs associated with malicious network activity.'}
+                                            icon={<Network className="w-8 h-8" />}
+                                            action={!search && (
+                                                <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
+                                                    <Plus className="mr-2 h-3.5 w-3.5" /> Add IOC
+                                                </Button>
+                                            )}
+                                        />
+                                    </TableCell></TableRow>
                                 ) : (
                                     filteredIndicators.map(item => (
                                         <TableRow key={item.id} className="group">

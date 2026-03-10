@@ -348,7 +348,16 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                 ) : artifacts.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6}>
-                      <TableEmpty title="No artifacts" icon={<FileText className="w-10 h-10" />} />
+                      <TableEmpty
+                        title="No artifacts yet"
+                        description="Upload digital evidence files to maintain a verified chain of custody for this incident."
+                        icon={<FileText className="w-8 h-8" />}
+                        action={
+                          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                            <Upload className="mr-2 h-3.5 w-3.5" /> Upload File
+                          </Button>
+                        }
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (

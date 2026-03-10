@@ -257,8 +257,13 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
           {filteredNotes.length === 0 ? (
             <TableEmpty
               title={search || categoryFilter !== 'all' ? 'No matching notes' : 'No case notes yet'}
-              description={search || categoryFilter !== 'all' ? 'Try adjusting your filters' : 'Add notes to document investigation findings and observations'}
-              icon={<StickyNote className="w-10 h-10" />}
+              description={search || categoryFilter !== 'all' ? 'Try adjusting your search or filter criteria' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
+              icon={<StickyNote className="w-8 h-8" />}
+              action={!search && categoryFilter === 'all' && (
+                <Button size="sm" variant="outline" onClick={handleOpenCreate}>
+                  <Plus className="mr-2 h-3.5 w-3.5" /> Add Note
+                </Button>
+              )}
             />
           ) : (
             <div className="space-y-3">

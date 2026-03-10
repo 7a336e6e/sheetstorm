@@ -275,11 +275,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                             title={search ? 'No matching events' : 'No timeline events'}
                                             description={search ? 'Try adjusting your search criteria' : 'Build a chronological timeline of attacker activity, system events, and investigation milestones.'}
                                             icon={<Clock className="w-8 h-8" />}
-                                            action={!search && (
-                                                <Button size="sm" variant="outline" onClick={() => { setEditingId(null); resetForm(); setShowAddModal(true); }}>
-                                                    <Plus className="mr-2 h-3.5 w-3.5" /> Add Event
-                                                </Button>
-                                            )}
                                         />
                                     </TableCell></TableRow>
                                 ) : (

@@ -926,11 +926,6 @@ export default function IncidentDetailPage() {
                             title="No compromised hosts"
                             description="Record systems that have been identified as compromised during this incident investigation."
                             icon={<Server className="w-8 h-8" />}
-                            action={
-                              <Button size="sm" variant="outline" onClick={() => handleOpenHostModal()}>
-                                <Plus className="mr-2 h-3.5 w-3.5" /> Add Host
-                              </Button>
-                            }
                           />
                         </TableCell></TableRow>
                       ) : (
@@ -976,11 +971,6 @@ export default function IncidentDetailPage() {
                     title="No tasks yet"
                     description="Create tasks to track response actions, assignments, and progress for this incident."
                     icon={<CheckSquare className="w-8 h-8" />}
-                    action={
-                      <Button size="sm" variant="outline" onClick={handleOpenTaskModal}>
-                        <Plus className="mr-2 h-3.5 w-3.5" /> Add Task
-                      </Button>
-                    }
                   />
                 ) : (
                   <div className="space-y-3">

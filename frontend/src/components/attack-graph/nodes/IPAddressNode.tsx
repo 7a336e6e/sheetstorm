@@ -27,20 +27,27 @@ function IPAddressNode({ data, selected }: NodeProps<GraphNode>) {
       <div className="h-1 rounded-t-md bg-gradient-to-r from-slate-400 to-slate-500" />
 
       <div className="px-2.5 py-1.5">
-        {/* Compact chip layout */}
-        <div className="flex items-center gap-1.5">
-          <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
-          <p
-            className="text-xs font-medium text-white font-mono truncate"
-            title={d.label}
-          >
-            {d.label}
-          </p>
-          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
+        {/* Type label + status row */}
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <Globe className="w-4 h-4 text-slate-400" />
+            <span className="text-[10px] text-slate-400/80 uppercase tracking-wider font-semibold">
+              IP Address
+            </span>
+          </div>
+          <div className={`w-2 h-2 rounded-full ${statusColor}`} />
         </div>
 
+        {/* Label */}
+        <p
+          className="text-xs font-medium text-foreground font-mono truncate"
+          title={d.label}
+        >
+          {d.label}
+        </p>
+
         {/* Extra info row: protocol/port + direction */}
-        <div className="flex items-center gap-1 mt-0.5 ml-[18px] flex-wrap">
+        <div className="flex items-center gap-1 mt-1 flex-wrap">
           {!!(d.extra_data?.protocol || d.extra_data?.port) && (
             <span className="text-[9px] text-slate-500 font-mono shrink-0">
               {!!d.extra_data?.protocol && String(d.extra_data.protocol)}
@@ -67,21 +74,21 @@ function IPAddressNode({ data, selected }: NodeProps<GraphNode>) {
 
         {/* Description */}
         {!!d.extra_data?.description && (
-          <p className="text-[9px] text-muted-foreground truncate mt-0.5 ml-[18px]" title={String(d.extra_data.description)}>
+          <p className="text-[9px] text-muted-foreground truncate mt-0.5" title={String(d.extra_data.description)}>
             {String(d.extra_data.description)}
           </p>
         )}
 
         {/* Destination host */}
         {!!d.extra_data?.destination_host && (
-          <p className="text-[9px] text-slate-500 font-mono truncate mt-0.5 ml-[18px]" title={String(d.extra_data.destination_host)}>
+          <p className="text-[9px] text-slate-500 font-mono truncate mt-0.5" title={String(d.extra_data.destination_host)}>
             → {String(d.extra_data.destination_host)}
           </p>
         )}
 
         {/* Correlation badges */}
         {hasCorrelation && (
-          <div className="flex flex-wrap gap-1 mt-1 ml-[18px]">
+          <div className="flex flex-wrap gap-1 mt-1">
             {d.correlation!.network_iocs > 0 && (
               <span className="text-[9px] px-1 py-0.5 rounded-full bg-muted text-muted-foreground">
                 {d.correlation!.network_iocs} net

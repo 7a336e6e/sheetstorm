@@ -416,7 +416,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }
 
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (event: React.MouseEvent, node: Node) => {
       if (isDrawMode) {
         if (!sourceNodeId) {
           setSourceNodeId(node.id)
@@ -436,10 +436,14 @@ function GraphInner({ incidentId }: { incidentId: string }) {
           setIsEdgeModalOpen(true)
         }
       } else {
+        // Unless Shift is held, deselect all other nodes so only clicked node is selected
+        if (!event.shiftKey) {
+          setNodes(nds => nds.map(n => ({ ...n, selected: n.id === node.id })))
+        }
         setSelectedElement({ type: 'node', data: node.data as Record<string, unknown> })
       }
     },
-    [isDrawMode, sourceNodeId, toast]
+    [isDrawMode, sourceNodeId, toast, setNodes]
   )
 
   const handleEdgeClick = useCallback(
@@ -453,7 +457,9 @@ function GraphInner({ incidentId }: { incidentId: string }) {
 
   const handlePaneClick = useCallback(() => {
     setSelectedElement(null)
-  }, [])
+    // Clear all node selections to prevent sticky multi-select
+    setNodes(nds => nds.map(n => ({ ...n, selected: false })))
+  }, [setNodes])
 
   const handleNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
@@ -472,13 +478,13 @@ function GraphInner({ incidentId }: { incidentId: string }) {
 
     // Dynamic spacing based on node count — more nodes = more spread
     const nodeCount = nodes.length
-    const baseSpacing = 280
-    const scaleFactor = Math.max(1, Math.sqrt(nodeCount / 6))
+    const baseSpacing = 600
+    const scaleFactor = Math.max(1, Math.sqrt(nodeCount / 4))
     const hostSpacingX = baseSpacing * scaleFactor
     const hostSpacingY = baseSpacing * scaleFactor
-    const satelliteRadius = 220 * scaleFactor
+    const satelliteRadius = 450 * scaleFactor
     // How many hosts per row — grows with count to keep layout balanced
-    const hostsPerRow = Math.max(2, Math.ceil(Math.sqrt(nodeCount / 3)))
+    const hostsPerRow = Math.max(2, Math.ceil(Math.sqrt(nodeCount / 4)))
 
     const sorted = [...nodes].sort((a, b) => {
       if (a.data.isInitialAccess) return -1
@@ -826,6 +832,9 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         fitView
         minZoom={0.2}
         maxZoom={3}
+        selectionKeyCode="Shift"
+        multiSelectionKeyCode="Shift"
+        selectionOnDrag={false}
         proOptions={{ hideAttribution: true }}
         className={resolvedTheme === 'dark' ? 'bg-slate-950' : 'bg-slate-50'}
       >

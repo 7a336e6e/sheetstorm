@@ -231,11 +231,6 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                                             title={search ? 'No matching network IOCs' : 'No network IOCs'}
                                             description={search ? 'Try adjusting your search criteria' : 'Track IP addresses, domains, and URLs associated with malicious network activity.'}
                                             icon={<Network className="w-8 h-8" />}
-                                            action={!search && (
-                                                <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
-                                                    <Plus className="mr-2 h-3.5 w-3.5" /> Add IOC
-                                                </Button>
-                                            )}
                                         />
                                     </TableCell></TableRow>
                                 ) : (

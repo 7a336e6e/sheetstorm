@@ -323,13 +323,6 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                                         ? 'Try adjusting your search or filter criteria'
                                                         : 'Record user and service accounts that have been compromised or are under investigation.'
                                                 }
-                                                action={
-                                                    !search && typeFilter === 'all' && (
-                                                        <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
-                                                            <Plus className="mr-2 h-3.5 w-3.5" /> Add Account
-                                                        </Button>
-                                                    )
-                                                }
                                             />
                                         </TableCell>
                                     </TableRow>

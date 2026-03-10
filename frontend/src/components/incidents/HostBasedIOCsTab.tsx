@@ -278,11 +278,6 @@ export function HostBasedIOCsTab({ incidentId }: HostBasedIOCsTabProps) {
                                                     title={search || typeFilter !== 'all' ? 'No matching host IOCs' : 'No host-based IOCs'}
                                                     description={search || typeFilter !== 'all' ? 'Try adjusting your search or filter criteria' : 'Document file artifacts, registry keys, processes, and other host-based indicators of compromise.'}
                                                     icon={<HardDrive className="w-8 h-8" />}
-                                                    action={!search && typeFilter === 'all' && (
-                                                        <Button size="sm" variant="outline" onClick={() => handleOpenModal()}>
-                                                            <Plus className="mr-2 h-3.5 w-3.5" /> Add IOC
-                                                        </Button>
-                                                    )}
                                                 />
                                             </TableCell></TableRow>
                                         ) : (

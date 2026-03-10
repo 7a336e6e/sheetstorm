@@ -208,6 +208,7 @@ async def sheetstorm_add_account(
     host_id: Optional[str] = None,
     sid: Optional[str] = None,
     is_privileged: bool = False,
+    datetime_seen: Optional[str] = None,
 ) -> str:
     """Add a compromised account. Password will be encrypted at rest.
 
@@ -220,10 +221,17 @@ async def sheetstorm_add_account(
         host_id: UUID of the associated host
         sid: Security Identifier
         is_privileged: Whether this is a privileged account
+        datetime_seen: ISO-8601 timestamp when compromise was observed (defaults to now)
     """
+    from datetime import datetime, timezone
+
     client = get_client()
     try:
-        payload: dict = {"account_name": account_name, "account_type": account_type}
+        payload: dict = {
+            "account_name": account_name,
+            "account_type": account_type,
+            "datetime_seen": datetime_seen or datetime.now(timezone.utc).isoformat(),
+        }
         if domain:
             payload["domain"] = domain
         if password:

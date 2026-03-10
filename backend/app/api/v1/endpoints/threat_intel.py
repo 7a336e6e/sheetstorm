@@ -525,13 +525,14 @@ def domain_reputation_lookup():
     if not domain:
         return jsonify({'error': 'bad_request', 'message': 'Domain required'}), 400
 
-    result = {'domain': domain, 'sources': {}}
+    result = {'domain': domain, 'sources': {}, 'vt_configured': False}
 
     # --- VirusTotal (optional) ---
     vt_integration = Integration.query.filter_by(
         organization_id=user.organization_id, type='virustotal', is_enabled=True
     ).first()
     if vt_integration and vt_integration.credentials_encrypted:
+        result['vt_configured'] = True
         try:
             creds = EncryptionService.decrypt_json(vt_integration.credentials_encrypted)
             api_key = creds.get('api_key')
@@ -555,8 +556,12 @@ def domain_reputation_lookup():
                         'last_analysis_date': attrs.get('last_analysis_date'),
                         'categories': attrs.get('categories', {}),
                     }
-        except Exception:
-            pass
+                else:
+                    result['vt_error'] = f'VirusTotal API returned HTTP {resp.status_code}'
+            else:
+                result['vt_error'] = 'API key not found in integration credentials'
+        except Exception as e:
+            result['vt_error'] = f'VirusTotal lookup failed: {str(e)}'
 
     result['enriched'] = len(result['sources']) > 0
     return jsonify(result), 200

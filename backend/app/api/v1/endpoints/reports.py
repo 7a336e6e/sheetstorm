@@ -20,6 +20,10 @@ REPORT_TYPES = {
         'title': 'Executive Summary',
         'sections': ['summary', 'recommendations'],
     },
+    'full': {
+        'title': 'Full Incident Report',
+        'sections': ['summary', 'timeline', 'iocs', 'recommendations'],
+    },
     'metrics': {
         'title': 'Incident Metrics',
         'sections': ['summary', 'timeline', 'iocs'],

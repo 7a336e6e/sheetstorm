@@ -526,7 +526,10 @@ function DomainResultCard({ data }: { data: DomainReputationResult }) {
           <Search className="h-5 w-5 text-muted-foreground" />
           <span className="font-mono font-semibold">{data.domain}</span>
         </div>
-        {!data.enriched && <Badge variant="default">VirusTotal not configured</Badge>}
+        {!data.enriched && !data.vt_configured && <Badge variant="default">VirusTotal not configured</Badge>}
+        {!data.enriched && data.vt_configured && data.vt_error && (
+          <Badge variant="destructive" title={data.vt_error}>VirusTotal lookup failed</Badge>
+        )}
       </div>
 
       {vt && (

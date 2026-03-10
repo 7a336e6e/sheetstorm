@@ -8,7 +8,7 @@
 import { useState, useMemo } from 'react'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
-import type { LOLBASEntry, WindowsEventID, D3FENDTechnique } from '@/types'
+import type { LOLBASEntry, WindowsEventID, D3FENDTechnique, MITREAttackTechnique } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -23,18 +23,20 @@ import {
   ChevronRight,
   Filter,
   Sparkles,
+  Crosshair,
 } from 'lucide-react'
 
-type KBTab = 'lolbas' | 'eventids' | 'd3fend'
+type KBTab = 'lolbas' | 'eventids' | 'd3fend' | 'mitre_attack'
 
 const KB_TABS: { id: KBTab; label: string; icon: React.ElementType }[] = [
+  { id: 'mitre_attack', label: 'MITRE ATT&CK', icon: Crosshair },
   { id: 'lolbas', label: 'LOLBAS', icon: Terminal },
   { id: 'eventids', label: 'Event IDs', icon: MonitorDot },
   { id: 'd3fend', label: 'MITRE D3FEND', icon: Shield },
 ]
 
 export default function KnowledgeBasePage() {
-  const [activeTab, setActiveTab] = useState<KBTab>('lolbas')
+  const [activeTab, setActiveTab] = useState<KBTab>('mitre_attack')
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -64,9 +66,175 @@ export default function KnowledgeBasePage() {
         ))}
       </div>
 
+      {activeTab === 'mitre_attack' && <MITREAttackTab />}
       {activeTab === 'lolbas' && <LOLBASTab />}
       {activeTab === 'eventids' && <EventIDTab />}
       {activeTab === 'd3fend' && <D3FENDTab />}
+    </div>
+  )
+}
+
+/* ────────────────── MITRE ATT&CK Tab ────────────────── */
+
+function MITREAttackTab() {
+  const [search, setSearch] = useState('')
+  const [tactic, setTactic] = useState('')
+  const [platform, setPlatform] = useState('')
+  const [data, setData] = useState<MITREAttackTechnique[]>([])
+  const [tactics, setTactics] = useState<string[]>([])
+  const [loading, setLoading] = useState(false)
+  const [fetched, setFetched] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (search) params.set('search', search)
+      if (tactic) params.set('tactic', tactic)
+      if (platform) params.set('platform', platform)
+      const res = await api.get<{ items: MITREAttackTechnique[]; total: number; tactics: string[] }>(
+        `/knowledge-base/mitre-attack?${params}`
+      )
+      setData(res.items)
+      setTactics(res.tactics)
+      setFetched(true)
+    } finally { setLoading(false) }
+  }
+
+  const toggle = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const tacticColor = (t: string) => {
+    const colors: Record<string, string> = {
+      'Reconnaissance': 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-300',
+      'Resource Development': 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300',
+      'Initial Access': 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+      'Execution': 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
+      'Persistence': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300',
+      'Privilege Escalation': 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+      'Defense Evasion': 'bg-lime-100 text-lime-800 dark:bg-lime-950 dark:text-lime-300',
+      'Credential Access': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+      'Discovery': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300',
+      'Lateral Movement': 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
+      'Collection': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300',
+      'Command and Control': 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300',
+      'Exfiltration': 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300',
+      'Impact': 'bg-pink-100 text-pink-800 dark:bg-pink-950 dark:text-pink-300',
+    }
+    return colors[t] || 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+  }
+
+  const platforms = ['Windows', 'macOS', 'Linux', 'PRE']
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && load()}
+            placeholder="Search techniques by ID, name, or description…"
+            className="w-full pl-9 pr-4 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <select
+          value={tactic}
+          onChange={e => setTactic(e.target.value)}
+          className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">All tactics</option>
+          {(tactics.length > 0 ? tactics : [
+            'Reconnaissance', 'Resource Development', 'Initial Access', 'Execution',
+            'Persistence', 'Privilege Escalation', 'Defense Evasion', 'Credential Access',
+            'Discovery', 'Lateral Movement', 'Collection', 'Command and Control',
+            'Exfiltration', 'Impact',
+          ]).map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select
+          value={platform}
+          onChange={e => setPlatform(e.target.value)}
+          className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">All platforms</option>
+          {platforms.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <Button onClick={load} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
+          Search
+        </Button>
+      </div>
+
+      {!fetched && (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          <Crosshair className="h-8 w-8 mx-auto mb-2 opacity-40" />
+          Browse the MITRE ATT&CK Enterprise framework — tactics, techniques, and detection guidance.
+        </div>
+      )}
+
+      {fetched && data.length === 0 && (
+        <div className="text-center py-12 text-muted-foreground text-sm">No techniques found.</div>
+      )}
+
+      {fetched && data.length > 0 && (
+        <div className="text-xs text-muted-foreground mb-1">{data.length} techniques</div>
+      )}
+
+      {data.length > 0 && (
+        <div className="border border-border rounded-lg divide-y divide-border bg-card">
+          {data.map(tech => (
+            <div key={tech.id}>
+              <button
+                onClick={() => toggle(tech.id)}
+                className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/50 transition-colors"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  {expanded.has(tech.id) ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="font-mono text-xs">{tech.id}</Badge>
+                      <span className="text-sm font-medium">{tech.name}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{tech.description}</p>
+                  </div>
+                </div>
+                <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ml-2', tacticColor(tech.tactic))}>
+                  {tech.tactic}
+                </span>
+              </button>
+              {expanded.has(tech.id) && (
+                <div className="px-10 pb-4 space-y-2 text-sm">
+                  <p className="text-muted-foreground">{tech.description}</p>
+                  {tech.platforms && tech.platforms.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Platforms</p>
+                      <div className="flex gap-1 flex-wrap">
+                        {tech.platforms.map(p => (
+                          <Badge key={p} variant="default" className="text-xs">{p}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {tech.detection && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Detection</p>
+                      <p className="text-xs text-muted-foreground">{tech.detection}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -343,10 +511,10 @@ function D3FENDTab() {
     setSuggestLoading(true)
     try {
       const ids = suggestInput.split(',').map(s => s.trim()).filter(Boolean)
-      const res = await api.post<{ suggestions: D3FENDTechnique[]; attack_techniques: string[] }>(
+      const res = await api.post<{ items: D3FENDTechnique[]; total: number; input_techniques: string[] }>(
         '/knowledge-base/d3fend/suggest', { attack_techniques: ids }
       )
-      setSuggestions(res.suggestions)
+      setSuggestions(res.items)
     } finally { setSuggestLoading(false) }
   }
 

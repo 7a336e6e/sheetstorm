@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { FileText, BarChart3, PieChart, TrendingUp, Download, Loader2, AlertCircle, Trash2 } from 'lucide-react'
+import { FileText, BarChart3, PieChart, TrendingUp, Download, Loader2, AlertCircle, Trash2, BookOpenCheck } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import api from '@/lib/api'
@@ -34,6 +34,14 @@ interface ReportRecord {
 }
 
 const reportTypes = [
+    {
+        id: 'full',
+        icon: BookOpenCheck,
+        title: 'Full Incident Report',
+        description: 'Comprehensive report with all sections',
+        detail: 'Generate a complete report including summary, timeline, IOCs, and recommendations.',
+        sections: ['summary', 'timeline', 'iocs', 'recommendations'],
+    },
     {
         id: 'executive',
         icon: FileText,
@@ -264,7 +272,7 @@ export default function ReportsPage() {
             </div>
 
             {/* Report Types */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 {reportTypes.map((report) => (
                     <Card key={report.id} className="hover:bg-muted/50 transition-colors cursor-pointer">
                         <CardHeader className="pb-3">

@@ -427,6 +427,8 @@ export interface IPReputationResult {
 export interface DomainReputationResult {
   domain: string
   enriched: boolean
+  vt_configured?: boolean
+  vt_error?: string
   sources: {
     virustotal?: {
       malicious: number
@@ -512,5 +514,20 @@ export interface D3FENDTechnique {
   mitre_attack_mappings: string[]
   examples: string[]
   matched_techniques?: string[]
+}
+
+export interface MITREAttackTechnique {
+  id: string
+  name: string
+  tactic: string
+  description: string
+  platforms: string[]
+  detection: string
+}
+
+export interface MITREAttackTactic {
+  id: string
+  name: string
+  description: string
 }
 

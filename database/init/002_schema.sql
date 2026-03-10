@@ -441,7 +441,7 @@ CREATE INDEX idx_graph_edges_mitre ON attack_graph_edges(mitre_tactic, mitre_tec
 CREATE TABLE integrations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    type VARCHAR(50) NOT NULL CHECK (type IN ('s3', 'slack', 'openai', 'google_ai', 'oauth_google', 'oauth_github', 'oauth_azure', 'webhook', 'siem')),
+    type VARCHAR(50) NOT NULL CHECK (type IN ('s3', 'openai', 'google_ai', 'slack', 'email_smtp', 'webhook', 'oauth_google', 'oauth_github', 'oauth_azure', 'misp', 'virustotal', 'mitre_attack', 'abuseipdb', 'hibp', 'shodan', 'velociraptor', 'thehive', 'cortex', 'jira', 'google_drive', 'siem', 'splunk', 'elastic')),
     name VARCHAR(255) NOT NULL,
     is_enabled BOOLEAN DEFAULT TRUE,
     config JSONB NOT NULL DEFAULT '{}',

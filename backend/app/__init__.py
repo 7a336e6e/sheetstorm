@@ -54,7 +54,6 @@ def _get_rate_limit_key():
 
 limiter = Limiter(
     key_func=_get_rate_limit_key,
-    default_limits=["200 per day", "50 per hour"],
     storage_uri=os.getenv('REDIS_URL', 'memory://'),
 )
 

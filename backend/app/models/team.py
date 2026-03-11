@@ -1,6 +1,6 @@
 """Team models"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -16,6 +16,7 @@ class Team(BaseModel):
     organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text)
+    is_default = Column(Boolean, default=False, server_default='false')
     updated_at = Column(DateTime(timezone=True))
 
     # Relationships
@@ -32,6 +33,7 @@ class Team(BaseModel):
             'organization_id': str(self.organization_id),
             'name': self.name,
             'description': self.description,
+            'is_default': self.is_default,
             'member_count': len(self.members) if self.members else 0,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

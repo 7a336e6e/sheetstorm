@@ -89,6 +89,7 @@ import { HostBasedIOCsTab } from '@/components/incidents/HostBasedIOCsTab'
 import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
 import { EventsTable } from '@/components/incidents/EventsTable'
 import { IOCVisualTimeline } from '@/components/incidents/IOCVisualTimeline'
+import { HostsTab } from '@/components/incidents/HostsTab'
 
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
@@ -226,6 +227,28 @@ function PhaseBadge({ phase }: { phase: number }) {
   )
 }
 
+function TLPBadge({ tlp }: { tlp: string }) {
+  const styles: Record<string, string> = {
+    white: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
+    green: 'bg-green-500/20 text-green-400 border-green-500/30',
+    amber: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    amber_strict: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    red: 'bg-red-500/20 text-red-400 border-red-500/30',
+  }
+  const labels: Record<string, string> = {
+    white: 'TLP:WHITE',
+    green: 'TLP:GREEN',
+    amber: 'TLP:AMBER',
+    amber_strict: 'TLP:AMBER+STRICT',
+    red: 'TLP:RED',
+  }
+  return (
+    <Badge className={`${styles[tlp] || styles.amber} border font-mono text-[10px]`}>
+      {labels[tlp] || `TLP:${tlp?.toUpperCase()}`}
+    </Badge>
+  )
+}
+
 // --- Main Page Component ---
 export default function IncidentDetailPage() {
   const params = useParams()
@@ -236,13 +259,10 @@ export default function IncidentDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [hosts, setHosts] = useState<CompromisedHost[]>([])
-  const [hostSearch, setHostSearch] = useState('')
 
   // Modal States
   const [showEditModal, setShowEditModal] = useState(false)
   const [showStatusModal, setShowStatusModal] = useState(false)
-  const [showHostModal, setShowHostModal] = useState(false)
-  const [editingHost, setEditingHost] = useState<CompromisedHost | null>(null)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [showImportModal, setShowImportModal] = useState(false)
@@ -260,16 +280,7 @@ export default function IncidentDetailPage() {
     description: '',
     severity: 'medium',
     classification: '',
-  })
-
-  const [hostForm, setHostForm] = useState({
-    hostname: '',
-    ip_address: '',
-    system_type: 'workstation',
-    os_version: '',
-    containment_status: 'active',
-    first_seen: '',
-    evidence: '',
+    tlp: 'amber',
   })
 
   const [taskForm, setTaskForm] = useState({
@@ -325,6 +336,7 @@ export default function IncidentDetailPage() {
       description: currentIncident.description || '',
       severity: currentIncident.severity,
       classification: currentIncident.classification || '',
+      tlp: currentIncident.tlp || 'amber',
     })
     setShowEditModal(true)
   }
@@ -338,7 +350,8 @@ export default function IncidentDetailPage() {
         title: editForm.title,
         description: editForm.description,
         severity: editForm.severity,
-        classification: editForm.classification
+        classification: editForm.classification,
+        tlp: editForm.tlp,
       })
 
       await fetchIncident(incidentId)
@@ -362,48 +375,6 @@ export default function IncidentDetailPage() {
     } catch (error) {
       console.error('Failed to update status:', error)
       toast({ title: 'Error', description: 'Failed to update incident status.', variant: 'destructive' })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleOpenHostModal = (host?: CompromisedHost) => {
-    if (host) {
-      setEditingHost(host)
-      setHostForm({
-        hostname: host.hostname,
-        ip_address: host.ip_address || '',
-        system_type: host.system_type || 'workstation',
-        os_version: host.os_version || '',
-        containment_status: host.containment_status || 'active',
-        first_seen: host.first_seen || '',
-        evidence: host.evidence || '',
-      })
-    } else {
-      setEditingHost(null)
-      setHostForm({ hostname: '', ip_address: '', system_type: 'workstation', os_version: '', containment_status: 'active', first_seen: '', evidence: '' })
-    }
-    setShowHostModal(true)
-  }
-
-  const handleSubmitHost = async () => {
-    if (!hostForm.hostname) return
-    setIsSubmitting(true)
-    try {
-      const payload = hostForm
-      if (editingHost) {
-        await api.put(`/incidents/${incidentId}/hosts/${editingHost.id}`, payload)
-      } else {
-        await api.post(`/incidents/${incidentId}/hosts`, payload)
-      }
-
-      const hostsRes = await api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`)
-      setHosts(hostsRes.items || [])
-      setShowHostModal(false)
-      setEditingHost(null)
-      setHostForm({ hostname: '', ip_address: '', system_type: 'workstation', os_version: '', containment_status: 'active', first_seen: '', evidence: '' })
-    } catch (error) {
-      console.error('Failed to save host:', error)
     } finally {
       setIsSubmitting(false)
     }
@@ -677,6 +648,7 @@ export default function IncidentDetailPage() {
                 <SeverityBadge severity={incident.severity as any} />
                 <StatusBadge status={incident.status as any} />
                 <PhaseBadge phase={incident.phase} />
+                <TLPBadge tlp={incident.tlp || 'amber'} />
               </div>
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{incident.title}</h1>
               {incident.description && (
@@ -817,75 +789,217 @@ export default function IncidentDetailPage() {
 
           {/* Overview TabContent */}
           <TabsContent value="overview">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 space-y-6">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <StatCard title="Events" value={incident.counts?.timeline_events || 0} icon={<Clock className="h-5 w-5" />} />
-                  <StatCard title="Hosts" value={incident.counts?.compromised_hosts || 0} icon={<Server className="h-5 w-5" />} />
-                  <StatCard title="Artifacts" value={incident.counts?.artifacts || 0} icon={<FileText className="h-5 w-5" />} />
-                  <StatCard title="Tasks" value={incident.counts?.tasks || 0} description={`${taskProgress}% Done`} icon={<CheckSquare className="h-5 w-5" />} />
-                </div>
+            {(() => {
+              const iocEvents = timeline.filter(e => e.is_ioc)
+              const pendingTasks = tasks.filter(t => t.status === 'pending').length
+              const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length
+              const containmentGroups = hosts.reduce((acc, h) => {
+                const status = h.containment_status || 'active'
+                acc[status] = (acc[status] || 0) + 1
+                return acc
+              }, {} as Record<string, number>)
+              const containmentColors: Record<string, string> = {
+                active: 'text-red-400 bg-red-500/10 border-red-500/20',
+                monitoring: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+                isolated: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+                reimaged: 'text-green-400 bg-green-500/10 border-green-500/20',
+                decommissioned: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
+              }
+              // Calculate incident duration
+              const createdDate = incident.created_at ? new Date(incident.created_at) : null
+              const now = new Date()
+              let durationStr = 'N/A'
+              if (createdDate) {
+                const diffMs = now.getTime() - createdDate.getTime()
+                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+                const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+                durationStr = diffDays > 0 ? `${diffDays}d ${diffHours}h` : `${diffHours}h`
+              }
 
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-lg">Recent Activity</CardTitle>
-                    <Button variant="ghost" size="sm" onClick={() => setActiveTab('events')}>View all <ChevronRight className="ml-1 h-4 w-4" /></Button>
-                  </CardHeader>
-                  <CardContent>
-                    {timeline.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground">No recent activity</div>
-                    ) : (
-                      <div className="space-y-4">
-                        {timeline.slice(0, 5).map(event => (
-                          <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-white/5 transition-colors">
-                            <div className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{formatRelativeTime(event.timestamp)}</div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-foreground truncate">{event.activity}</p>
-                              {event.hostname && <span className="text-xs text-muted-foreground flex items-center gap-1 mt-1"><Server className="h-3 w-3" />{event.hostname}</span>}
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 space-y-6">
+                    {/* Primary Stats */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                      <StatCard title="Events" value={incident.counts?.timeline_events || 0} icon={<Clock className="h-5 w-5" />} description={iocEvents.length > 0 ? `${iocEvents.length} IOCs` : undefined} />
+                      <StatCard title="Hosts" value={incident.counts?.compromised_hosts || 0} icon={<Server className="h-5 w-5" />} description={hosts.filter(h => h.containment_status === 'isolated').length > 0 ? `${hosts.filter(h => h.containment_status === 'isolated').length} isolated` : undefined} />
+                      <StatCard title="Network IOCs" value={incident.counts?.network_indicators || 0} icon={<Globe className="h-5 w-5" />} />
+                      <StatCard title="Host IOCs" value={incident.counts?.host_indicators || 0} icon={<Fingerprint className="h-5 w-5" />} />
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                      <StatCard title="Tasks" value={tasks.length} description={`${taskProgress}% complete`} icon={<CheckSquare className="h-5 w-5" />} />
+                      <StatCard title="Accounts" value={incident.counts?.compromised_accounts || 0} icon={<Key className="h-5 w-5" />} />
+                      <StatCard title="Malware" value={incident.counts?.malware_tools || 0} icon={<Bug className="h-5 w-5" />} />
+                      <StatCard title="Artifacts" value={incident.counts?.artifacts || 0} icon={<FileText className="h-5 w-5" />} />
+                    </div>
+
+                    {/* Task Progress */}
+                    {tasks.length > 0 && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-lg">Task Progress</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="w-full bg-white/10 rounded-full h-3 overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-cyan-500 to-green-500 rounded-full transition-all duration-500" style={{ width: `${taskProgress}%` }} />
+                          </div>
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                            <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                              <div className="text-xl font-bold text-muted-foreground">{pendingTasks}</div>
+                              <div className="text-xs text-muted-foreground">Pending</div>
+                            </div>
+                            <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                              <div className="text-xl font-bold text-blue-400">{inProgressTasks}</div>
+                              <div className="text-xs text-muted-foreground">In Progress</div>
+                            </div>
+                            <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/20">
+                              <div className="text-xl font-bold text-green-400">{completedTasks}</div>
+                              <div className="text-xs text-muted-foreground">Completed</div>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        </CardContent>
+                      </Card>
                     )}
-                  </CardContent>
-                </Card>
-              </div>
 
-              <div className="space-y-6">
-                <Card>
-                  <CardHeader><CardTitle className="text-lg">Details</CardTitle></CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Classification</p>
-                      <p className="font-medium text-foreground">{incident.classification || 'Not classified'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Lead Responder</p>
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-xs font-medium">
-                          {incident.lead_responder?.name?.charAt(0) || '?'}
-                        </div>
-                        <span className="font-medium text-foreground">{incident.lead_responder?.name || 'Unassigned'}</span>
-                      </div>
-                    </div>
-                    {incident.teams && incident.teams.length > 0 && (
-                      <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Team Access</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {incident.teams.map(team => (
-                            <Badge key={team.id} variant="outline" className="text-xs">
-                              {team.name}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
+                    {/* Host Containment Status */}
+                    {hosts.length > 0 && (
+                      <Card>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-lg">Host Containment</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                            {Object.entries(containmentGroups).map(([status, count]) => (
+                              <div key={status} className={`p-3 rounded-lg border text-center ${containmentColors[status] || 'bg-white/5 border-white/10'}`}>
+                                <div className="text-xl font-bold">{count}</div>
+                                <div className="text-xs capitalize">{status.replace('_', ' ')}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
                     )}
-                  </CardContent>
-                </Card>
 
-                <AssignmentsPanel incidentId={incidentId} />
-              </div>
-            </div>
+                    {/* Recent Activity */}
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between pb-2">
+                        <CardTitle className="text-lg">Recent Activity</CardTitle>
+                        <Button variant="ghost" size="sm" onClick={() => setActiveTab('events')}>View all <ChevronRight className="ml-1 h-4 w-4" /></Button>
+                      </CardHeader>
+                      <CardContent>
+                        {timeline.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground">No recent activity</div>
+                        ) : (
+                          <div className="space-y-4">
+                            {timeline.slice(0, 5).map(event => (
+                              <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-white/5 transition-colors">
+                                <div className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{formatRelativeTime(event.timestamp)}</div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm text-foreground truncate">{event.activity}</p>
+                                    {event.is_ioc && <Badge className="bg-red-500/20 text-red-400 border-red-500/30 border text-[10px] px-1.5 py-0">IOC</Badge>}
+                                  </div>
+                                  {event.hostname && <span className="text-xs text-muted-foreground flex items-center gap-1 mt-1"><Server className="h-3 w-3" />{event.hostname}</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Details Card */}
+                    <Card>
+                      <CardHeader><CardTitle className="text-lg">Details</CardTitle></CardHeader>
+                      <CardContent className="space-y-4">
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Classification</p>
+                          <p className="font-medium text-foreground">{incident.classification || 'Not classified'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">TLP Level</p>
+                          <TLPBadge tlp={incident.tlp || 'amber'} />
+                        </div>
+                        {incident.owning_team && (
+                          <div>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Owning Team</p>
+                            <p className="font-medium text-foreground">{incident.owning_team.name}</p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Lead Responder</p>
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-xs font-medium">
+                              {incident.lead_responder?.name?.charAt(0) || '?'}
+                            </div>
+                            <span className="font-medium text-foreground">{incident.lead_responder?.name || 'Unassigned'}</span>
+                          </div>
+                        </div>
+                        {incident.teams && incident.teams.length > 0 && (
+                          <div>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Team Access</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {incident.teams.map(team => (
+                                <Badge key={team.id} variant="outline" className="text-xs">
+                                  {team.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Timing Card */}
+                    <Card>
+                      <CardHeader><CardTitle className="text-lg">Timing</CardTitle></CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Created</span>
+                          <span className="text-xs font-medium text-foreground">{incident.created_at ? formatDateTime(incident.created_at) : 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Last Updated</span>
+                          <span className="text-xs font-medium text-foreground">{incident.updated_at ? formatRelativeTime(incident.updated_at) : 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Duration</span>
+                          <span className="text-xs font-bold text-cyan-400">{durationStr}</span>
+                        </div>
+                        {timeline.length > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-xs text-muted-foreground">First Event</span>
+                            <span className="text-xs font-medium text-foreground">{formatDateTime(timeline[timeline.length - 1]?.timestamp)}</span>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* IOC Summary */}
+                    {timeline.length > 0 && (
+                      <Card>
+                        <CardHeader><CardTitle className="text-lg">IOC Summary</CardTitle></CardHeader>
+                        <CardContent>
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="text-2xl font-bold text-red-400">{iocEvents.length}</div>
+                            <div className="text-xs text-muted-foreground">of {timeline.length} events<br />marked as IOCs</div>
+                          </div>
+                          {iocEvents.length > 0 && (
+                            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                              <div className="h-full bg-red-500 rounded-full" style={{ width: `${Math.round((iocEvents.length / timeline.length) * 100)}%` }} />
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    <AssignmentsPanel incidentId={incidentId} />
+                  </div>
+                </div>
+              )
+            })()}
           </TabsContent>
 
           {/* Events Tab */}
@@ -900,73 +1014,7 @@ export default function IncidentDetailPage() {
 
           {/* Hosts Tab */}
           <TabsContent value="hosts">
-            <div className="space-y-4">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex flex-col lg:flex-row gap-4 justify-between">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search hosts, IPs..."
-                        value={hostSearch}
-                        onChange={(e) => setHostSearch(e.target.value)}
-                        className="pl-10"
-                      />
-                    </div>
-                    <Button onClick={() => handleOpenHostModal()}><Plus className="mr-2 h-4 w-4" /> Add Host</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-0">
-                  <GlassTable className="border-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Hostname</TableHead>
-                          <TableHead>IP</TableHead>
-                          <TableHead>Type</TableHead>
-                          <TableHead>Containment</TableHead>
-                          <TableHead>First Seen</TableHead>
-                          <TableHead className="w-[50px]"></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {hosts.filter(h => !hostSearch || h.hostname?.toLowerCase().includes(hostSearch.toLowerCase()) || h.ip_address?.toLowerCase().includes(hostSearch.toLowerCase()) || h.system_type?.toLowerCase().includes(hostSearch.toLowerCase())).length === 0 ? (
-                          <TableRow><TableCell colSpan={6}>
-                            <TableEmpty
-                              title={hostSearch ? 'No matching hosts' : 'No compromised hosts'}
-                              description={hostSearch ? 'Try adjusting your search criteria.' : 'Record systems that have been identified as compromised during this incident investigation.'}
-                              icon={<Server className="w-8 h-8" />}
-                            />
-                          </TableCell></TableRow>
-                        ) : (
-                          hosts.filter(h => !hostSearch || h.hostname?.toLowerCase().includes(hostSearch.toLowerCase()) || h.ip_address?.toLowerCase().includes(hostSearch.toLowerCase()) || h.system_type?.toLowerCase().includes(hostSearch.toLowerCase())).map(host => (
-                            <TableRow key={host.id} className="group">
-                              <TableCell className="font-medium">{host.hostname}</TableCell>
-                              <TableCell>{host.ip_address}</TableCell>
-                              <TableCell>{host.system_type}</TableCell>
-                              <TableCell>
-                                <Badge variant={host.containment_status === 'isolated' ? 'default' : 'destructive'}>
-                                  {host.containment_status || 'Active'}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>{host.first_seen ? formatDateTime(host.first_seen) : '-'}</TableCell>
-                              <TableCell>
-                                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenHostModal(host)}>
-                                  <MoreHorizontal className="w-4 h-4" />
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </GlassTable>
-                </CardContent>
-              </Card>
-            </div>
+            <HostsTab incidentId={incidentId} onHostsChange={setHosts} />
           </TabsContent>
 
           {/* Tasks Tab */}
@@ -1187,6 +1235,19 @@ export default function IncidentDetailPage() {
               <Label>Classification</Label>
               <Input value={editForm.classification} onChange={e => setEditForm({ ...editForm, classification: e.target.value })} variant="glass" />
             </div>
+            <div className="space-y-2">
+              <Label>TLP Level</Label>
+              <Select value={editForm.tlp} onValueChange={v => setEditForm({ ...editForm, tlp: v })}>
+                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="white">TLP:WHITE — Unrestricted</SelectItem>
+                  <SelectItem value="green">TLP:GREEN — Community</SelectItem>
+                  <SelectItem value="amber">TLP:AMBER — Limited distribution</SelectItem>
+                  <SelectItem value="amber_strict">TLP:AMBER+STRICT — Restricted</SelectItem>
+                  <SelectItem value="red">TLP:RED — Named recipients only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button>
@@ -1215,58 +1276,6 @@ export default function IncidentDetailPage() {
               </button>
             ))}
           </DialogBody>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Host Modal */}
-      <Dialog open={showHostModal} onOpenChange={setShowHostModal}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editingHost ? 'Edit' : 'Add'} Host</DialogTitle></DialogHeader>
-          <DialogBody className="space-y-4">
-            <div className="space-y-2">
-              <Label>Hostname</Label>
-              <Input value={hostForm.hostname} onChange={e => setHostForm({ ...hostForm, hostname: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>IP Address</Label>
-              <Input value={hostForm.ip_address} onChange={e => setHostForm({ ...hostForm, ip_address: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>System Type</Label>
-              <Select value={hostForm.system_type} onValueChange={v => setHostForm({ ...hostForm, system_type: v })}>
-                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="workstation">Workstation</SelectItem>
-                  <SelectItem value="server">Server</SelectItem>
-                  <SelectItem value="domain_controller">Domain Controller</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>OS Version</Label>
-              <Input value={hostForm.os_version} onChange={e => setHostForm({ ...hostForm, os_version: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>Containment Status</Label>
-              <Select value={hostForm.containment_status} onValueChange={v => setHostForm({ ...hostForm, containment_status: v })}>
-                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="isolated">Isolated</SelectItem>
-                  <SelectItem value="reimaged">Reimaged</SelectItem>
-                  <SelectItem value="decommissioned">Decommissioned</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Evidence / Notes</Label>
-              <Textarea value={hostForm.evidence} onChange={e => setHostForm({ ...hostForm, evidence: e.target.value })} variant="glass" />
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowHostModal(false)}>Cancel</Button>
-            <Button onClick={handleSubmitHost} loading={isSubmitting}>{editingHost ? 'Save Changes' : 'Add Host'}</Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

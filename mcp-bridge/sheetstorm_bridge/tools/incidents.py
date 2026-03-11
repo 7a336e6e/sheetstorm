@@ -9,22 +9,30 @@ from sheetstorm_bridge.server import mcp, get_client
 
 
 def _format_incident(inc: dict) -> str:
+    tlp = (inc.get('tlp') or 'amber').upper().replace('_', '+')
+    team = inc.get('owning_team', {}) or {}
+    team_name = team.get('name', 'Unassigned') if isinstance(team, dict) else 'Unassigned'
     return (
         f"**{inc.get('title', 'Untitled')}** (ID: {inc.get('id', 'N/A')})\n"
         f"  Status: {inc.get('status', 'N/A')} | Severity: {inc.get('severity', 'N/A')} | "
-        f"Phase: {inc.get('phase', 'N/A')}\n"
-        f"  Classification: {inc.get('classification', 'N/A')}\n"
+        f"Phase: {inc.get('phase', 'N/A')} | TLP: {tlp}\n"
+        f"  Classification: {inc.get('classification', 'N/A')} | Team: {team_name}\n"
         f"  Created: {inc.get('created_at', 'N/A')}"
     )
 
 
 def _format_incident_detail(inc: dict) -> str:
+    tlp = (inc.get('tlp') or 'amber').upper().replace('_', '+')
+    team = inc.get('owning_team', {}) or {}
+    team_name = team.get('name', 'Unassigned') if isinstance(team, dict) else 'Unassigned'
     parts = [
         f"# {inc.get('title', 'Untitled')}",
         f"**ID**: {inc.get('id', 'N/A')}",
         f"**Status**: {inc.get('status', 'N/A')}",
         f"**Severity**: {inc.get('severity', 'N/A')}",
         f"**Phase**: {inc.get('phase', 'N/A')}",
+        f"**TLP**: {tlp}",
+        f"**Owning Team**: {team_name}",
         f"**Classification**: {inc.get('classification', 'N/A')}",
         f"**Created**: {inc.get('created_at', 'N/A')}",
         f"**Updated**: {inc.get('updated_at', 'N/A')}",
@@ -106,6 +114,8 @@ async def sheetstorm_create_incident(
     severity: str = "medium",
     classification: Optional[str] = None,
     phase: int = 1,
+    tlp: str = "amber",
+    team_id: Optional[str] = None,
 ) -> str:
     """Create a new incident.
 
@@ -115,6 +125,8 @@ async def sheetstorm_create_incident(
         severity: Severity level (critical, high, medium, low)
         classification: Optional classification type
         phase: IR phase 1-6 (default 1 = Preparation)
+        tlp: Traffic Light Protocol level (white, green, amber, amber_strict, red). Default amber.
+        team_id: UUID of the owning team (defaults to organisation's default team)
     """
     client = get_client()
     try:
@@ -123,9 +135,12 @@ async def sheetstorm_create_incident(
             "description": description,
             "severity": severity,
             "phase": phase,
+            "tlp": tlp,
         }
         if classification:
             payload["classification"] = classification
+        if team_id:
+            payload["team_id"] = team_id
         inc = await client.post("/incidents", json=payload)
         return f"✓ Incident created:\n{_format_incident(inc)}"
     except SheetStormAPIError as exc:
@@ -141,6 +156,8 @@ async def sheetstorm_update_incident(
     classification: Optional[str] = None,
     executive_summary: Optional[str] = None,
     lessons_learned: Optional[str] = None,
+    tlp: Optional[str] = None,
+    team_id: Optional[str] = None,
 ) -> str:
     """Update incident details.
 
@@ -152,6 +169,8 @@ async def sheetstorm_update_incident(
         classification: New classification
         executive_summary: Executive summary text
         lessons_learned: Lessons learned text
+        tlp: Traffic Light Protocol level (white, green, amber, amber_strict, red)
+        team_id: UUID of the owning team
     """
     client = get_client()
     try:
@@ -159,7 +178,7 @@ async def sheetstorm_update_incident(
         for field, value in [
             ("title", title), ("description", description), ("severity", severity),
             ("classification", classification), ("executive_summary", executive_summary),
-            ("lessons_learned", lessons_learned),
+            ("lessons_learned", lessons_learned), ("tlp", tlp), ("team_id", team_id),
         ]:
             if value is not None:
                 payload[field] = value

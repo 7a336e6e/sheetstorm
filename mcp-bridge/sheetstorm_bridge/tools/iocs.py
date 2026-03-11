@@ -13,11 +13,15 @@ from sheetstorm_bridge.server import mcp, get_client
 # ---------------------------------------------------------------------------
 
 def _format_network_ioc(i: dict) -> str:
+    src_ref = i.get('source_host_ref', {})
+    dst_ref = i.get('destination_host_ref', {})
+    src_name = src_ref.get('hostname', i.get('source_host', 'N/A')) if isinstance(src_ref, dict) else i.get('source_host', 'N/A')
+    dst_name = dst_ref.get('hostname', i.get('destination_host', 'N/A')) if isinstance(dst_ref, dict) else i.get('destination_host', 'N/A')
     return (
         f"**{i.get('dns_ip', 'N/A')}** (ID: {i.get('id', 'N/A')})\n"
         f"  Protocol: {i.get('protocol', 'N/A')} | Port: {i.get('port', 'N/A')} | "
         f"Direction: {i.get('direction', 'N/A')}\n"
-        f"  Source: {i.get('source_host', 'N/A')} → Dest: {i.get('destination_host', 'N/A')}\n"
+        f"  Source: {src_name} \u2192 Dest: {dst_name}\n"
         f"  Description: {i.get('description', 'N/A')} | "
         f"Malicious: {'Yes' if i.get('is_malicious') else 'No'}"
     )
@@ -91,21 +95,27 @@ async def sheetstorm_add_network_ioc(
     is_malicious: bool = True,
     host_id: Optional[str] = None,
     timestamp: Optional[str] = None,
+    source_host_id: Optional[str] = None,
+    destination_host_id: Optional[str] = None,
+    add_to_attack_graph: bool = False,
 ) -> str:
     """Add a network IOC (IP address, domain, or URL).
 
     Args:
         incident_id: UUID of the incident
         dns_ip: The indicator value (IP, domain, or URL)
-        protocol: Network protocol (TCP, UDP, HTTP, etc.)
+        protocol: Network protocol (TCP, UDP, HTTP, HTTPS, DNS, ICMP, SMB, RDP, SSH)
         port: Port number
-        source_host: Source hostname or IP (legacy; prefer host_id for correlation)
-        destination_host: Destination hostname or IP
+        source_host: Source hostname or IP (legacy text field; prefer source_host_id)
+        destination_host: Destination hostname or IP (legacy text field; prefer destination_host_id)
         direction: Direction (inbound, outbound, lateral)
         description: Description
         is_malicious: Whether this is confirmed malicious
         host_id: UUID of a compromised host to correlate with (shown in UI)
         timestamp: ISO-8601 timestamp when the IOC was observed (defaults to now)
+        source_host_id: UUID of the source compromised host (creates a host link)
+        destination_host_id: UUID of the destination compromised host (creates a host link)
+        add_to_attack_graph: If true, automatically creates an attack graph node for this IOC
     """
     from datetime import datetime as dt, timezone
 
@@ -130,6 +140,12 @@ async def sheetstorm_add_network_ioc(
         if description:
             payload["description"] = description
         payload["is_malicious"] = is_malicious
+        if source_host_id:
+            payload["source_host_id"] = source_host_id
+        if destination_host_id:
+            payload["destination_host_id"] = destination_host_id
+        if add_to_attack_graph:
+            payload["add_to_attack_graph"] = True
 
         ioc = await client.post(f"/incidents/{incident_id}/network-iocs", json=payload)
         return f"✓ Network IOC added:\n{_format_network_ioc(ioc)}"
@@ -147,6 +163,8 @@ async def sheetstorm_update_network_ioc(
     source_host: Optional[str] = None,
     destination_host: Optional[str] = None,
     description: Optional[str] = None,
+    source_host_id: Optional[str] = None,
+    destination_host_id: Optional[str] = None,
 ) -> str:
     """Update a network IOC.
 
@@ -156,9 +174,11 @@ async def sheetstorm_update_network_ioc(
         dns_ip: New indicator value
         protocol: New protocol
         port: New port
-        source_host: New source host
-        destination_host: New destination host
+        source_host: New source host (text)
+        destination_host: New destination host (text)
         description: New description
+        source_host_id: UUID of source compromised host (or 'null' to clear)
+        destination_host_id: UUID of destination compromised host (or 'null' to clear)
     """
     client = get_client()
     try:
@@ -170,6 +190,8 @@ async def sheetstorm_update_network_ioc(
             ("source_host", source_host),
             ("destination_host", destination_host),
             ("description", description),
+            ("source_host_id", source_host_id),
+            ("destination_host_id", destination_host_id),
         ]:
             if val is not None:
                 payload[field] = val

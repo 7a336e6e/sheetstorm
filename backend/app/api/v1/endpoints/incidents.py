@@ -138,6 +138,8 @@ def create_incident():
         classification=data.classification,
         phase=1,  # Start in Preparation phase
         status='open',
+        tlp=data.tlp or 'amber',
+        team_id=str(data.team_id) if data.team_id else None,
         detected_at=data.detected_at or datetime.now(timezone.utc),
         created_by=user.id
     )
@@ -220,6 +222,10 @@ def update_incident(incident_id):
         lead = User.query.filter_by(id=update_data['lead_responder_id'], organization_id=user.organization_id).first()
         if lead:
             incident.lead_responder_id = lead.id
+    if 'tlp' in update_data:
+        incident.tlp = update_data['tlp']
+    if 'team_id' in update_data:
+        incident.team_id = str(update_data['team_id']) if update_data['team_id'] else None
 
     db.session.commit()
 

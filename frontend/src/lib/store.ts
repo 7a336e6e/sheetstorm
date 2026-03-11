@@ -192,6 +192,9 @@ export interface Incident {
   classification?: string
   phase: number
   phase_name: string
+  tlp?: 'white' | 'green' | 'amber' | 'amber_strict' | 'red'
+  team_id?: string
+  owning_team?: { id: string; name: string }
   lead_responder?: User
   creator?: { id: string; name: string }
   teams?: { id: string; name: string | null }[]
@@ -204,6 +207,9 @@ export interface Incident {
     compromised_accounts: number
     artifacts: number
     tasks: number
+    network_indicators?: number
+    host_indicators?: number
+    malware_tools?: number
   }
 }
 

@@ -1,5 +1,5 @@
 """Incident model"""
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Index, UniqueConstraint
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Index, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -10,7 +10,10 @@ class Incident(BaseModel):
     __tablename__ = 'incidents'
     __table_args__ = (
         Index('idx_incident_status_severity_created', 'status', 'severity', 'created_at'),
+        CheckConstraint("tlp IN ('white', 'green', 'amber', 'amber_strict', 'red')", name='ck_incident_tlp'),
     )
+
+    TLP_LEVELS = ['white', 'green', 'amber', 'amber_strict', 'red']
 
     organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False)
     incident_number = Column(Integer)
@@ -21,6 +24,8 @@ class Incident(BaseModel):
     classification = Column(String(100))
     phase = Column(Integer, nullable=False, default=1)
     lead_responder_id = Column(UUID(as_uuid=True), ForeignKey('users.id'))
+    team_id = Column(UUID(as_uuid=True), ForeignKey('teams.id', ondelete='SET NULL'), nullable=True)
+    tlp = Column(String(20), nullable=False, default='amber', server_default='amber')
     detected_at = Column(DateTime(timezone=True))
     contained_at = Column(DateTime(timezone=True))
     eradicated_at = Column(DateTime(timezone=True))
@@ -36,6 +41,7 @@ class Incident(BaseModel):
     organization = relationship('Organization', back_populates='incidents')
     lead_responder = relationship('User', foreign_keys=[lead_responder_id])
     creator = relationship('User', foreign_keys=[created_by])
+    owning_team = relationship('Team', foreign_keys=[team_id])
     assignments = relationship('IncidentAssignment', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     timeline_events = relationship('TimelineEvent', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     compromised_hosts = relationship('CompromisedHost', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
@@ -72,6 +78,9 @@ class Incident(BaseModel):
         """Convert to dictionary."""
         data = super().to_dict()
         data['phase_name'] = self.phase_name
+        data['tlp'] = self.tlp
+        data['team_id'] = str(self.team_id) if self.team_id else None
+        data['owning_team'] = {'id': str(self.owning_team.id), 'name': self.owning_team.name} if self.owning_team else None
         data['lead_responder'] = self.lead_responder.to_dict() if self.lead_responder else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
         data['teams'] = [

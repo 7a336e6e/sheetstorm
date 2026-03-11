@@ -91,7 +91,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         host_id: '',
         mitre_tactic: '',
         mitre_technique: '',
-        is_ioc: false,
     })
 
     useEffect(() => {
@@ -127,7 +126,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                     host_id: form.host_id || null,
                     mitre_tactic: form.mitre_tactic || null,
                     mitre_technique: form.mitre_technique || null,
-                    is_ioc: form.is_ioc,
                 })
             } else {
                 await api.post(`/incidents/${incidentId}/timeline`, {
@@ -136,7 +134,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                     host_id: form.host_id || null,
                     mitre_tactic: form.mitre_tactic || null,
                     mitre_technique: form.mitre_technique || null,
-                    is_ioc: form.is_ioc,
                 })
             }
             setShowAddModal(false)
@@ -174,26 +171,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
             host_id: event.host?.id || '',
             mitre_tactic: event.mitre_tactic || '',
             mitre_technique: event.mitre_technique || '',
-            is_ioc: event.is_ioc || false
         })
         setShowAddModal(true)
-    }
-
-    const handleToggleIOC = async (event: TimelineEvent, checked: boolean) => {
-        // Optimistic update
-        const updatedEvents = events.map(e => e.id === event.id ? { ...e, is_ioc: checked } : e)
-        setEvents(updatedEvents)
-
-        try {
-            await api.put(`/incidents/${incidentId}/timeline/${event.id}`, {
-                ...event,
-                host_id: event.host?.id, // Ensure host_id is preserved/passed correctly if needed by backend
-                is_ioc: checked
-            })
-        } catch (error) {
-            console.error("Failed to update IOC status", error)
-            loadData() // Revert on error
-        }
     }
 
     const handleOpenMarkAsIOC = (event: TimelineEvent) => {
@@ -229,7 +208,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
             host_id: '',
             mitre_tactic: '',
             mitre_technique: '',
-            is_ioc: false,
         })
     }
 
@@ -264,13 +242,12 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                     <TableHead>Host</TableHead>
                                     <TableHead>Activity</TableHead>
                                     <TableHead>MITRE Tactic / Technique</TableHead>
-                                    <TableHead>IOC?</TableHead>
-                                    <TableHead className="w-[80px]"></TableHead>
+                                    <TableHead className="w-[100px]"></TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {isLoading ? <SkeletonTableRow columns={6} /> : filteredEvents.length === 0 ? (
-                                    <TableRow><TableCell colSpan={6}>
+                                {isLoading ? <SkeletonTableRow columns={5} /> : filteredEvents.length === 0 ? (
+                                    <TableRow><TableCell colSpan={5}>
                                         <TableEmpty
                                             title={search ? 'No matching events' : 'No timeline events'}
                                             description={search ? 'Try adjusting your search criteria' : 'Build a chronological timeline of attacker activity, system events, and investigation milestones.'}
@@ -301,23 +278,17 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={event.is_ioc}
-                                                        onChange={(e) => handleToggleIOC(event, e.target.checked)}
-                                                        className="rounded bg-white/10 border-white/20"
-                                                    />
-                                                    {event.is_ioc && <Tag className="h-3 w-3 text-red-400" />}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
                                                 <div className="flex items-center gap-1">
+                                                    {event.is_ioc && (
+                                                        <Badge variant="outline" className="text-[10px] text-red-400 border-red-400/30 bg-red-400/10">
+                                                            <Tag className="h-3 w-3 mr-1" /> IOC
+                                                        </Badge>
+                                                    )}
                                                     <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleEditClick(event)} title="Edit event">
                                                         <Edit2 className="w-4 h-4" />
                                                     </Button>
                                                     {!event.is_ioc && (
-                                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-400" onClick={() => handleOpenMarkAsIOC(event)} title="Mark as IOC & create indicator">
+                                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-400" onClick={() => handleOpenMarkAsIOC(event)} title="Mark as IOC — creates a host-based indicator from this event">
                                                             <ShieldAlert className="w-4 h-4" />
                                                         </Button>
                                                     )}
@@ -383,10 +354,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 <Label>Technique ID</Label>
                                 <Input value={form.mitre_technique} onChange={e => setForm({ ...form, mitre_technique: e.target.value })} placeholder="T1059" variant="glass" />
                             </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <input type="checkbox" checked={form.is_ioc} onChange={e => setForm({ ...form, is_ioc: e.target.checked })} className="rounded bg-white/10 border-white/20" />
-                            <Label>Mark as IOC</Label>
                         </div>
                     </DialogBody>
                     <DialogFooter>

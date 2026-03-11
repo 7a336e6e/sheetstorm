@@ -27,3 +27,4 @@ from app.api.v1.endpoints import threat_intel
 from app.api.v1.endpoints import knowledge_base
 from app.api.v1.endpoints import defang
 from app.api.v1.endpoints import search
+from app.api.v1.endpoints import custom_fields

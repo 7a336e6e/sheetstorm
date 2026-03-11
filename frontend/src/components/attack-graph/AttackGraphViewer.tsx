@@ -188,7 +188,7 @@ function transformToReactFlowData(
 function GraphInner({ incidentId }: { incidentId: string }) {
   const { toast } = useToast()
   const { resolvedTheme } = useTheme()
-  const { fitView, zoomIn, zoomOut } = useReactFlow()
+  const { fitView, zoomIn, zoomOut, getNodes: getInternalNodes } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -584,7 +584,9 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }, [nodes, edges, setNodes, fitView])
 
   const handleExportPng = useCallback(() => {
-    if (nodes.length === 0) {
+    // Use getInternalNodes() to get nodes with measured dimensions for accurate bounds
+    const internalNodes = getInternalNodes()
+    if (internalNodes.length === 0) {
       toast({ title: 'Export Failed', description: 'No nodes to export', variant: 'destructive' })
       return
     }
@@ -593,31 +595,33 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     if (!viewportEl) return
 
     import('html-to-image' as string).then((mod: { toPng: (el: HTMLElement, opts: Record<string, unknown>) => Promise<string> }) => {
-      // Use React Flow's built-in utilities to compute proper bounds
-      const nodesBounds = getNodesBounds(nodes)
-      const padding = 100
-      // Add padding to the bounds
+      // getNodesBounds with internal nodes includes measured width/height for tight bounds
+      const nodesBounds = getNodesBounds(internalNodes)
+      const padding = 30
       const imageWidth = nodesBounds.width + padding * 2
       const imageHeight = nodesBounds.height + padding * 2
 
-      // Get the viewport transform that would fit all nodes into the image dimensions
+      // Compute viewport transform: zoom=1 means 1:1 pixel mapping for max clarity
       const viewport = getViewportForBounds(
         nodesBounds,
         imageWidth,
         imageHeight,
-        0.5,  // minZoom
-        2,    // maxZoom
+        1,    // minZoom — force 1:1 scale so nodes render at native size
+        1,    // maxZoom — keep at 1:1 to avoid scaling artifacts
         padding,
       )
 
+      // Render at 2x pixel ratio for retina-quality output
       mod.toPng(viewportEl, {
         backgroundColor: resolvedTheme === 'dark' ? '#0f172a' : '#ffffff',
         width: imageWidth,
         height: imageHeight,
+        pixelRatio: 2,
         style: {
           width: `${imageWidth}px`,
           height: `${imageHeight}px`,
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+          transformOrigin: 'top left',
         },
       }).then((dataUrl: string) => {
         const link = document.createElement('a')
@@ -630,7 +634,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     }).catch(() => {
       toast({ title: 'Export Unavailable', description: 'PNG export requires html-to-image package', variant: 'destructive' })
     })
-  }, [incidentId, toast, nodes, resolvedTheme])
+  }, [incidentId, toast, getInternalNodes, resolvedTheme])
 
   useEffect(() => {
     fetchGraph()

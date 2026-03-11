@@ -284,7 +284,7 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
             className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
               dragOver
                 ? 'border-cyan-500 bg-cyan-500/5'
-                : 'border-white/10 hover:border-white/20'
+                : 'border-black/10 dark:border-white/10 hover:border-black/10 dark:hover:border-white/20'
             }`}
           >
             <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
@@ -300,10 +300,10 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
 
           {/* Google Drive Integration */}
           {!loadingDrive && driveStatus?.configured && (
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${driveStatus.connected ? 'bg-green-500/20' : 'bg-white/10'}`}>
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${driveStatus.connected ? 'bg-green-500/20' : 'bg-black/5 dark:bg-white/10'}`}>
                     <HardDrive className={`h-5 w-5 ${driveStatus.connected ? 'text-green-400' : 'text-muted-foreground'}`} />
                   </div>
                   <div>
@@ -361,7 +361,7 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                   Array.from({ length: 3 }).map((_, i) => (
                     <TableRow key={i}>
                       {Array.from({ length: 6 }).map((_, j) => (
-                        <TableCell key={j}><div className="h-4 bg-white/5 rounded animate-pulse" /></TableCell>
+                        <TableCell key={j}><div className="h-4 bg-black/5 dark:bg-white/5 rounded animate-pulse" /></TableCell>
                       ))}
                     </TableRow>
                   ))
@@ -475,9 +475,9 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                 {custodyEntries.map((entry, idx) => (
                   <div key={entry.id} className="relative flex gap-4">
                     {idx < custodyEntries.length - 1 && (
-                      <div className="absolute left-[15px] top-8 bottom-0 w-px bg-white/10" />
+                      <div className="absolute left-[15px] top-8 bottom-0 w-px bg-black/10 dark:bg-white/10" />
                     )}
-                    <div className="relative z-10 w-8 h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0">
+                    <div className="relative z-10 w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center shrink-0">
                       {entry.action === 'upload' && <Upload className="h-3.5 w-3.5 text-cyan-400" />}
                       {entry.action === 'download' && <Download className="h-3.5 w-3.5 text-blue-400" />}
                       {entry.action === 'verify' && <Shield className="h-3.5 w-3.5 text-green-400" />}

@@ -139,3 +139,13 @@
     box-shadow: 0 0 20px -4px theme('colors.primary.DEFAULT');
   }
 }
+
+/* Attack graph edge flow animation */
+@keyframes edge-flow {
+  0% {
+    stroke-dashoffset: 16;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}

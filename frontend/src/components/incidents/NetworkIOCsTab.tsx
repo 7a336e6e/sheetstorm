@@ -22,6 +22,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import {
     Table,
     TableBody,
@@ -252,7 +253,7 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                                         <TableRow key={item.id} className="group">
                                             <TableCell>
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-white/5">{getDirectionIcon(item.direction || '')}</div>
+                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getDirectionIcon(item.direction || '')}</div>
                                                     <span className="capitalize text-xs">{item.direction}</span>
                                                 </div>
                                             </TableCell>
@@ -343,21 +344,47 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Source Host</Label>
-                                <Select value={form.source_host_id} onValueChange={v => setForm({ ...form, source_host_id: v })}>
-                                    <SelectTrigger variant="glass"><SelectValue placeholder="Select Source" /></SelectTrigger>
-                                    <SelectContent>
-                                        {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname} {h.ip_address && `(${h.ip_address})`}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <Combobox
+                                    options={hosts.map(h => ({
+                                        value: h.id,
+                                        label: h.hostname + (h.ip_address ? ` (${h.ip_address})` : ''),
+                                        description: h.ip_address || undefined,
+                                    }))}
+                                    value={form.source_host_id}
+                                    onChange={v => {
+                                        const host = hosts.find(h => h.id === v)
+                                        setForm({
+                                            ...form,
+                                            source_host_id: host ? v : '',
+                                            source_host: host ? '' : v,
+                                        })
+                                    }}
+                                    placeholder="Type IP/hostname or select..."
+                                    allowCustom
+                                    variant="glass"
+                                />
                             </div>
                             <div className="space-y-2">
                                 <Label>Destination Host</Label>
-                                <Select value={form.destination_host_id} onValueChange={v => setForm({ ...form, destination_host_id: v })}>
-                                    <SelectTrigger variant="glass"><SelectValue placeholder="Select Destination" /></SelectTrigger>
-                                    <SelectContent>
-                                        {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname} {h.ip_address && `(${h.ip_address})`}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <Combobox
+                                    options={hosts.map(h => ({
+                                        value: h.id,
+                                        label: h.hostname + (h.ip_address ? ` (${h.ip_address})` : ''),
+                                        description: h.ip_address || undefined,
+                                    }))}
+                                    value={form.destination_host_id}
+                                    onChange={v => {
+                                        const host = hosts.find(h => h.id === v)
+                                        setForm({
+                                            ...form,
+                                            destination_host_id: host ? v : '',
+                                            destination_host: host ? '' : v,
+                                        })
+                                    }}
+                                    placeholder="Type IP/hostname or select..."
+                                    allowCustom
+                                    variant="glass"
+                                />
                             </div>
                         </div>
 
@@ -368,12 +395,12 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
 
                         {/* Attack Graph Integration */}
                         {!editingItem && (
-                            <div className="flex items-center gap-2 p-3 rounded-md border border-white/10 bg-white/[0.02]">
+                            <div className="flex items-center gap-2 p-3 rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]">
                                 <input
                                     type="checkbox"
                                     checked={form.add_to_attack_graph}
                                     onChange={e => setForm({ ...form, add_to_attack_graph: e.target.checked })}
-                                    className="rounded bg-white/10 border-white/20"
+                                    className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
                                 />
                                 <div>
                                     <Label className="cursor-pointer">Add to Attack Graph</Label>

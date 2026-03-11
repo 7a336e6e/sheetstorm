@@ -296,7 +296,7 @@ export function HostBasedIOCsTab({ incidentId }: HostBasedIOCsTabProps) {
                                         <TableRow key={item.id} className="group">
                                             <TableCell>
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-white/5">{getArtifactTypeIcon(item.artifact_type)}</div>
+                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getArtifactTypeIcon(item.artifact_type)}</div>
                                                     <span className="text-xs">{getArtifactTypeLabel(item.artifact_type)}</span>
                                                 </div>
                                             </TableCell>
@@ -368,11 +368,11 @@ export function HostBasedIOCsTab({ incidentId }: HostBasedIOCsTabProps) {
                         </div>
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
-                                <input type="checkbox" checked={form.is_malicious} onChange={e => setForm({ ...form, is_malicious: e.target.checked })} className="rounded bg-white/10 border-white/20" />
+                                <input type="checkbox" checked={form.is_malicious} onChange={e => setForm({ ...form, is_malicious: e.target.checked })} className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20" />
                                 <Label>Confirmed malicious</Label>
                             </div>
                             <div className="flex items-center gap-2">
-                                <input type="checkbox" checked={form.remediated} onChange={e => setForm({ ...form, remediated: e.target.checked })} className="rounded bg-white/10 border-white/20" />
+                                <input type="checkbox" checked={form.remediated} onChange={e => setForm({ ...form, remediated: e.target.checked })} className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20" />
                                 <Label>Remediated</Label>
                             </div>
                         </div>

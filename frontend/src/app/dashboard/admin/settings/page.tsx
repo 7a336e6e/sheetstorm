@@ -417,7 +417,7 @@ export default function SettingsPage() {
                                     <Card key={integration.id}>
                                         <CardContent className="flex items-center justify-between p-5">
                                             <div className="flex items-center gap-4">
-                                                <div className={`w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center ${catMeta?.color || 'text-muted-foreground'}`}>
+                                                <div className={`w-10 h-10 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center ${catMeta?.color || 'text-muted-foreground'}`}>
                                                     {getTypeIcon(integration.type)}
                                                 </div>
                                                 <div>

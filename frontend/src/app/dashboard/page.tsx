@@ -199,7 +199,7 @@ export default function DashboardPage() {
                       <span className="capitalize text-muted-foreground">{severity}</span>
                       <span className="font-medium text-foreground">{count} ({pct}%)</span>
                     </div>
-                    <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                    <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-2 overflow-hidden">
                       <div className={`h-full rounded-full ${SEVERITY_COLORS[severity]}`} style={{ width: `${(count / analytics.maxSeverity) * 100}%` }} />
                     </div>
                   </div>
@@ -228,7 +228,7 @@ export default function DashboardPage() {
                           <span className="text-xs text-muted-foreground truncate">{phase.name}</span>
                           <span className="text-xs font-bold text-foreground ml-2">{count}</span>
                         </div>
-                        <div className="w-full bg-white/10 rounded-full h-1.5 mt-1 overflow-hidden">
+                        <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-1.5 mt-1 overflow-hidden">
                           <div className={`h-full rounded-full bg-gradient-to-r ${phase.color}`} style={{ width: count > 0 ? `${Math.max((count / analytics.open) * 100, 8)}%` : '0%' }} />
                         </div>
                       </div>
@@ -250,7 +250,7 @@ export default function DashboardPage() {
                 {Object.entries(analytics.tlpDist).map(([tlp, count]) => {
                   const style = TLP_STYLES[tlp] || TLP_STYLES.amber
                   return (
-                    <div key={tlp} className={`p-3 rounded-lg ${style.bg} border border-white/10 text-center`}>
+                    <div key={tlp} className={`p-3 rounded-lg ${style.bg} border border-black/10 dark:border-white/10 text-center`}>
                       <div className={`text-lg font-bold ${style.text}`}>{count}</div>
                       <div className={`text-[10px] font-mono ${style.text}`}>TLP:{style.label}</div>
                     </div>

@@ -57,6 +57,32 @@ def _format_malware(m: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Host auto-resolution helper
+# ---------------------------------------------------------------------------
+
+async def _resolve_host_by_text(
+    client, incident_id: str, text: str
+) -> Optional[str]:
+    """Try to match a text IP/hostname to an existing compromised host.
+
+    Returns the host UUID if found, else None.
+    """
+    if not text:
+        return None
+    try:
+        data = await client.get(f"/incidents/{incident_id}/hosts")
+        items = data if isinstance(data, list) else data.get("items", [])
+        text_lower = text.lower().strip()
+        for h in items:
+            if (h.get("hostname", "").lower() == text_lower
+                    or h.get("ip_address", "").lower() == text_lower):
+                return h["id"]
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Network IOC tools
 # ---------------------------------------------------------------------------
 
@@ -140,10 +166,13 @@ async def sheetstorm_add_network_ioc(
         if description:
             payload["description"] = description
         payload["is_malicious"] = is_malicious
-        if source_host_id:
-            payload["source_host_id"] = source_host_id
-        if destination_host_id:
-            payload["destination_host_id"] = destination_host_id
+        # Auto-resolve: if text source/destination provided but no ID, try to find matching host
+        resolved_src = source_host_id or (await _resolve_host_by_text(client, incident_id, source_host) if source_host else None)
+        resolved_dst = destination_host_id or (await _resolve_host_by_text(client, incident_id, destination_host) if destination_host else None)
+        if resolved_src:
+            payload["source_host_id"] = resolved_src
+        if resolved_dst:
+            payload["destination_host_id"] = resolved_dst
         if add_to_attack_graph:
             payload["add_to_attack_graph"] = True
 

@@ -49,6 +49,7 @@ import {
     Edit2,
     ShieldAlert,
     Loader2,
+    Star,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { useToast } from '@/components/ui/use-toast'
@@ -201,6 +202,24 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         }
     }
 
+    const handleToggleKeyEvent = async (event: TimelineEvent) => {
+        try {
+            const res = await api.put<TimelineEvent>(`/incidents/${incidentId}/timeline/${event.id}`, {
+                is_key_event: !event.is_key_event,
+            })
+            setEvents(prev => prev.map(e => e.id === event.id ? { ...e, is_key_event: !e.is_key_event } : e))
+            toast({
+                title: event.is_key_event ? 'Removed from Timeline' : 'Pinned to Timeline',
+                description: event.is_key_event
+                    ? 'Event will no longer appear on the visual timeline.'
+                    : 'Event will now appear on the visual timeline.',
+            })
+        } catch (error) {
+            console.error('Failed to toggle key event:', error)
+            toast({ title: 'Error', description: 'Failed to update event', variant: 'destructive' })
+        }
+    }
+
     const resetForm = () => {
         setForm({
             timestamp: '',
@@ -238,6 +257,9 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-[40px]" title="Pin to timeline">
+                                        <Star className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </TableHead>
                                     <TableHead>Time</TableHead>
                                     <TableHead>Host</TableHead>
                                     <TableHead>Activity</TableHead>
@@ -246,8 +268,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {isLoading ? <SkeletonTableRow columns={5} /> : filteredEvents.length === 0 ? (
-                                    <TableRow><TableCell colSpan={5}>
+                                {isLoading ? <SkeletonTableRow columns={6} /> : filteredEvents.length === 0 ? (
+                                    <TableRow><TableCell colSpan={6}>
                                         <TableEmpty
                                             title={search ? 'No matching events' : 'No timeline events'}
                                             description={search ? 'Try adjusting your search criteria' : 'Build a chronological timeline of attacker activity, system events, and investigation milestones.'}
@@ -257,6 +279,18 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 ) : (
                                     filteredEvents.map(event => (
                                         <TableRow key={event.id} className="group">
+                                            <TableCell className="w-[40px]">
+                                                <button
+                                                    onClick={() => handleToggleKeyEvent(event)}
+                                                    className={`p-0.5 rounded transition-colors ${event.is_key_event
+                                                        ? 'text-amber-400 hover:text-amber-300'
+                                                        : 'text-muted-foreground/30 hover:text-amber-400/60'
+                                                    }`}
+                                                    title={event.is_key_event ? 'Remove from timeline' : 'Pin to timeline'}
+                                                >
+                                                    <Star className={`h-4 w-4 ${event.is_key_event ? 'fill-current' : ''}`} />
+                                                </button>
+                                            </TableCell>
                                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                                                 {formatDateTime(event.timestamp)}
                                             </TableCell>
@@ -407,7 +441,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 type="checkbox"
                                 checked={iocForm.is_malicious}
                                 onChange={e => setIocForm({ ...iocForm, is_malicious: e.target.checked })}
-                                className="rounded bg-white/10 border-white/20"
+                                className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
                             />
                             <Label>Confirmed malicious</Label>
                         </div>

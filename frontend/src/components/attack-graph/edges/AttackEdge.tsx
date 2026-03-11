@@ -51,8 +51,12 @@ function AttackEdge({
   const opacity = isAssociation ? 0.5 : 1
   const dashArray = isAssociation ? '6 3' : edgeType === 'lateral_movement' ? '8 4' : undefined
 
+  // Animated flow overlay for non-association edges
+  const showAnimation = !isAssociation
+
   return (
     <>
+      {/* Base edge (static) */}
       <BaseEdge
         id={id}
         path={edgePath}
@@ -64,6 +68,22 @@ function AttackEdge({
         }}
         markerEnd={`url(#arrow-${selected ? 'selected' : edgeType})`}
       />
+      {/* Animated flow overlay — marching particles along the path */}
+      {showAnimation && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={selected ? '#22d3ee' : color}
+          strokeWidth={strokeWidth}
+          strokeDasharray="4 12"
+          strokeLinecap="round"
+          opacity={selected ? 0.9 : 0.6}
+          markerEnd={`url(#arrow-${selected ? 'selected' : edgeType})`}
+          style={{
+            animation: 'edge-flow 1.5s linear infinite',
+          }}
+        />
+      )}
       {label && !isAssociation && (
         <EdgeLabelRenderer>
           <div

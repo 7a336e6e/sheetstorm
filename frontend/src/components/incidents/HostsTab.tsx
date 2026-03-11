@@ -21,6 +21,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
+import { Combobox } from '@/components/ui/combobox'
 import {
     Table,
     TableBody,
@@ -267,7 +268,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                                             <TableCell className="font-mono text-sm">{host.ip_address || '-'}</TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-white/5">{getSystemTypeIcon(host.system_type || '')}</div>
+                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getSystemTypeIcon(host.system_type || '')}</div>
                                                     <span className="text-xs">{getSystemTypeLabel(host.system_type || '')}</span>
                                                 </div>
                                             </TableCell>
@@ -311,14 +312,17 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>System Type</Label>
-                                <Select value={form.system_type} onValueChange={v => setForm({ ...form, system_type: v })}>
-                                    <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {allSystemTypes.map(t => (
-                                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Combobox
+                                    options={allSystemTypes.map(t => ({
+                                        value: t.value,
+                                        label: t.label,
+                                    }))}
+                                    value={form.system_type}
+                                    onChange={v => setForm({ ...form, system_type: v })}
+                                    placeholder="Type or select system type..."
+                                    allowCustom
+                                    variant="glass"
+                                />
                             </div>
                             <div className="space-y-2">
                                 <Label>OS Version</Label>

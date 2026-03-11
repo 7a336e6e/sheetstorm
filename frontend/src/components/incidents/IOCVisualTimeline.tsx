@@ -26,7 +26,7 @@ import api from '@/lib/api'
 import type { TimelineEvent, CompromisedHost } from '@/types'
 import {
     Clock, Server, Shield, ChevronDown, ChevronUp, Plus,
-    Tag, Eye, ShieldAlert, Loader2,
+    Tag, Eye, ShieldAlert, Loader2, Star,
 } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -78,7 +78,7 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
     const [allEvents, setAllEvents] = useState<TimelineEvent[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [expanded, setExpanded] = useState<string | null>(null)
-    const [filterMode, setFilterMode] = useState<'all' | 'ioc'>('all')
+    const [filterMode, setFilterMode] = useState<'pinned' | 'ioc' | 'all'>('pinned')
     const [hosts, setHosts] = useState<CompromisedHost[]>([])
 
     // Add event dialog
@@ -121,8 +121,13 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
         }
     }
 
-    const events = filterMode === 'ioc' ? allEvents.filter(e => e.is_ioc) : allEvents
+    const events = filterMode === 'ioc'
+        ? allEvents.filter(e => e.is_ioc)
+        : filterMode === 'pinned'
+            ? allEvents.filter(e => e.is_key_event || e.is_ioc)
+            : allEvents
     const iocCount = allEvents.filter(e => e.is_ioc).length
+    const pinnedCount = allEvents.filter(e => e.is_key_event || e.is_ioc).length
 
     const handleAddEvent = async () => {
         if (!form.timestamp || !form.activity) return
@@ -177,11 +182,11 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                     <div className="flex justify-between items-center gap-4">
                         <div className="flex items-center gap-2">
                             <Button
-                                variant={filterMode === 'all' ? 'default' : 'outline'}
+                                variant={filterMode === 'pinned' ? 'default' : 'outline'}
                                 size="sm"
-                                onClick={() => setFilterMode('all')}
+                                onClick={() => setFilterMode('pinned')}
                             >
-                                <Eye className="mr-1.5 h-3.5 w-3.5" /> All Events ({allEvents.length})
+                                <Star className="mr-1.5 h-3.5 w-3.5" /> Pinned ({pinnedCount})
                             </Button>
                             <Button
                                 variant={filterMode === 'ioc' ? 'default' : 'outline'}
@@ -189,6 +194,13 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                 onClick={() => setFilterMode('ioc')}
                             >
                                 <Shield className="mr-1.5 h-3.5 w-3.5" /> IOCs Only ({iocCount})
+                            </Button>
+                            <Button
+                                variant={filterMode === 'all' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setFilterMode('all')}
+                            >
+                                <Eye className="mr-1.5 h-3.5 w-3.5" /> All ({allEvents.length})
                             </Button>
                         </div>
                         <Button onClick={() => setShowAddModal(true)} size="sm">
@@ -200,22 +212,24 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
 
             {/* Visual Timeline */}
             {events.length === 0 ? (
-                <div className="py-10 text-center border border-dashed border-white/10 rounded-lg">
+                <div className="py-10 text-center border border-dashed border-black/10 dark:border-white/10 rounded-lg">
                     <Clock className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
                     <p className="text-sm font-medium text-foreground">
-                        {filterMode === 'ioc' ? 'No IOC Events' : 'No Timeline Events'}
+                        {filterMode === 'ioc' ? 'No IOC Events' : filterMode === 'pinned' ? 'No Pinned Events' : 'No Timeline Events'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
                         {filterMode === 'ioc'
-                            ? 'Mark events as IOCs to populate this timeline.'
-                            : 'Add events from the Events tab or click "Add Event" above.'
+                            ? 'Mark events as IOCs to populate this view.'
+                            : filterMode === 'pinned'
+                                ? 'Pin events from the Events tab using the ★ icon to build your timeline.'
+                                : 'Add events from the Events tab or click "Add Event" above.'
                         }
                     </p>
                 </div>
             ) : (
                 <div className="relative pl-5">
                     {/* Thin vertical line */}
-                    <div className="absolute left-[7px] top-1 bottom-1 w-px bg-white/10" />
+                    <div className="absolute left-[7px] top-1 bottom-1 w-px bg-black/10 dark:bg-white/10" />
 
                     <ol className="space-y-0.5">
                         {events.map((event) => {
@@ -223,16 +237,18 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                             const isIoc = event.is_ioc
                             return (
                                 <li key={event.id} className="relative group">
-                                    {/* Dot — red for IOC, cyan for normal */}
+                                    {/* Dot — red for IOC, amber for pinned, cyan for normal */}
                                     <div className={`absolute -left-[13px] top-[11px] w-2 h-2 rounded-full ring-2 ring-background z-10 transition-colors ${
                                         isIoc
                                             ? 'bg-red-500/80 group-hover:bg-red-400'
-                                            : 'bg-cyan-500/80 group-hover:bg-cyan-400'
+                                            : event.is_key_event
+                                                ? 'bg-amber-400/80 group-hover:bg-amber-300'
+                                                : 'bg-cyan-500/80 group-hover:bg-cyan-400'
                                     }`} />
 
                                     <button
                                         onClick={() => setExpanded(isOpen ? null : event.id)}
-                                        className="w-full text-left px-3 py-2 rounded-md hover:bg-white/[0.03] transition-colors"
+                                        className="w-full text-left px-3 py-2 rounded-md hover:bg-black/[0.03] dark:hover:bg-white/[0.03] transition-colors"
                                     >
                                         <div className="flex items-center gap-3 min-w-0">
                                             <span className="shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground w-[130px]">
@@ -257,7 +273,7 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                             )}
 
                                             {event.mitre_tactic && (
-                                                <Badge variant="outline" className={`shrink-0 text-[10px] px-1.5 py-0 border-white/10 ${getTacticColor(event.mitre_tactic)}`}>
+                                                <Badge variant="outline" className={`shrink-0 text-[10px] px-1.5 py-0 border-black/10 dark:border-white/10 ${getTacticColor(event.mitre_tactic)}`}>
                                                     {event.mitre_tactic}
                                                 </Badge>
                                             )}
@@ -277,7 +293,7 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
 
                                     {/* Expanded detail panel */}
                                     {isOpen && (
-                                        <div className="ml-[142px] mr-3 mb-2 px-3 py-2 rounded border border-white/5 bg-white/[0.02] text-xs space-y-2">
+                                        <div className="ml-[142px] mr-3 mb-2 px-3 py-2 rounded border border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] text-xs space-y-2">
                                             <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground/80">
                                                 {event.host && (
                                                     <span><strong className="text-foreground/70">Host:</strong> {event.host.hostname} {event.host.ip_address && `(${event.host.ip_address})`}</span>
@@ -318,12 +334,15 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                     </ol>
 
                     {/* Summary footer */}
-                    <div className="mt-4 pt-3 border-t border-white/5 flex items-center gap-4 text-[11px] text-muted-foreground/60">
+                    <div className="mt-4 pt-3 border-t border-black/5 dark:border-white/5 flex items-center gap-4 text-[11px] text-muted-foreground/60">
                         <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" /> {allEvents.length} event{allEvents.length !== 1 ? 's' : ''}
+                            <Star className="h-3 w-3" /> {pinnedCount} pinned
                         </span>
                         <span className="flex items-center gap-1">
                             <Shield className="h-3 w-3" /> {iocCount} IOC{iocCount !== 1 ? 's' : ''}
+                        </span>
+                        <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" /> {allEvents.length} total
                         </span>
                         {events.length > 0 && (
                             <>
@@ -434,7 +453,7 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                 type="checkbox"
                                 checked={iocForm.is_malicious}
                                 onChange={e => setIocForm({ ...iocForm, is_malicious: e.target.checked })}
-                                className="rounded bg-white/10 border-white/20"
+                                className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
                             />
                             <Label>Confirmed malicious</Label>
                         </div>

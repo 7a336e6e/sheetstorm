@@ -118,7 +118,7 @@ const STATUS_OPTIONS = [
 // --- Helper Components ---
 function StatCard({ title, value, icon, description }: any) {
   return (
-    <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm">
+    <div className="p-4 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-muted-foreground">{title}</span>
         <div className="text-cyan-400">{icon}</div>
@@ -131,7 +131,7 @@ function StatCard({ title, value, icon, description }: any) {
 
 function SkeletonStatCard() {
   return (
-    <div className="rounded-xl border border-border bg-white/5 p-4 space-y-3">
+    <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5 p-4 space-y-3">
       <Skeleton className="h-3 w-1/3" />
       <Skeleton className="h-7 w-1/2" />
     </div>
@@ -152,7 +152,7 @@ function SkeletonPage() {
         </div>
       </div>
       {/* Summary card */}
-      <div className="rounded-xl border border-border bg-white/5 p-6 space-y-3">
+      <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5 p-6 space-y-3">
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-5/6" />
         <Skeleton className="h-4 w-2/3" />
@@ -170,7 +170,7 @@ function SkeletonPage() {
             <Skeleton key={i} className="h-9 w-24 rounded-md" />
           ))}
         </div>
-        <div className="rounded-xl border border-border bg-white/5">
+        <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5">
           <div className="p-4 space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="flex gap-4">
@@ -221,7 +221,7 @@ function PhaseBadge({ phase }: { phase: number }) {
   const info = PHASE_INFO.find((p) => p.number === phase)
   if (!info) return null
   return (
-    <Badge variant="outline" className="bg-white/5">
+    <Badge variant="outline" className="bg-black/5 dark:bg-white/5">
       Phase {phase}: {info.name}
     </Badge>
   )
@@ -692,7 +692,7 @@ export default function IncidentDetailPage() {
                             ? `bg-gradient-to-r ${phase.color} text-white shadow-lg shadow-cyan-500/20`
                             : isCurrent
                               ? `bg-gradient-to-r ${phase.color} text-white animate-phase-pulse`
-                              : 'bg-white/[0.06] text-white/30 border border-white/[0.08]'
+                              : 'bg-black/[0.06] dark:bg-white/[0.06] text-black/30 dark:text-white/30 border border-white/[0.08]'
                         }`}
                       >
                         {/* Scan ring for current phase — centered on circle */}
@@ -708,7 +708,7 @@ export default function IncidentDetailPage() {
                         )}
                       </div>
                       <span className={`text-[10px] lg:text-xs mt-2.5 text-center font-medium transition-colors duration-300 ${
-                        isCompleted ? 'text-cyan-400' : isCurrent ? 'text-cyan-300' : 'text-white/30'
+                        isCompleted ? 'text-cyan-400' : isCurrent ? 'text-cyan-300' : 'text-black/30 dark:text-white/30'
                       }`}>
                         {phase.short}
                       </span>
@@ -717,7 +717,7 @@ export default function IncidentDetailPage() {
                     {index < PHASE_INFO.length - 1 && (
                       <div className="flex-1 mx-1.5 lg:mx-3 relative" style={{ height: '2px', marginBottom: '20px' }}>
                         {/* Track */}
-                        <div className="absolute inset-0 bg-white/[0.06] rounded-full" />
+                        <div className="absolute inset-0 bg-black/[0.06] dark:bg-white/[0.06] rounded-full" />
                         {/* Filled portion */}
                         {(isCompleted || isCurrent) && (
                           <div
@@ -840,11 +840,11 @@ export default function IncidentDetailPage() {
                           <CardTitle className="text-lg">Task Progress</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                          <div className="w-full bg-white/10 rounded-full h-3 overflow-hidden">
+                          <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-3 overflow-hidden">
                             <div className="h-full bg-gradient-to-r from-cyan-500 to-green-500 rounded-full transition-all duration-500" style={{ width: `${taskProgress}%` }} />
                           </div>
                           <div className="grid grid-cols-3 gap-4 text-center">
-                            <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                            <div className="p-3 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10">
                               <div className="text-xl font-bold text-muted-foreground">{pendingTasks}</div>
                               <div className="text-xs text-muted-foreground">Pending</div>
                             </div>
@@ -870,7 +870,7 @@ export default function IncidentDetailPage() {
                         <CardContent>
                           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                             {Object.entries(containmentGroups).map(([status, count]) => (
-                              <div key={status} className={`p-3 rounded-lg border text-center ${containmentColors[status] || 'bg-white/5 border-white/10'}`}>
+                              <div key={status} className={`p-3 rounded-lg border text-center ${containmentColors[status] || 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10'}`}>
                                 <div className="text-xl font-bold">{count}</div>
                                 <div className="text-xs capitalize">{status.replace('_', ' ')}</div>
                               </div>
@@ -892,7 +892,7 @@ export default function IncidentDetailPage() {
                         ) : (
                           <div className="space-y-4">
                             {timeline.slice(0, 5).map(event => (
-                              <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-white/5 transition-colors">
+                              <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                                 <div className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{formatRelativeTime(event.timestamp)}</div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
@@ -987,7 +987,7 @@ export default function IncidentDetailPage() {
                             <div className="text-xs text-muted-foreground">of {timeline.length} events<br />marked as IOCs</div>
                           </div>
                           {iocEvents.length > 0 && (
-                            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                            <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-2 overflow-hidden">
                               <div className="h-full bg-red-500 rounded-full" style={{ width: `${Math.round((iocEvents.length / timeline.length) * 100)}%` }} />
                             </div>
                           )}
@@ -1059,7 +1059,7 @@ export default function IncidentDetailPage() {
                       const isExpanded = expandedTaskComments === task.id
                       const comments = taskComments[task.id] || []
                       return (
-                        <div key={task.id} className="rounded-xl bg-white/5 border border-white/10 p-4">
+                        <div key={task.id} className="rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 p-4">
                           <div className="flex gap-4">
                             <button
                               onClick={() => handleToggleTaskStatus(task)}
@@ -1118,7 +1118,7 @@ export default function IncidentDetailPage() {
                           </div>
                           {/* Expandable Comments */}
                           {isExpanded && (
-                            <div className="mt-3 pt-3 border-t border-white/10 ml-9">
+                            <div className="mt-3 pt-3 border-t border-black/10 dark:border-white/10 ml-9">
                               {comments.length === 0 ? (
                                 <p className="text-xs text-muted-foreground mb-2">No comments yet</p>
                               ) : (
@@ -1264,7 +1264,7 @@ export default function IncidentDetailPage() {
             {STATUS_OPTIONS.map(opt => (
               <button key={opt.value} onClick={() => handleUpdateStatus(opt.value)}
                 disabled={isSubmitting}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${incident.status === opt.value ? 'bg-cyan-500/10 border-cyan-500/50' : 'border-white/10 hover:bg-white/5'} disabled:opacity-50`}>
+                className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${incident.status === opt.value ? 'bg-cyan-500/10 border-cyan-500/50' : 'border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5'} disabled:opacity-50`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold bg-gradient-to-r ${PHASE_INFO[opt.phase - 1].color}`}>
                   {opt.phase}
                 </div>
@@ -1441,7 +1441,7 @@ export default function IncidentDetailPage() {
                   key={type.id}
                   className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedReportType === type.id
                       ? 'border-cyan-500/50 bg-cyan-500/10'
-                      : 'border-white/10 hover:border-white/20 hover:bg-white/5'
+                      : 'border-black/10 dark:border-white/10 hover:border-black/10 dark:hover:border-white/20 hover:bg-black/5 dark:hover:bg-white/5'
                     }`}
                 >
                   <input

@@ -582,27 +582,60 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }, [nodes, edges, setNodes, fitView])
 
   const handleExportPng = useCallback(() => {
-    // Use the React Flow viewport to export
+    // Calculate bounding box from all node positions for full-resolution export
+    if (nodes.length === 0) {
+      toast({ title: 'Export Failed', description: 'No nodes to export', variant: 'destructive' })
+      return
+    }
+
     const el = document.querySelector('.react-flow__viewport') as HTMLElement
     if (!el) return
 
     import('html-to-image' as string).then((mod: { toPng: (el: HTMLElement, opts: Record<string, unknown>) => Promise<string> }) => {
+      // Compute bounding box from node positions
+      const padding = 80
+      const nodeWidth = 200 // approximate max node width
+      const nodeHeight = 120 // approximate max node height
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const node of nodes) {
+        const x = node.position?.x ?? 0
+        const y = node.position?.y ?? 0
+        if (x < minX) minX = x
+        if (y < minY) minY = y
+        if (x + nodeWidth > maxX) maxX = x + nodeWidth
+        if (y + nodeHeight > maxY) maxY = y + nodeHeight
+      }
+
+      const graphWidth = maxX - minX + padding * 2
+      const graphHeight = maxY - minY + padding * 2
+
+      // Transform the viewport so the full graph is visible at 1:1 scale
+      const prevTransform = el.style.transform
+      el.style.transform = `translate(${-minX + padding}px, ${-minY + padding}px) scale(1)`
+
       mod.toPng(el, {
         backgroundColor: resolvedTheme === 'dark' ? '#0f172a' : '#ffffff',
-        width: el.scrollWidth,
-        height: el.scrollHeight,
+        width: graphWidth,
+        height: graphHeight,
+        style: {
+          width: `${graphWidth}px`,
+          height: `${graphHeight}px`,
+        },
       }).then((dataUrl: string) => {
+        // Restore viewport transform
+        el.style.transform = prevTransform
         const link = document.createElement('a')
         link.download = `attack-graph-${incidentId}.png`
         link.href = dataUrl
         link.click()
       }).catch(() => {
+        el.style.transform = prevTransform
         toast({ title: 'Export Failed', description: 'Could not export graph as PNG', variant: 'destructive' })
       })
     }).catch(() => {
       toast({ title: 'Export Unavailable', description: 'PNG export requires html-to-image package', variant: 'destructive' })
     })
-  }, [incidentId, toast])
+  }, [incidentId, toast, nodes, resolvedTheme])
 
   useEffect(() => {
     fetchGraph()
@@ -650,7 +683,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   ]
 
   return (
-    <div className="relative h-[600px] rounded-lg border border-white/10 overflow-hidden">
+    <div className="relative h-[600px] rounded-lg border border-black/10 dark:border-white/10 overflow-hidden">
       {/* Edge creation modal */}
       <Dialog
         open={isEdgeModalOpen}
@@ -921,7 +954,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             <Button variant="ghost" size="icon" onClick={() => zoomOut()} title="Zoom Out" className="h-8 w-8">
               <ZoomOut className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant="ghost"
               size="icon"
@@ -931,14 +964,14 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             >
               <Plus className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={() => fitView({ padding: 0.2, duration: 300 })} title="Fit to Screen" className="h-8 w-8">
               <Maximize className="h-4 w-4" />
             </Button>
             <Button variant="ghost" size="icon" onClick={handleAutoLayout} title="Auto Layout" className="h-8 w-8">
               <LayoutGrid className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant={isDrawMode ? 'default' : 'ghost'}
               size="icon"
@@ -951,11 +984,11 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             >
               <GitBranch className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={handleExportPng} title="Export PNG" className="h-8 w-8">
               <Download className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant="ghost"
               size="icon"
@@ -1209,7 +1242,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
                           {Object.entries(selectedElement.data.correlation as Record<string, number>)
                             .filter(([, v]) => v > 0)
                             .map(([k, v]) => (
-                              <span key={k} className="text-xs bg-white/10 px-1.5 py-0.5 rounded">
+                              <span key={k} className="text-xs bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded">
                                 {v} {k.replace(/_/g, ' ')}
                               </span>
                             ))}

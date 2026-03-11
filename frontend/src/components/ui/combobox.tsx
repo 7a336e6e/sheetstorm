@@ -38,18 +38,20 @@ export function Combobox({
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false)
   const [inputValue, setInputValue] = React.useState('')
+  const [isTyping, setIsTyping] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
 
-  // Sync input value with selected value
+  // Sync input value with selected value — but NOT while user is actively typing
   React.useEffect(() => {
+    if (isTyping) return
     if (value) {
       const found = options.find(o => o.value === value)
       setInputValue(found ? found.label : value)
     } else {
       setInputValue('')
     }
-  }, [value, options])
+  }, [value, options, isTyping])
 
   const filtered = React.useMemo(() => {
     if (!inputValue) return options
@@ -64,17 +66,15 @@ export function Combobox({
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
-        // If allowCustom and there's input text but no matching option, treat as custom value
-        if (allowCustom && inputValue && !options.find(o => o.value === value)) {
-          // Keep the current inputValue as-is
-        }
+        setIsTyping(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [inputValue, value, options, allowCustom])
+  }, [])
 
   const handleSelect = (opt: ComboboxOption) => {
+    setIsTyping(false)
     onChange(opt.value)
     setInputValue(opt.label)
     onLabelChange?.(opt.label)
@@ -83,6 +83,7 @@ export function Combobox({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
+    setIsTyping(true)
     setInputValue(val)
     setOpen(true)
     if (allowCustom) {
@@ -93,6 +94,7 @@ export function Combobox({
   }
 
   const handleClear = () => {
+    setIsTyping(false)
     onChange('')
     setInputValue('')
     onLabelChange?.('')

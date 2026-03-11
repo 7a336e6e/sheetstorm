@@ -18,6 +18,8 @@ import {
   ReactFlowProvider,
   addEdge,
   Connection,
+  getNodesBounds,
+  getViewportForBounds,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -582,54 +584,47 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }, [nodes, edges, setNodes, fitView])
 
   const handleExportPng = useCallback(() => {
-    // Calculate bounding box from all node positions for full-resolution export
     if (nodes.length === 0) {
       toast({ title: 'Export Failed', description: 'No nodes to export', variant: 'destructive' })
       return
     }
 
-    const el = document.querySelector('.react-flow__viewport') as HTMLElement
-    if (!el) return
+    const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement
+    if (!viewportEl) return
 
     import('html-to-image' as string).then((mod: { toPng: (el: HTMLElement, opts: Record<string, unknown>) => Promise<string> }) => {
-      // Compute bounding box from node positions
-      const padding = 80
-      const nodeWidth = 200 // approximate max node width
-      const nodeHeight = 120 // approximate max node height
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-      for (const node of nodes) {
-        const x = node.position?.x ?? 0
-        const y = node.position?.y ?? 0
-        if (x < minX) minX = x
-        if (y < minY) minY = y
-        if (x + nodeWidth > maxX) maxX = x + nodeWidth
-        if (y + nodeHeight > maxY) maxY = y + nodeHeight
-      }
+      // Use React Flow's built-in utilities to compute proper bounds
+      const nodesBounds = getNodesBounds(nodes)
+      const padding = 100
+      // Add padding to the bounds
+      const imageWidth = nodesBounds.width + padding * 2
+      const imageHeight = nodesBounds.height + padding * 2
 
-      const graphWidth = maxX - minX + padding * 2
-      const graphHeight = maxY - minY + padding * 2
+      // Get the viewport transform that would fit all nodes into the image dimensions
+      const viewport = getViewportForBounds(
+        nodesBounds,
+        imageWidth,
+        imageHeight,
+        0.5,  // minZoom
+        2,    // maxZoom
+        padding,
+      )
 
-      // Transform the viewport so the full graph is visible at 1:1 scale
-      const prevTransform = el.style.transform
-      el.style.transform = `translate(${-minX + padding}px, ${-minY + padding}px) scale(1)`
-
-      mod.toPng(el, {
+      mod.toPng(viewportEl, {
         backgroundColor: resolvedTheme === 'dark' ? '#0f172a' : '#ffffff',
-        width: graphWidth,
-        height: graphHeight,
+        width: imageWidth,
+        height: imageHeight,
         style: {
-          width: `${graphWidth}px`,
-          height: `${graphHeight}px`,
+          width: `${imageWidth}px`,
+          height: `${imageHeight}px`,
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
         },
       }).then((dataUrl: string) => {
-        // Restore viewport transform
-        el.style.transform = prevTransform
         const link = document.createElement('a')
         link.download = `attack-graph-${incidentId}.png`
         link.href = dataUrl
         link.click()
       }).catch(() => {
-        el.style.transform = prevTransform
         toast({ title: 'Export Failed', description: 'Could not export graph as PNG', variant: 'destructive' })
       })
     }).catch(() => {

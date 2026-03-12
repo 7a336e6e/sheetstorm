@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
@@ -11,7 +11,6 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
-    DialogDescription,
     DialogFooter,
     DialogBody,
 } from '@/components/ui/dialog'
@@ -32,10 +31,10 @@ import {
     GlassTable,
     TableEmpty,
 } from '@/components/ui/table'
-import { SkeletonTableRow } from '@/components/ui/skeleton'
+import { SkeletonTableRow, Skeleton } from '@/components/ui/skeleton'
 import { formatDateTime } from '@/lib/utils'
 import api from '@/lib/api'
-import type { TimelineEvent, CompromisedHost } from '@/types'
+import type { TimelineEvent, CompromisedHost, D3FENDTechnique } from '@/types'
 import {
     Plus,
     Clock,
@@ -45,25 +44,50 @@ import {
     Trash2,
     AlertTriangle,
     Server,
-    Tag,
     Edit2,
-    ShieldAlert,
-    Loader2,
     Star,
+    ChevronDown,
+    ChevronRight,
+    Shield,
+    Target,
+    Tag,
+    Loader2,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { useToast } from '@/components/ui/use-toast'
 
-const ARTIFACT_TYPES = [
-    { value: 'file', label: 'File' },
-    { value: 'registry', label: 'Registry Key' },
-    { value: 'process', label: 'Process' },
-    { value: 'service', label: 'Service' },
-    { value: 'scheduled_task', label: 'Scheduled Task' },
-    { value: 'user_account', label: 'User Account' },
-    { value: 'log_entry', label: 'Log Entry' },
-    { value: 'other', label: 'Other' },
-]
+const tacticColors: Record<string, string> = {
+    'reconnaissance': 'text-blue-400',
+    'resource-development': 'text-blue-300',
+    'resource development': 'text-blue-300',
+    'initial-access': 'text-amber-400',
+    'initial access': 'text-amber-400',
+    'execution': 'text-orange-400',
+    'persistence': 'text-rose-400',
+    'privilege-escalation': 'text-red-400',
+    'privilege escalation': 'text-red-400',
+    'defense-evasion': 'text-pink-400',
+    'defense evasion': 'text-pink-400',
+    'credential-access': 'text-yellow-400',
+    'credential access': 'text-yellow-400',
+    'discovery': 'text-cyan-400',
+    'lateral-movement': 'text-emerald-400',
+    'lateral movement': 'text-emerald-400',
+    'collection': 'text-violet-400',
+    'command-and-control': 'text-purple-400',
+    'command and control': 'text-purple-400',
+    'exfiltration': 'text-red-300',
+    'impact': 'text-red-500',
+}
+
+const d3fendTacticColors: Record<string, string> = {
+    'Harden': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    'Detect': 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+    'Isolate': 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+    'Deceive': 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+    'Evict': 'bg-red-500/10 text-red-400 border-red-500/20',
+    'Restore': 'bg-green-500/10 text-green-400 border-green-500/20',
+}
 
 interface EventsTableProps {
     incidentId: string
@@ -79,20 +103,44 @@ export function EventsTable({ incidentId }: EventsTableProps) {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [hosts, setHosts] = useState<CompromisedHost[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
-
-    // Mark as IOC dialog state
-    const [showIocModal, setShowIocModal] = useState(false)
-    const [iocEvent, setIocEvent] = useState<TimelineEvent | null>(null)
-    const [iocForm, setIocForm] = useState({ artifact_type: 'other', notes: '', is_malicious: true })
-    const [iocSubmitting, setIocSubmitting] = useState(false)
+    const [expandedId, setExpandedId] = useState<string | null>(null)
+    const [d3fendCache, setD3fendCache] = useState<Record<string, D3FENDTechnique[]>>({})
+    const [d3fendLoading, setD3fendLoading] = useState<string | null>(null)
 
     const [form, setForm] = useState({
         timestamp: '',
         activity: '',
+        source: '',
         host_id: '',
         mitre_tactic: '',
         mitre_technique: '',
     })
+
+    const fetchD3fendSuggestions = useCallback(async (techniqueId: string) => {
+        if (d3fendCache[techniqueId]) return
+        setD3fendLoading(techniqueId)
+        try {
+            const res = await api.post<{ items: D3FENDTechnique[]; total: number }>('/knowledge-base/d3fend/suggest', {
+                attack_techniques: [techniqueId],
+            })
+            setD3fendCache(prev => ({ ...prev, [techniqueId]: res.items || [] }))
+        } catch {
+            setD3fendCache(prev => ({ ...prev, [techniqueId]: [] }))
+        } finally {
+            setD3fendLoading(null)
+        }
+    }, [d3fendCache])
+
+    const handleToggleExpand = useCallback((event: TimelineEvent) => {
+        if (expandedId === event.id) {
+            setExpandedId(null)
+            return
+        }
+        setExpandedId(event.id)
+        if (event.mitre_technique && !d3fendCache[event.mitre_technique]) {
+            fetchD3fendSuggestions(event.mitre_technique)
+        }
+    }, [expandedId, d3fendCache, fetchD3fendSuggestions])
 
     useEffect(() => {
         if (incidentId) {
@@ -124,6 +172,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                 await api.put(`/incidents/${incidentId}/timeline/${editingId}`, {
                     timestamp: form.timestamp,
                     activity: form.activity,
+                    source: form.source || null,
                     host_id: form.host_id || null,
                     mitre_tactic: form.mitre_tactic || null,
                     mitre_technique: form.mitre_technique || null,
@@ -132,6 +181,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                 await api.post(`/incidents/${incidentId}/timeline`, {
                     timestamp: form.timestamp,
                     activity: form.activity,
+                    source: form.source || null,
                     host_id: form.host_id || null,
                     mitre_tactic: form.mitre_tactic || null,
                     mitre_technique: form.mitre_technique || null,
@@ -169,37 +219,12 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         setForm({
             timestamp: event.timestamp ? new Date(event.timestamp).toISOString().slice(0, 16) : '',
             activity: event.activity,
+            source: event.source || '',
             host_id: event.host?.id || '',
             mitre_tactic: event.mitre_tactic || '',
             mitre_technique: event.mitre_technique || '',
         })
         setShowAddModal(true)
-    }
-
-    const handleOpenMarkAsIOC = (event: TimelineEvent) => {
-        setIocEvent(event)
-        setIocForm({ artifact_type: 'other', notes: '', is_malicious: true })
-        setShowIocModal(true)
-    }
-
-    const handleMarkAsIOC = async () => {
-        if (!iocEvent) return
-        setIocSubmitting(true)
-        try {
-            await api.post(`/incidents/${incidentId}/timeline/${iocEvent.id}/mark-as-ioc`, {
-                artifact_type: iocForm.artifact_type,
-                notes: iocForm.notes || undefined,
-                is_malicious: iocForm.is_malicious,
-            })
-            toast({ title: 'IOC Created', description: `Event marked as IOC and host-based indicator created.` })
-            setShowIocModal(false)
-            setIocEvent(null)
-            loadData()
-        } catch (error: any) {
-            toast({ title: 'Error', description: error?.message || 'Failed to mark as IOC', variant: 'destructive' })
-        } finally {
-            setIocSubmitting(false)
-        }
     }
 
     const handleToggleKeyEvent = async (event: TimelineEvent) => {
@@ -224,6 +249,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         setForm({
             timestamp: '',
             activity: '',
+            source: '',
             host_id: '',
             mitre_tactic: '',
             mitre_technique: '',
@@ -257,6 +283,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-[32px]"></TableHead>
                                     <TableHead className="w-[40px]" title="Pin to timeline">
                                         <Star className="h-3.5 w-3.5 text-muted-foreground" />
                                     </TableHead>
@@ -268,8 +295,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {isLoading ? <SkeletonTableRow columns={6} /> : filteredEvents.length === 0 ? (
-                                    <TableRow><TableCell colSpan={6}>
+                                {isLoading ? <SkeletonTableRow columns={7} /> : filteredEvents.length === 0 ? (
+                                    <TableRow><TableCell colSpan={7}>
                                         <TableEmpty
                                             title={search ? 'No matching events' : 'No timeline events'}
                                             description={search ? 'Try adjusting your search criteria' : 'Build a chronological timeline of attacker activity, system events, and investigation milestones.'}
@@ -277,62 +304,181 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                         />
                                     </TableCell></TableRow>
                                 ) : (
-                                    filteredEvents.map(event => (
-                                        <TableRow key={event.id} className="group">
-                                            <TableCell className="w-[40px]">
-                                                <button
-                                                    onClick={() => handleToggleKeyEvent(event)}
-                                                    className={`p-0.5 rounded transition-colors ${event.is_key_event
-                                                        ? 'text-amber-400 hover:text-amber-300'
-                                                        : 'text-muted-foreground/30 hover:text-amber-400/60'
-                                                    }`}
-                                                    title={event.is_key_event ? 'Remove from timeline' : 'Pin to timeline'}
+                                    filteredEvents.map(event => {
+                                        const isExpanded = expandedId === event.id
+                                        const techniqueId = event.mitre_technique
+                                        const d3fendResults = techniqueId ? d3fendCache[techniqueId] : undefined
+                                        const isLoadingD3fend = d3fendLoading === techniqueId
+
+                                        return (
+                                            <>
+                                                <TableRow
+                                                    key={event.id}
+                                                    className={`group cursor-pointer transition-colors ${isExpanded ? 'bg-white/[0.03]' : 'hover:bg-white/[0.02]'}`}
+                                                    onClick={() => handleToggleExpand(event)}
                                                 >
-                                                    <Star className={`h-4 w-4 ${event.is_key_event ? 'fill-current' : ''}`} />
-                                                </button>
-                                            </TableCell>
-                                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                                {formatDateTime(event.timestamp)}
-                                            </TableCell>
-                                            <TableCell>
-                                                {event.host || event.hostname ? (
-                                                    <div className="flex items-center gap-1">
-                                                        <Server className="h-3 w-3 text-muted-foreground" />
-                                                        {event.host?.hostname || event.hostname}
-                                                    </div>
-                                                ) : '-'}
-                                            </TableCell>
-                                            <TableCell className="max-w-[400px] truncate" title={event.activity}>
-                                                {event.activity}
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex flex-col gap-1 items-start">
-                                                    {event.mitre_tactic && <Badge variant="outline" className="text-[10px]">{event.mitre_tactic}</Badge>}
-                                                    {event.mitre_technique && <span className="text-xs font-mono text-muted-foreground">{event.mitre_technique}</span>}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1">
-                                                    {event.is_ioc && (
-                                                        <Badge variant="outline" className="text-[10px] text-red-400 border-red-400/30 bg-red-400/10">
-                                                            <Tag className="h-3 w-3 mr-1" /> IOC
-                                                        </Badge>
-                                                    )}
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleEditClick(event)} title="Edit event">
-                                                        <Edit2 className="w-4 h-4" />
-                                                    </Button>
-                                                    {!event.is_ioc && (
-                                                        <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-400" onClick={() => handleOpenMarkAsIOC(event)} title="Mark as IOC — creates a host-based indicator from this event">
-                                                            <ShieldAlert className="w-4 h-4" />
-                                                        </Button>
-                                                    )}
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(event.id)} title="Delete event">
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
+                                                    <TableCell className="w-[32px] px-2">
+                                                        {isExpanded
+                                                            ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                                            : <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                        }
+                                                    </TableCell>
+                                                    <TableCell className="w-[40px]">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleToggleKeyEvent(event) }}
+                                                            className={`p-0.5 rounded transition-colors ${event.is_key_event
+                                                                ? 'text-amber-400 hover:text-amber-300'
+                                                                : 'text-muted-foreground/30 hover:text-amber-400/60'
+                                                            }`}
+                                                            title={event.is_key_event ? 'Remove from timeline' : 'Pin to timeline'}
+                                                        >
+                                                            <Star className={`h-4 w-4 ${event.is_key_event ? 'fill-current' : ''}`} />
+                                                        </button>
+                                                    </TableCell>
+                                                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                                                        {formatDateTime(event.timestamp)}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {event.host || event.hostname ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <Server className="h-3 w-3 text-muted-foreground" />
+                                                                {event.host?.hostname || event.hostname}
+                                                            </div>
+                                                        ) : '-'}
+                                                    </TableCell>
+                                                    <TableCell className="max-w-[400px] truncate" title={event.activity}>
+                                                        {event.activity}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <div className="flex flex-col gap-1 items-start">
+                                                            {event.mitre_tactic && <Badge variant="outline" className="text-[10px]">{event.mitre_tactic}</Badge>}
+                                                            {event.mitre_technique && <span className="text-xs font-mono text-muted-foreground">{event.mitre_technique}</span>}
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <div className="flex items-center gap-1">
+                                                            <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); handleEditClick(event) }} title="Edit event">
+                                                                <Edit2 className="w-4 h-4" />
+                                                            </Button>
+                                                            <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={(e) => { e.stopPropagation(); handleDelete(event.id) }} title="Delete event">
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </Button>
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+
+                                                {isExpanded && (
+                                                    <TableRow key={`${event.id}-detail`} className="bg-white/[0.02] hover:bg-white/[0.02]">
+                                                        <TableCell colSpan={7} className="p-0">
+                                                            <div className="px-6 py-4 space-y-4 border-l-2 border-blue-500/30 ml-4">
+                                                                {/* Event Details */}
+                                                                <div>
+                                                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Event Details</h4>
+                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                        <div className="space-y-1">
+                                                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                                <Clock className="h-3 w-3" />
+                                                                                <span className="font-medium">Timestamp</span>
+                                                                            </div>
+                                                                            <p className="text-sm pl-5">{formatDateTime(event.timestamp)}</p>
+                                                                        </div>
+                                                                        {(event.host || event.hostname) && (
+                                                                            <div className="space-y-1">
+                                                                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                                    <Server className="h-3 w-3" />
+                                                                                    <span className="font-medium">Host</span>
+                                                                                </div>
+                                                                                <p className="text-sm pl-5">{event.host?.hostname || event.hostname}</p>
+                                                                            </div>
+                                                                        )}
+                                                                        {event.source && (
+                                                                            <div className="space-y-1">
+                                                                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                                    <Tag className="h-3 w-3" />
+                                                                                    <span className="font-medium">Source</span>
+                                                                                </div>
+                                                                                <p className="text-sm pl-5">{event.source}</p>
+                                                                            </div>
+                                                                        )}
+                                                                        {event.mitre_tactic && (
+                                                                            <div className="space-y-1">
+                                                                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                                    <Target className="h-3 w-3" />
+                                                                                    <span className="font-medium">MITRE ATT&CK</span>
+                                                                                </div>
+                                                                                <div className="flex items-center gap-2 pl-5">
+                                                                                    <Badge variant="outline" className={`text-[10px] ${tacticColors[event.mitre_tactic.toLowerCase()] || ''}`}>
+                                                                                        {event.mitre_tactic}
+                                                                                    </Badge>
+                                                                                    {event.mitre_technique && (
+                                                                                        <span className="text-xs font-mono text-muted-foreground">{event.mitre_technique}</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Activity Full Text */}
+                                                                <div>
+                                                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Activity</h4>
+                                                                    <p className="text-sm whitespace-pre-wrap">{event.activity}</p>
+                                                                </div>
+
+                                                                {/* D3FEND Mitigations */}
+                                                                {techniqueId && (
+                                                                    <div>
+                                                                        <div className="flex items-center gap-2 mb-2">
+                                                                            <Shield className="h-3.5 w-3.5 text-blue-400" />
+                                                                            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                                                                Recommended Mitigations (D3FEND)
+                                                                            </h4>
+                                                                        </div>
+
+                                                                        {isLoadingD3fend ? (
+                                                                            <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                                                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                                                Loading D3FEND countermeasures...
+                                                                            </div>
+                                                                        ) : d3fendResults && d3fendResults.length > 0 ? (
+                                                                            <div className="grid gap-2">
+                                                                                {d3fendResults.map((d3) => (
+                                                                                    <div
+                                                                                        key={d3.id}
+                                                                                        className={`rounded-md border px-3 py-2 ${d3fendTacticColors[d3.tactic] || 'bg-white/5 text-muted-foreground border-white/10'}`}
+                                                                                    >
+                                                                                        <div className="flex items-center gap-2 mb-1">
+                                                                                            <span className="text-xs font-mono opacity-70">{d3.id}</span>
+                                                                                            <span className="text-sm font-medium">{d3.name}</span>
+                                                                                            <Badge variant="outline" className="text-[9px] ml-auto">{d3.tactic}</Badge>
+                                                                                        </div>
+                                                                                        <p className="text-xs opacity-80">{d3.description}</p>
+                                                                                        {d3.examples && d3.examples.length > 0 && (
+                                                                                            <div className="mt-1.5 flex flex-wrap gap-1">
+                                                                                                {d3.examples.map((ex, i) => (
+                                                                                                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/5">
+                                                                                                        {ex}
+                                                                                                    </span>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        ) : d3fendResults ? (
+                                                                            <p className="text-xs text-muted-foreground py-1">
+                                                                                No D3FEND countermeasures mapped for {techniqueId}
+                                                                            </p>
+                                                                        ) : null}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                )}
+                                            </>
+                                        )
+                                    })
                                 )}
                             </TableBody>
                         </Table>
@@ -355,11 +501,19 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                             <Textarea value={form.activity} onChange={e => setForm({ ...form, activity: e.target.value })} variant="glass" />
                         </div>
                         <div className="space-y-2">
+                            <Label>Source</Label>
+                            <Input value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} placeholder="e.g. Sysmon, EDR, Firewall..." variant="glass" />
+                        </div>
+                        <div className="space-y-2">
                             <Label>Host</Label>
                             <Select value={form.host_id} onValueChange={v => setForm({ ...form, host_id: v })}>
                                 <SelectTrigger variant="glass"><SelectValue placeholder="Select Host" /></SelectTrigger>
                                 <SelectContent>
-                                    {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname}</SelectItem>)}
+                                    {hosts.map(h => (
+                                        <SelectItem key={h.id} value={h.id}>
+                                            {h.hostname}{h.ip_address ? ` (${h.ip_address})` : ''}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -397,64 +551,6 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                 </DialogContent>
             </Dialog>
 
-            {/* Mark as IOC Dialog */}
-            <Dialog open={showIocModal} onOpenChange={setShowIocModal}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Mark Event as IOC</DialogTitle>
-                        <DialogDescription>
-                            This will flag the event as an IOC and create a host-based indicator record.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogBody className="space-y-4">
-                        {iocEvent && (
-                            <div className="p-3 rounded-md bg-muted/50 text-sm">
-                                <p className="font-medium truncate">{iocEvent.activity}</p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    {formatDateTime(iocEvent.timestamp)}
-                                    {iocEvent.hostname && ` · ${iocEvent.hostname}`}
-                                </p>
-                            </div>
-                        )}
-                        <div className="space-y-2">
-                            <Label>Artifact Type</Label>
-                            <Select value={iocForm.artifact_type} onValueChange={v => setIocForm({ ...iocForm, artifact_type: v })}>
-                                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {ARTIFACT_TYPES.map(t => (
-                                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Notes (optional)</Label>
-                            <Textarea
-                                value={iocForm.notes}
-                                onChange={e => setIocForm({ ...iocForm, notes: e.target.value })}
-                                placeholder="Additional context about this indicator..."
-                                variant="glass"
-                            />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={iocForm.is_malicious}
-                                onChange={e => setIocForm({ ...iocForm, is_malicious: e.target.checked })}
-                                className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
-                            />
-                            <Label>Confirmed malicious</Label>
-                        </div>
-                    </DialogBody>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowIocModal(false)}>Cancel</Button>
-                        <Button onClick={handleMarkAsIOC} disabled={iocSubmitting}>
-                            {iocSubmitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                            Create IOC
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     )
 }

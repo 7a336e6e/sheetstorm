@@ -12,6 +12,9 @@ import { Button } from '@/components/ui/button'
 import { Badge, SeverityBadge, StatusBadge } from '@/components/ui/badge'
 import { useIncidentStore, useAuthStore } from '@/lib/store'
 import { formatRelativeTime } from '@/lib/utils'
+import api from '@/lib/api'
+import type { TimelineEvent } from '@/types'
+import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
 import {
   AlertTriangle,
   Activity,
@@ -56,10 +59,39 @@ const TLP_STYLES: Record<string, { bg: string; text: string; label: string }> = 
 export default function DashboardPage() {
   const { user } = useAuthStore()
   const { incidents, fetchIncidents, isLoading } = useIncidentStore()
+  const [allTimelineEvents, setAllTimelineEvents] = useState<TimelineEvent[]>([])
 
   useEffect(() => {
     fetchIncidents()
   }, [fetchIncidents])
+
+  // Fetch timeline events for all incidents to aggregate TTP data
+  useEffect(() => {
+    if (incidents.length === 0) return
+    const controller = new AbortController()
+    const fetchTimelines = async () => {
+      try {
+        const results = await Promise.allSettled(
+          incidents.slice(0, 50).map(inc =>
+            api.get<{ items: TimelineEvent[] }>(`/incidents/${inc.id}/timeline`)
+          )
+        )
+        const combined: TimelineEvent[] = []
+        results.forEach(r => {
+          if (r.status === 'fulfilled' && r.value?.items) {
+            combined.push(...r.value.items)
+          }
+        })
+        if (!controller.signal.aborted) {
+          setAllTimelineEvents(combined)
+        }
+      } catch {
+        // silently fail – dashboard analytics is best-effort
+      }
+    }
+    fetchTimelines()
+    return () => controller.abort()
+  }, [incidents])
 
   const analytics = useMemo(() => {
     if (incidents.length === 0) return null
@@ -263,6 +295,15 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Cross-incident MITRE TTP Analytics */}
+      {!isLoading && allTimelineEvents.length > 0 && (
+        <MitreTTPAnalytics
+          events={allTimelineEvents}
+          title="MITRE ATT&CK Coverage"
+          description="Tactics and techniques observed across all incidents"
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -322,13 +322,28 @@ export interface AuditLog {
   action: string
   resource_type?: string
   resource_id?: string
-  user?: { id: string; email: string; name: string }
+  user?: { id: string; email: string; name: string; role?: string }
   user_email?: string
   ip_address?: string
   user_agent?: string
   request_method?: string
   request_path?: string
+  request_query_params?: Record<string, string>
+  request_body_summary?: Record<string, unknown>
+  content_type?: string
+  referrer?: string
+  origin?: string
   status_code?: number
+  duration_ms?: number
+  geo_country?: string
+  geo_city?: string
+  geo_region?: string
+  cf_ray?: string
+  browser?: string
+  os?: string
+  device_type?: string
+  incident?: { id: string; title: string }
+  incident_id?: string
   details?: Record<string, unknown>
   created_at: string
 }

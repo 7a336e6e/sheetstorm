@@ -93,6 +93,9 @@ class Incident(BaseModel):
                 'timeline_events': self.timeline_events.count(),
                 'compromised_hosts': self.compromised_hosts.count(),
                 'compromised_accounts': self.compromised_accounts.count(),
+                'network_indicators': self.network_indicators.count(),
+                'host_indicators': self.host_indicators.count(),
+                'malware_tools': self.malware_tools.count(),
                 'artifacts': self.artifacts.count(),
                 'tasks': self.tasks.count(),
             }

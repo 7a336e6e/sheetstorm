@@ -79,6 +79,7 @@ import {
   MoreVertical,
   Send,
   Search,
+  Star,
 } from 'lucide-react'
 
 // Import new Tab Components
@@ -88,11 +89,13 @@ import { NetworkIOCsTab } from '@/components/incidents/NetworkIOCsTab'
 import { HostBasedIOCsTab } from '@/components/incidents/HostBasedIOCsTab'
 import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
 import { EventsTable } from '@/components/incidents/EventsTable'
-import { IOCVisualTimeline } from '@/components/incidents/IOCVisualTimeline'
+import { IOCVisualTimeline, PinnedEventsTable } from '@/components/incidents/timeline/IOCVisualTimeline'
 import { HostsTab } from '@/components/incidents/HostsTab'
 
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
+import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
+import { IRPhaseTracker } from '@/components/incidents/IRPhaseTracker'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
 
@@ -118,22 +121,22 @@ const STATUS_OPTIONS = [
 // --- Helper Components ---
 function StatCard({ title, value, icon, description }: any) {
   return (
-    <div className="p-4 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-muted-foreground">{title}</span>
+    <div className="px-3 py-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-muted-foreground">{title}</span>
         <div className="text-cyan-400">{icon}</div>
       </div>
-      <div className="text-2xl font-bold text-foreground">{value}</div>
-      {description && <div className="text-xs text-muted-foreground mt-1">{description}</div>}
+      <div className="text-xl font-bold text-foreground">{value}</div>
+      {description && <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>}
     </div>
   )
 }
 
 function SkeletonStatCard() {
   return (
-    <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5 p-4 space-y-3">
+    <div className="rounded-lg border border-border bg-black/5 dark:bg-white/5 px-3 py-2.5 space-y-2">
       <Skeleton className="h-3 w-1/3" />
-      <Skeleton className="h-7 w-1/2" />
+      <Skeleton className="h-6 w-1/2" />
     </div>
   )
 }
@@ -229,7 +232,7 @@ function PhaseBadge({ phase }: { phase: number }) {
 
 function TLPBadge({ tlp }: { tlp: string }) {
   const styles: Record<string, string> = {
-    white: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
+    white: 'bg-gray-200 text-gray-700 border-gray-400 dark:bg-gray-500/20 dark:text-gray-300 dark:border-gray-500/30',
     green: 'bg-green-500/20 text-green-400 border-green-500/30',
     amber: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
     amber_strict: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -255,6 +258,7 @@ export default function IncidentDetailPage() {
   const incidentId = params.id as string
   const { currentIncident, fetchIncident } = useIncidentStore()
   const [activeTab, setActiveTab] = useState('overview')
+  const [eventsView, setEventsView] = useState<'table' | 'timeline' | 'table-timeline'>('table')
   const [isLoadingData, setIsLoadingData] = useState(true)
   const [tasks, setTasks] = useState<Task[]>([])
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
@@ -672,79 +676,12 @@ export default function IncidentDetailPage() {
           </div>
         </div>
 
-        {/* Phase Progress */}
-        <Card className="overflow-hidden">
-          <CardContent className="p-6 relative">
-            {/* Background grid pattern */}
-            <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(rgba(6,182,212,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(6,182,212,0.5) 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
-            <div className="relative flex items-center w-full">
-              {PHASE_INFO.map((phase, index) => {
-                const isCompleted = phase.number < incident.phase
-                const isCurrent = phase.number === incident.phase
-                const isUpcoming = phase.number > incident.phase
-                return (
-                  <div key={phase.number} className="flex items-center flex-1 last:flex-none">
-                    {/* Node */}
-                    <div className="flex flex-col items-center z-10">
-                      <div
-                        className={`relative w-9 h-9 lg:w-11 lg:h-11 rounded-full flex items-center justify-center font-semibold text-sm transition-all duration-500 ${
-                          isCompleted
-                            ? `bg-gradient-to-r ${phase.color} text-white shadow-lg shadow-cyan-500/20`
-                            : isCurrent
-                              ? `bg-gradient-to-r ${phase.color} text-white animate-phase-pulse`
-                              : 'bg-black/[0.06] dark:bg-white/[0.06] text-black/30 dark:text-white/30 border border-white/[0.08]'
-                        }`}
-                      >
-                        {/* Scan ring for current phase — centered on circle */}
-                        {isCurrent && (
-                          <div className="absolute inset-0 -m-2 rounded-full animate-phase-scan pointer-events-none">
-                            <div className="w-full h-full rounded-full" style={{ background: 'conic-gradient(from 0deg, transparent 0%, rgba(6,182,212,0.4) 30%, transparent 60%)' }} />
-                          </div>
-                        )}
-                        {isCompleted ? (
-                          <CheckCircle2 className="h-5 w-5" />
-                        ) : (
-                          <span className={isCurrent ? 'drop-shadow-[0_0_6px_rgba(255,255,255,0.5)]' : ''}>{phase.number}</span>
-                        )}
-                      </div>
-                      <span className={`text-[10px] lg:text-xs mt-2.5 text-center font-medium transition-colors duration-300 ${
-                        isCompleted ? 'text-cyan-400' : isCurrent ? 'text-cyan-300' : 'text-black/30 dark:text-white/30'
-                      }`}>
-                        {phase.short}
-                      </span>
-                    </div>
-                    {/* Connector line */}
-                    {index < PHASE_INFO.length - 1 && (
-                      <div className="flex-1 mx-1.5 lg:mx-3 relative" style={{ height: '2px', marginBottom: '20px' }}>
-                        {/* Track */}
-                        <div className="absolute inset-0 bg-black/[0.06] dark:bg-white/[0.06] rounded-full" />
-                        {/* Filled portion */}
-                        {(isCompleted || isCurrent) && (
-                          <div
-                            className={`absolute inset-y-0 left-0 rounded-full animate-line-fill ${
-                              isCompleted
-                                ? 'bg-gradient-to-r from-cyan-500 to-cyan-400 w-full shadow-[0_0_8px_rgba(6,182,212,0.3)]'
-                                : 'bg-gradient-to-r from-cyan-500/80 to-cyan-500/20 w-full'
-                            }`}
-                          />
-                        )}
-                        {/* Data flow particles on completed lines */}
-                        {isCompleted && (
-                          <div className="absolute inset-0 overflow-hidden rounded-full">
-                            <div
-                              className="absolute w-2 h-full bg-gradient-to-r from-transparent via-white/60 to-transparent rounded-full animate-data-flow"
-                              style={{ animationDelay: `${index * 0.4}s` }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Phase Progress — Interactive IR Phase Tracker */}
+        <IRPhaseTracker
+          currentPhase={incident.phase}
+          events={timeline}
+          context="incident"
+        />
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -754,9 +691,6 @@ export default function IncidentDetailPage() {
             </TabsTrigger>
             <TabsTrigger variant="underline" value="events" className="gap-2">
               <LayoutList className="h-4 w-4" /> Events
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="timeline" className="gap-2">
-              <Clock className="h-4 w-4" /> Timeline
             </TabsTrigger>
             <TabsTrigger variant="underline" value="hosts" className="gap-2">
               <Server className="h-4 w-4" /> Hosts
@@ -790,7 +724,6 @@ export default function IncidentDetailPage() {
           {/* Overview TabContent */}
           <TabsContent value="overview">
             {(() => {
-              const iocEvents = timeline.filter(e => e.is_ioc)
               const pendingTasks = tasks.filter(t => t.status === 'pending').length
               const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length
               const containmentGroups = hosts.reduce((acc, h) => {
@@ -820,17 +753,17 @@ export default function IncidentDetailPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div className="lg:col-span-2 space-y-6">
                     {/* Primary Stats */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                      <StatCard title="Events" value={incident.counts?.timeline_events || 0} icon={<Clock className="h-5 w-5" />} description={iocEvents.length > 0 ? `${iocEvents.length} IOCs` : undefined} />
-                      <StatCard title="Hosts" value={incident.counts?.compromised_hosts || 0} icon={<Server className="h-5 w-5" />} description={hosts.filter(h => h.containment_status === 'isolated').length > 0 ? `${hosts.filter(h => h.containment_status === 'isolated').length} isolated` : undefined} />
-                      <StatCard title="Network IOCs" value={incident.counts?.network_indicators || 0} icon={<Globe className="h-5 w-5" />} />
-                      <StatCard title="Host IOCs" value={incident.counts?.host_indicators || 0} icon={<Fingerprint className="h-5 w-5" />} />
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <StatCard title="Events" value={incident.counts?.timeline_events || 0} icon={<Clock className="h-4 w-4" />} />
+                      <StatCard title="Hosts" value={incident.counts?.compromised_hosts || 0} icon={<Server className="h-4 w-4" />} description={hosts.filter(h => h.containment_status === 'isolated').length > 0 ? `${hosts.filter(h => h.containment_status === 'isolated').length} isolated` : undefined} />
+                      <StatCard title="Network IOCs" value={incident.counts?.network_indicators || 0} icon={<Globe className="h-4 w-4" />} />
+                      <StatCard title="Host IOCs" value={incident.counts?.host_indicators || 0} icon={<Fingerprint className="h-4 w-4" />} />
                     </div>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                      <StatCard title="Tasks" value={tasks.length} description={`${taskProgress}% complete`} icon={<CheckSquare className="h-5 w-5" />} />
-                      <StatCard title="Accounts" value={incident.counts?.compromised_accounts || 0} icon={<Key className="h-5 w-5" />} />
-                      <StatCard title="Malware" value={incident.counts?.malware_tools || 0} icon={<Bug className="h-5 w-5" />} />
-                      <StatCard title="Artifacts" value={incident.counts?.artifacts || 0} icon={<FileText className="h-5 w-5" />} />
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <StatCard title="Tasks" value={tasks.length} description={`${taskProgress}% complete`} icon={<CheckSquare className="h-4 w-4" />} />
+                      <StatCard title="Accounts" value={incident.counts?.compromised_accounts || 0} icon={<Key className="h-4 w-4" />} />
+                      <StatCard title="Malware" value={incident.counts?.malware_tools || 0} icon={<Bug className="h-4 w-4" />} />
+                      <StatCard title="Artifacts" value={incident.counts?.artifacts || 0} icon={<FileText className="h-4 w-4" />} />
                     </div>
 
                     {/* Task Progress */}
@@ -879,6 +812,9 @@ export default function IncidentDetailPage() {
                         </CardContent>
                       </Card>
                     )}
+
+                    {/* MITRE ATT&CK Coverage */}
+                    {timeline.length > 0 && <MitreTTPAnalytics events={timeline} />}
 
                     {/* Recent Activity */}
                     <Card>
@@ -977,24 +913,6 @@ export default function IncidentDetailPage() {
                       </CardContent>
                     </Card>
 
-                    {/* IOC Summary */}
-                    {timeline.length > 0 && (
-                      <Card>
-                        <CardHeader><CardTitle className="text-lg">IOC Summary</CardTitle></CardHeader>
-                        <CardContent>
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="text-2xl font-bold text-red-400">{iocEvents.length}</div>
-                            <div className="text-xs text-muted-foreground">of {timeline.length} events<br />marked as IOCs</div>
-                          </div>
-                          {iocEvents.length > 0 && (
-                            <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-2 overflow-hidden">
-                              <div className="h-full bg-red-500 rounded-full" style={{ width: `${Math.round((iocEvents.length / timeline.length) * 100)}%` }} />
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
-
                     <AssignmentsPanel incidentId={incidentId} />
                   </div>
                 </div>
@@ -1004,12 +922,39 @@ export default function IncidentDetailPage() {
 
           {/* Events Tab */}
           <TabsContent value="events">
-            <EventsTable incidentId={incidentId} />
-          </TabsContent>
-
-          {/* Timeline Tab */}
-          <TabsContent value="timeline">
-            <IOCVisualTimeline incidentId={incidentId} />
+            <div className="mb-4 flex items-center gap-2">
+              <Button
+                variant={eventsView === 'table' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEventsView('table')}
+                className="gap-1.5"
+              >
+                <LayoutList className="h-3.5 w-3.5" /> Table
+              </Button>
+              <Button
+                variant={eventsView === 'timeline' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEventsView('timeline')}
+                className="gap-1.5"
+              >
+                <Clock className="h-3.5 w-3.5" /> Visual Timeline
+              </Button>
+              <Button
+                variant={eventsView === 'table-timeline' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEventsView('table-timeline')}
+                className="gap-1.5"
+              >
+                <Star className="h-3.5 w-3.5" /> Table Timeline
+              </Button>
+            </div>
+            {eventsView === 'table' ? (
+              <EventsTable incidentId={incidentId} />
+            ) : eventsView === 'timeline' ? (
+              <IOCVisualTimeline incidentId={incidentId} />
+            ) : (
+              <PinnedTimelineTab incidentId={incidentId} />
+            )}
           </TabsContent>
 
           {/* Hosts Tab */}
@@ -1488,4 +1433,56 @@ export default function IncidentDetailPage() {
       />
     </>
   )
+}
+
+// ─── Pinned Timeline Tab (fetches data & renders PinnedEventsTable) ──────────
+
+function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
+  const [events, setEvents] = useState<TimelineEvent[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setIsLoading(true)
+      try {
+        const res = await api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`)
+        if (!cancelled) {
+          const pinned = (res.items || [])
+            .filter(e => e.is_key_event)
+            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+          setEvents(pinned)
+        }
+      } catch (err) {
+        console.error('Failed to load pinned timeline events:', err)
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [incidentId])
+
+  if (isLoading) {
+    return (
+      <div className="py-16 text-center text-sm text-muted-foreground animate-pulse">
+        <Clock className="h-6 w-6 mx-auto mb-2 opacity-30" />
+        Loading pinned events...
+      </div>
+    )
+  }
+
+  if (events.length === 0) {
+    return (
+      <div className="py-16 text-center border border-dashed border-black/10 dark:border-white/10 rounded-lg">
+        <Star className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
+        <p className="text-sm font-medium text-foreground">No Pinned Events</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Pin events from the Table tab using the ★ icon to build your table timeline.
+        </p>
+      </div>
+    )
+  }
+
+  return <PinnedEventsTable events={events} />
 }

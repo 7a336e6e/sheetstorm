@@ -11,7 +11,8 @@ import {
     Activity, Clock, User, FileEdit, AlertTriangle, Trash2, UserPlus,
     ChevronDown, ChevronRight, Globe, Monitor, Shield, Database,
     LogIn, LogOut, Settings, Eye, Filter, ChevronLeft, ChevronsLeft,
-    ChevronsRight, Search, X
+    ChevronsRight, Search, X, Smartphone, Laptop, Bot, Terminal,
+    MapPin, Gauge, Link2, FileText, Hash, ArrowRight, Server
 } from 'lucide-react'
 import { auditLogs } from '@/lib/api'
 import { AuditLog } from '@/types'
@@ -27,6 +28,9 @@ const actionDisplay: Record<string, { icon: any; color: string; bg: string }> = 
     generate: { icon: Settings, color: 'text-purple-600', bg: 'bg-purple-50' },
     view: { icon: Eye, color: 'text-sky-600', bg: 'bg-sky-50' },
     export: { icon: Database, color: 'text-amber-600', bg: 'bg-amber-50' },
+    connect: { icon: Link2, color: 'text-teal-600', bg: 'bg-teal-50' },
+    disconnect: { icon: X, color: 'text-orange-600', bg: 'bg-orange-50' },
+    password_reveal: { icon: Eye, color: 'text-red-600', bg: 'bg-red-50' },
 }
 
 const eventTypeBadge: Record<string, { label: string; className: string }> = {
@@ -39,13 +43,37 @@ const eventTypeBadge: Record<string, { label: string; className: string }> = {
     system_event: { label: 'System', className: 'bg-gray-100 text-gray-600' },
 }
 
+const methodColor: Record<string, string> = {
+    GET: 'text-green-700 bg-green-50',
+    POST: 'text-blue-700 bg-blue-50',
+    PUT: 'text-amber-700 bg-amber-50',
+    PATCH: 'text-orange-700 bg-orange-50',
+    DELETE: 'text-red-700 bg-red-50',
+}
+
+const statusColor = (code?: number) => {
+    if (!code) return 'text-gray-500'
+    if (code < 300) return 'text-green-600'
+    if (code < 400) return 'text-amber-600'
+    return 'text-red-600'
+}
+
+const deviceIcon: Record<string, any> = {
+    Mobile: Smartphone,
+    Tablet: Smartphone,
+    Desktop: Laptop,
+    Bot: Bot,
+    CLI: Terminal,
+    API: Server,
+}
+
 function getActivityDisplay(eventType: string, action: string, resourceType?: string) {
     let description = action.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
     if (resourceType) {
         description = `${description} ${resourceType.replace(/_/g, ' ')}`
     }
     const actionKey = action.split('_')[0] || action
-    const display = actionDisplay[actionKey] || { icon: Activity, color: 'text-gray-500', bg: 'bg-gray-50' }
+    const display = actionDisplay[action] || actionDisplay[actionKey] || { icon: Activity, color: 'text-gray-500', bg: 'bg-gray-50' }
     return { description, ...display }
 }
 
@@ -88,6 +116,19 @@ function formatDateHeader(dateString: string) {
     return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+function formatGeoLocation(a: AuditLog) {
+    const parts = [a.geo_city, a.geo_region, a.geo_country].filter(Boolean)
+    return parts.length > 0 ? parts.join(', ') : null
+}
+
+// Country code → flag emoji
+function countryFlag(code?: string) {
+    if (!code || code.length !== 2) return null
+    const offset = 127397
+    const upper = code.toUpperCase()
+    return String.fromCodePoint(upper.charCodeAt(0) + offset, upper.charCodeAt(1) + offset)
+}
+
 // ── Constants ──────────────────────────────────────────────────────
 
 const EVENT_TYPE_OPTIONS = [
@@ -123,6 +164,8 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
     const display = getActivityDisplay(activity.event_type, activity.action, activity.resource_type)
     const Icon = display.icon
     const badge = eventTypeBadge[activity.event_type]
+    const geo = formatGeoLocation(activity)
+    const DeviceIcon = deviceIcon[activity.device_type || ''] || Laptop
 
     return (
         <div className="border-b border-border/50 last:border-b-0">
@@ -142,20 +185,64 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
                     <Icon className={`h-4 w-4 ${display.color}`} />
                 </div>
 
-                {/* Main content */}
-                <div className="flex-1 min-w-0 grid grid-cols-[1fr_auto] gap-x-4 items-center">
+                {/* Main content — responsive grid */}
+                <div className="flex-1 min-w-0 grid grid-cols-[1fr] lg:grid-cols-[1.5fr_minmax(80px,0.5fr)_minmax(140px,1fr)_minmax(100px,0.7fr)_auto] gap-x-4 items-center">
+                    {/* Description + user */}
                     <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{display.description}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs text-muted-foreground truncate">
-                                {activity.user?.name || activity.user_email || 'System'}
-                            </span>
+                        <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium truncate">{display.description}</p>
                             {badge && (
-                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`}>
+                                <span className={`hidden sm:inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0 ${badge.className}`}>
                                     {badge.label}
                                 </span>
                             )}
                         </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-muted-foreground truncate">
+                                {activity.user?.name || activity.user_email || 'System'}
+                            </span>
+                            {activity.user?.role && (
+                                <span className="text-[10px] text-muted-foreground/60 truncate">
+                                    ({activity.user.role})
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* HTTP Method + Status */}
+                    <div className="hidden lg:flex items-center gap-2">
+                        {activity.request_method && (
+                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold ${methodColor[activity.request_method] || 'text-gray-600 bg-gray-50'}`}>
+                                {activity.request_method}
+                            </span>
+                        )}
+                        {activity.status_code && (
+                            <span className={`text-xs font-mono ${statusColor(activity.status_code)}`}>
+                                {activity.status_code}
+                            </span>
+                        )}
+                    </div>
+
+                    {/* IP + Location */}
+                    <div className="hidden lg:block min-w-0">
+                        {activity.ip_address && (
+                            <p className="text-xs font-mono text-muted-foreground truncate">
+                                {activity.ip_address}
+                            </p>
+                        )}
+                        {geo && (
+                            <p className="text-[10px] text-muted-foreground/70 truncate">
+                                {countryFlag(activity.geo_country)} {geo}
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Browser + Device */}
+                    <div className="hidden lg:flex items-center gap-1.5 min-w-0">
+                        <DeviceIcon className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                        <span className="text-xs text-muted-foreground truncate">
+                            {activity.browser || activity.device_type || '—'}
+                        </span>
                     </div>
 
                     {/* Timestamp */}
@@ -173,9 +260,9 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
             {/* Expanded detail panel */}
             {isExpanded && (
                 <div className="px-4 pb-4 pt-1 ml-[52px] mr-4">
-                    <div className="rounded-md border border-border bg-muted/30 p-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm">
-                            {/* User info */}
+                    <div className="rounded-md border border-border bg-muted/30 p-4 space-y-4">
+                        {/* Section: User & Identity */}
+                        <DetailSection title="User & Identity">
                             <DetailField
                                 icon={<User className="h-3.5 w-3.5" />}
                                 label="User"
@@ -188,15 +275,141 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
                                     value={activity.user.email}
                                 />
                             )}
+                            {activity.user?.role && (
+                                <DetailField
+                                    icon={<Shield className="h-3.5 w-3.5" />}
+                                    label="Role"
+                                    value={activity.user.role}
+                                />
+                            )}
+                        </DetailSection>
+
+                        {/* Section: Request */}
+                        <DetailSection title="Request">
+                            {activity.request_method && (
+                                <DetailField
+                                    icon={<ArrowRight className="h-3.5 w-3.5" />}
+                                    label="Method"
+                                    value={activity.request_method}
+                                    mono
+                                />
+                            )}
+                            {activity.request_path && (
+                                <DetailField
+                                    icon={<Link2 className="h-3.5 w-3.5" />}
+                                    label="Path"
+                                    value={activity.request_path}
+                                    mono
+                                />
+                            )}
+                            {activity.status_code && (
+                                <DetailField
+                                    icon={<Hash className="h-3.5 w-3.5" />}
+                                    label="Status Code"
+                                    value={`${activity.status_code}`}
+                                    mono
+                                    className={statusColor(activity.status_code)}
+                                />
+                            )}
+                            {activity.content_type && (
+                                <DetailField
+                                    icon={<FileText className="h-3.5 w-3.5" />}
+                                    label="Content Type"
+                                    value={activity.content_type}
+                                    mono
+                                />
+                            )}
+                            {activity.duration_ms != null && (
+                                <DetailField
+                                    icon={<Gauge className="h-3.5 w-3.5" />}
+                                    label="Duration"
+                                    value={`${Number(activity.duration_ms).toFixed(1)} ms`}
+                                    mono
+                                />
+                            )}
+                            {activity.referrer && (
+                                <DetailField
+                                    icon={<Link2 className="h-3.5 w-3.5" />}
+                                    label="Referrer"
+                                    value={activity.referrer}
+                                    mono
+                                />
+                            )}
+                            {activity.origin && (
+                                <DetailField
+                                    icon={<Globe className="h-3.5 w-3.5" />}
+                                    label="Origin"
+                                    value={activity.origin}
+                                    mono
+                                />
+                            )}
+                        </DetailSection>
+
+                        {/* Section: Network & Location */}
+                        <DetailSection title="Network & Location">
                             {activity.ip_address && (
                                 <DetailField
                                     icon={<Monitor className="h-3.5 w-3.5" />}
                                     label="IP Address"
                                     value={activity.ip_address}
+                                    mono
                                 />
                             )}
+                            {geo && (
+                                <DetailField
+                                    icon={<MapPin className="h-3.5 w-3.5" />}
+                                    label="Location"
+                                    value={`${countryFlag(activity.geo_country) || ''} ${geo}`}
+                                />
+                            )}
+                            {activity.cf_ray && (
+                                <DetailField
+                                    icon={<Server className="h-3.5 w-3.5" />}
+                                    label="CF-Ray"
+                                    value={activity.cf_ray}
+                                    mono
+                                />
+                            )}
+                        </DetailSection>
 
-                            {/* Event info */}
+                        {/* Section: Device & Browser */}
+                        <DetailSection title="Device & Browser">
+                            {activity.browser && (
+                                <DetailField
+                                    icon={<Globe className="h-3.5 w-3.5" />}
+                                    label="Browser"
+                                    value={activity.browser}
+                                />
+                            )}
+                            {activity.os && (
+                                <DetailField
+                                    icon={<Laptop className="h-3.5 w-3.5" />}
+                                    label="Operating System"
+                                    value={activity.os}
+                                />
+                            )}
+                            {activity.device_type && (
+                                <DetailField
+                                    icon={(() => { const DI = deviceIcon[activity.device_type] || Laptop; return <DI className="h-3.5 w-3.5" /> })()}
+                                    label="Device Type"
+                                    value={activity.device_type}
+                                />
+                            )}
+                            {activity.user_agent && (
+                                <div className="col-span-full">
+                                    <DetailField
+                                        icon={<FileText className="h-3.5 w-3.5" />}
+                                        label="User Agent"
+                                        value={activity.user_agent}
+                                        mono
+                                        wrap
+                                    />
+                                </div>
+                            )}
+                        </DetailSection>
+
+                        {/* Section: Event info */}
+                        <DetailSection title="Event">
                             <DetailField
                                 icon={<Shield className="h-3.5 w-3.5" />}
                                 label="Event Type"
@@ -214,42 +427,73 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
                                     value={activity.resource_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                                 />
                             )}
-
-                            {/* Resource ID */}
                             {activity.resource_id && (
                                 <DetailField
-                                    icon={<Database className="h-3.5 w-3.5" />}
+                                    icon={<Hash className="h-3.5 w-3.5" />}
                                     label="Resource ID"
                                     value={activity.resource_id}
                                     mono
                                 />
                             )}
-
-                            {/* Timestamp */}
+                            {activity.incident && (
+                                <DetailField
+                                    icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                                    label="Incident"
+                                    value={activity.incident.title}
+                                />
+                            )}
                             <DetailField
                                 icon={<Clock className="h-3.5 w-3.5" />}
                                 label="Timestamp"
                                 value={formatFullTimestamp(activity.created_at)}
                             />
-                        </div>
+                        </DetailSection>
+
+                        {/* Query Parameters */}
+                        {activity.request_query_params && Object.keys(activity.request_query_params).length > 0 && (
+                            <DetailSection title="Query Parameters">
+                                <div className="col-span-full">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                                        {Object.entries(activity.request_query_params).map(([key, value]) => (
+                                            <div key={key} className="flex items-baseline gap-2 text-xs">
+                                                <span className="text-muted-foreground shrink-0 font-mono">{key}:</span>
+                                                <span className="font-mono text-foreground truncate">{String(value)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </DetailSection>
+                        )}
+
+                        {/* Request Body Summary */}
+                        {activity.request_body_summary && Object.keys(activity.request_body_summary).length > 0 && (
+                            <DetailSection title="Request Body (Summary)">
+                                <div className="col-span-full">
+                                    <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto max-h-40 text-foreground/80">
+                                        {JSON.stringify(activity.request_body_summary, null, 2)}
+                                    </pre>
+                                </div>
+                            </DetailSection>
+                        )}
 
                         {/* Details / metadata */}
                         {activity.details && Object.keys(activity.details).length > 0 && (
-                            <div className="mt-4 pt-3 border-t border-border/50">
-                                <p className="text-xs font-medium text-muted-foreground mb-2">Additional Details</p>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-                                    {Object.entries(activity.details).map(([key, value]) => (
-                                        <div key={key} className="flex items-baseline gap-2 text-xs">
-                                            <span className="text-muted-foreground shrink-0">
-                                                {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:
-                                            </span>
-                                            <span className="font-mono text-foreground truncate">
-                                                {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                                            </span>
-                                        </div>
-                                    ))}
+                            <DetailSection title="Additional Details">
+                                <div className="col-span-full">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                                        {Object.entries(activity.details).map(([key, value]) => (
+                                            <div key={key} className="flex items-baseline gap-2 text-xs">
+                                                <span className="text-muted-foreground shrink-0">
+                                                    {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:
+                                                </span>
+                                                <span className="font-mono text-foreground truncate">
+                                                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
+                            </DetailSection>
                         )}
                     </div>
                 </div>
@@ -258,18 +502,31 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
     )
 }
 
-function DetailField({ icon, label, value, mono }: {
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+    return (
+        <div className="border-b border-border/30 pb-3 last:border-b-0 last:pb-0">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{title}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+                {children}
+            </div>
+        </div>
+    )
+}
+
+function DetailField({ icon, label, value, mono, wrap, className }: {
     icon: React.ReactNode
     label: string
     value: string
     mono?: boolean
+    wrap?: boolean
+    className?: string
 }) {
     return (
         <div className="flex items-start gap-2">
             <span className="text-muted-foreground mt-0.5 shrink-0">{icon}</span>
             <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">{label}</p>
-                <p className={`text-sm truncate ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
+                <p className={`text-sm ${mono ? 'font-mono text-xs' : ''} ${wrap ? 'break-all' : 'truncate'} ${className || ''}`}>{value}</p>
             </div>
         </div>
     )

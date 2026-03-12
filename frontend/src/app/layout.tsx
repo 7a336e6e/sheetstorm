@@ -29,6 +29,9 @@ const spaceGrotesk = Space_Grotesk({
 export const metadata: Metadata = {
   title: 'SheetStorm - Incident Response Platform',
   description: 'Full-stack incident response timeline, activity, artifact, and task tracker',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
@@ -25,25 +25,13 @@ import { formatDateTime } from '@/lib/utils'
 import api from '@/lib/api'
 import type { TimelineEvent, CompromisedHost } from '@/types'
 import {
-    Clock, Server, Shield, ChevronDown, ChevronUp, Plus,
-    Tag, Eye, ShieldAlert, Loader2, Star,
+    Clock, Server, ChevronDown, ChevronUp, Plus,
+    Tag, Eye, Star,
 } from 'lucide-react'
-import { useToast } from '@/components/ui/use-toast'
 
 interface IOCVisualTimelineProps {
     incidentId: string
 }
-
-const ARTIFACT_TYPES = [
-    { value: 'file', label: 'File' },
-    { value: 'registry', label: 'Registry Key' },
-    { value: 'process', label: 'Process' },
-    { value: 'service', label: 'Service' },
-    { value: 'scheduled_task', label: 'Scheduled Task' },
-    { value: 'user_account', label: 'User Account' },
-    { value: 'log_entry', label: 'Log Entry' },
-    { value: 'other', label: 'Other' },
-]
 
 const tacticColor: Record<string, string> = {
     'reconnaissance': 'text-blue-400',
@@ -74,11 +62,10 @@ function getTacticColor(tactic: string | undefined | null): string {
 }
 
 export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
-    const { toast } = useToast()
     const [allEvents, setAllEvents] = useState<TimelineEvent[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [expanded, setExpanded] = useState<string | null>(null)
-    const [filterMode, setFilterMode] = useState<'pinned' | 'ioc' | 'all'>('pinned')
+    const [filterMode, setFilterMode] = useState<'pinned' | 'all'>('pinned')
     const [hosts, setHosts] = useState<CompromisedHost[]>([])
 
     // Add event dialog
@@ -92,11 +79,88 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
         mitre_technique: '',
     })
 
-    // Mark as IOC dialog
-    const [showIocModal, setShowIocModal] = useState(false)
-    const [iocEvent, setIocEvent] = useState<TimelineEvent | null>(null)
-    const [iocForm, setIocForm] = useState({ artifact_type: 'other', notes: '', is_malicious: true })
-    const [iocSubmitting, setIocSubmitting] = useState(false)
+    // MITRE ATT&CK form data
+    const [tactics, setTactics] = useState<{ id: string; name: string; slug: string }[]>([])
+    const [techByTactic, setTechByTactic] = useState<Record<string, { id: string; name: string }[]>>({})
+    const [techToTactic, setTechToTactic] = useState<Record<string, string>>({})
+    const [allTechniques, setAllTechniques] = useState<{ id: string; name: string }[]>([])
+    const [techSearch, setTechSearch] = useState('')
+
+    // Fetch MITRE ATT&CK form data once on dialog open
+    useEffect(() => {
+        if (!showAddModal || tactics.length > 0) return
+        api.get<{
+            tactics: { id: string; name: string; slug: string }[]
+            technique_by_tactic: Record<string, { id: string; name: string }[]>
+            technique_to_tactic: Record<string, string>
+        }>('/knowledge-base/mitre-attack/form-data').then(data => {
+            setTactics(data.tactics)
+            setTechByTactic(data.technique_by_tactic)
+            setTechToTactic(data.technique_to_tactic)
+            const all: { id: string; name: string }[] = []
+            const seen = new Set<string>()
+            for (const techs of Object.values(data.technique_by_tactic)) {
+                for (const t of techs) {
+                    if (!seen.has(t.id)) { seen.add(t.id); all.push(t) }
+                }
+            }
+            all.sort((a, b) => a.id.localeCompare(b.id))
+            setAllTechniques(all)
+        }).catch(() => {})
+    }, [showAddModal, tactics.length])
+
+    // Techniques available for the selected tactic (or all if none selected)
+    const availableTechniques = useMemo(() => {
+        if (form.mitre_tactic && techByTactic[form.mitre_tactic]) {
+            return techByTactic[form.mitre_tactic]
+        }
+        return allTechniques
+    }, [form.mitre_tactic, techByTactic, allTechniques])
+
+    // Filtered techniques based on search input
+    const filteredTechniques = useMemo(() => {
+        if (!techSearch) return availableTechniques.slice(0, 50)
+        const q = techSearch.toLowerCase()
+        return availableTechniques.filter(
+            t => t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
+        ).slice(0, 50)
+    }, [availableTechniques, techSearch])
+
+    // Handle tactic change — clear technique if it doesn't belong
+    const handleTacticChange = (slug: string) => {
+        const techs = techByTactic[slug] || []
+        const currentTechInNewTactic = techs.some(t => t.id === form.mitre_technique)
+        setForm({
+            ...form,
+            mitre_tactic: slug,
+            mitre_technique: currentTechInNewTactic ? form.mitre_technique : '',
+        })
+        setTechSearch('')
+    }
+
+    // Handle technique selection — auto-select tactic
+    const handleTechniqueSelect = (techId: string) => {
+        const tacticSlug = techToTactic[techId]
+        setForm({
+            ...form,
+            mitre_technique: techId,
+            mitre_tactic: tacticSlug || form.mitre_tactic,
+        })
+        setTechSearch('')
+    }
+
+    // Handle manual technique ID input — auto-resolve tactic
+    const handleTechniqueInput = (value: string) => {
+        const upper = value.toUpperCase().trim()
+        setTechSearch(value)
+        setForm(prev => ({
+            ...prev,
+            mitre_technique: upper,
+            mitre_tactic: techToTactic[upper] || prev.mitre_tactic,
+        }))
+    }
+
+
 
     useEffect(() => {
         if (incidentId) loadData()
@@ -121,13 +185,10 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
         }
     }
 
-    const events = filterMode === 'ioc'
-        ? allEvents.filter(e => e.is_ioc)
-        : filterMode === 'pinned'
-            ? allEvents.filter(e => e.is_key_event || e.is_ioc)
-            : allEvents
-    const iocCount = allEvents.filter(e => e.is_ioc).length
-    const pinnedCount = allEvents.filter(e => e.is_key_event || e.is_ioc).length
+    const events = filterMode === 'pinned'
+        ? allEvents.filter(e => e.is_key_event)
+        : allEvents
+    const pinnedCount = allEvents.filter(e => e.is_key_event).length
 
     const handleAddEvent = async () => {
         if (!form.timestamp || !form.activity) return
@@ -150,26 +211,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
         }
     }
 
-    const handleMarkAsIOC = async () => {
-        if (!iocEvent) return
-        setIocSubmitting(true)
-        try {
-            await api.post(`/incidents/${incidentId}/timeline/${iocEvent.id}/mark-as-ioc`, {
-                artifact_type: iocForm.artifact_type,
-                notes: iocForm.notes || undefined,
-                is_malicious: iocForm.is_malicious,
-            })
-            toast({ title: 'IOC Created', description: 'Event marked as IOC and host-based indicator created.' })
-            setShowIocModal(false)
-            setIocEvent(null)
-            loadData()
-        } catch (error: any) {
-            toast({ title: 'Error', description: error?.message || 'Failed to mark as IOC', variant: 'destructive' })
-        } finally {
-            setIocSubmitting(false)
-        }
-    }
-
     if (isLoading) {
         return <div className="py-6 text-center text-sm text-muted-foreground animate-pulse">Loading timeline...</div>
     }
@@ -187,13 +228,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                 onClick={() => setFilterMode('pinned')}
                             >
                                 <Star className="mr-1.5 h-3.5 w-3.5" /> Pinned ({pinnedCount})
-                            </Button>
-                            <Button
-                                variant={filterMode === 'ioc' ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => setFilterMode('ioc')}
-                            >
-                                <Shield className="mr-1.5 h-3.5 w-3.5" /> IOCs Only ({iocCount})
                             </Button>
                             <Button
                                 variant={filterMode === 'all' ? 'default' : 'outline'}
@@ -215,14 +249,12 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                 <div className="py-10 text-center border border-dashed border-black/10 dark:border-white/10 rounded-lg">
                     <Clock className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
                     <p className="text-sm font-medium text-foreground">
-                        {filterMode === 'ioc' ? 'No IOC Events' : filterMode === 'pinned' ? 'No Pinned Events' : 'No Timeline Events'}
+                        {filterMode === 'pinned' ? 'No Pinned Events' : 'No Timeline Events'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                        {filterMode === 'ioc'
-                            ? 'Mark events as IOCs to populate this view.'
-                            : filterMode === 'pinned'
-                                ? 'Pin events from the Events tab using the ★ icon to build your timeline.'
-                                : 'Add events from the Events tab or click "Add Event" above.'
+                        {filterMode === 'pinned'
+                            ? 'Pin events from the Events tab using the ★ icon to build your timeline.'
+                            : 'Add events from the Events tab or click "Add Event" above.'
                         }
                     </p>
                 </div>
@@ -237,13 +269,11 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                             const isIoc = event.is_ioc
                             return (
                                 <li key={event.id} className="relative group">
-                                    {/* Dot — red for IOC, amber for pinned, cyan for normal */}
+                                    {/* Dot — amber for pinned, cyan for normal */}
                                     <div className={`absolute -left-[13px] top-[11px] w-2 h-2 rounded-full ring-2 ring-background z-10 transition-colors ${
-                                        isIoc
-                                            ? 'bg-red-500/80 group-hover:bg-red-400'
-                                            : event.is_key_event
-                                                ? 'bg-amber-400/80 group-hover:bg-amber-300'
-                                                : 'bg-cyan-500/80 group-hover:bg-cyan-400'
+                                        event.is_key_event
+                                            ? 'bg-amber-400/80 group-hover:bg-amber-300'
+                                            : 'bg-cyan-500/80 group-hover:bg-cyan-400'
                                     }`} />
 
                                     <button
@@ -311,21 +341,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                                     <span><strong className="text-foreground/70">Kill Chain:</strong> {event.kill_chain_phase}</span>
                                                 )}
                                             </div>
-                                            {!isIoc && (
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="text-amber-500 hover:text-amber-400 h-6 text-xs px-2"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        setIocEvent(event)
-                                                        setIocForm({ artifact_type: 'other', notes: '', is_malicious: true })
-                                                        setShowIocModal(true)
-                                                    }}
-                                                >
-                                                    <ShieldAlert className="w-3 h-3 mr-1" /> Mark as IOC
-                                                </Button>
-                                            )}
                                         </div>
                                     )}
                                 </li>
@@ -337,9 +352,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                     <div className="mt-4 pt-3 border-t border-black/5 dark:border-white/5 flex items-center gap-4 text-[11px] text-muted-foreground/60">
                         <span className="flex items-center gap-1">
                             <Star className="h-3 w-3" /> {pinnedCount} pinned
-                        </span>
-                        <span className="flex items-center gap-1">
-                            <Shield className="h-3 w-3" /> {iocCount} IOC{iocCount !== 1 ? 's' : ''}
                         </span>
                         <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" /> {allEvents.length} total
@@ -381,27 +393,42 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>MITRE Tactic</Label>
-                                <Select value={form.mitre_tactic} onValueChange={v => setForm({ ...form, mitre_tactic: v })}>
-                                    <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
+                                <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
+                                    <SelectTrigger variant="glass"><SelectValue placeholder="Select Tactic" /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="initial-access">Initial Access</SelectItem>
-                                        <SelectItem value="execution">Execution</SelectItem>
-                                        <SelectItem value="persistence">Persistence</SelectItem>
-                                        <SelectItem value="privilege-escalation">Privilege Escalation</SelectItem>
-                                        <SelectItem value="defense-evasion">Defense Evasion</SelectItem>
-                                        <SelectItem value="credential-access">Credential Access</SelectItem>
-                                        <SelectItem value="discovery">Discovery</SelectItem>
-                                        <SelectItem value="lateral-movement">Lateral Movement</SelectItem>
-                                        <SelectItem value="collection">Collection</SelectItem>
-                                        <SelectItem value="command-and-control">C2</SelectItem>
-                                        <SelectItem value="exfiltration">Exfiltration</SelectItem>
-                                        <SelectItem value="impact">Impact</SelectItem>
+                                        {tactics.map(t => (
+                                            <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>
                             <div className="space-y-2">
                                 <Label>Technique ID</Label>
-                                <Input value={form.mitre_technique} onChange={e => setForm({ ...form, mitre_technique: e.target.value })} placeholder="T1059" variant="glass" />
+                                <div className="relative">
+                                    <Input
+                                        value={techSearch || form.mitre_technique}
+                                        onChange={e => handleTechniqueInput(e.target.value)}
+                                        placeholder="Search T1059 or name..."
+                                        variant="glass"
+                                        onFocus={() => setTechSearch(form.mitre_technique)}
+                                        onBlur={() => setTimeout(() => setTechSearch(''), 200)}
+                                    />
+                                    {techSearch && filteredTechniques.length > 0 && (
+                                        <div className="absolute z-50 top-full mt-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                            {filteredTechniques.map(t => (
+                                                <button
+                                                    key={t.id}
+                                                    type="button"
+                                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                                                    onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
+                                                >
+                                                    <span className="font-mono text-muted-foreground">{t.id}</span>
+                                                    <span className="truncate">{t.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </DialogBody>
@@ -412,61 +439,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                 </DialogContent>
             </Dialog>
 
-            {/* Mark as IOC Dialog */}
-            <Dialog open={showIocModal} onOpenChange={setShowIocModal}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Mark Event as IOC</DialogTitle>
-                    </DialogHeader>
-                    <DialogBody className="space-y-4">
-                        {iocEvent && (
-                            <div className="p-3 rounded-md bg-muted/50 text-sm">
-                                <p className="font-medium truncate">{iocEvent.activity}</p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    {formatDateTime(iocEvent.timestamp)}
-                                    {iocEvent.hostname && ` · ${iocEvent.hostname}`}
-                                </p>
-                            </div>
-                        )}
-                        <div className="space-y-2">
-                            <Label>Artifact Type</Label>
-                            <Select value={iocForm.artifact_type} onValueChange={v => setIocForm({ ...iocForm, artifact_type: v })}>
-                                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    {ARTIFACT_TYPES.map(t => (
-                                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Notes (optional)</Label>
-                            <Textarea
-                                value={iocForm.notes}
-                                onChange={e => setIocForm({ ...iocForm, notes: e.target.value })}
-                                placeholder="Additional context about this indicator..."
-                                variant="glass"
-                            />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={iocForm.is_malicious}
-                                onChange={e => setIocForm({ ...iocForm, is_malicious: e.target.checked })}
-                                className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
-                            />
-                            <Label>Confirmed malicious</Label>
-                        </div>
-                    </DialogBody>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowIocModal(false)}>Cancel</Button>
-                        <Button onClick={handleMarkAsIOC} disabled={iocSubmitting}>
-                            {iocSubmitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                            Create IOC
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     )
 }

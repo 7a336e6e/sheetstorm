@@ -1,110 +1,137 @@
 <p align="center">
   <h1 align="center">⚡ SheetStorm</h1>
   <p align="center">
-    <strong>Kill the Spreadsheet of Doom.</strong>
+    <strong>Free & Open-Source Incident Response Platform</strong>
     <br />
-    Full-stack incident response platform with attack graphs, MITRE ATT&CK, AI reports, and real-time collaboration.
-    <br />
-    <em>Because your IR workflow deserves better than a shared Excel file.</em>
+    Track incidents, map attack paths, collaborate in real time, and generate AI-powered reports — all in one place.
+    <br /><br />
+    <a href="https://github.com/7a336e6e/sheetstorm/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+    <a href="https://github.com/7a336e6e/sheetstorm"><img src="https://img.shields.io/github/stars/7a336e6e/sheetstorm?style=social" alt="Stars" /></a>
   </p>
 </p>
 
-<p align="center">
-  <a href="assets/docs/api-reference.md">API Reference</a> ·
-  <a href="assets/docs/architecture.md">Architecture</a> ·
-  <a href="assets/docs/development.md">Development</a> ·
-  <a href="assets/docs/configuration.md">Configuration</a> ·
-  <a href="assets/docs/mcp-server-roadmap.md">MCP Server</a>
-</p>
+<br />
 
----
+## Why SheetStorm?
 
-## What is SheetStorm?
+Many security teams still rely on shared spreadsheets to coordinate during incidents. They're familiar, fast to set up, and everyone knows how to use them. That approach works — until it doesn't. Concurrent edits, lost context, no audit trail, and zero integration with the tools responders actually need.
 
-SheetStorm replaces the infamous "Spreadsheet of Doom" — the shared Excel workbook that security teams reluctantly use during incident response — with a purpose-built platform covering the full IR lifecycle:
+SheetStorm is a **free, open-source alternative** purpose-built for DFIR practitioners. It covers the full incident response lifecycle and is designed to be useful whether you're a **solo analyst learning the ropes**, a **training lab instructor**, or running an **enterprise SOC**.
 
 ```
 Preparation → Identification → Containment → Eradication → Recovery → Lessons Learned
 ```
 
-<br />
+> SheetStorm doesn't aim to replace commercial SOAR platforms. It fills the gap between ad-hoc spreadsheets and heavyweight enterprise tools — giving every responder access to structured, collaborative IR for free.
 
-<table>
-<tr>
-<td width="50%">
+---
 
-### 🔍 Investigate
-- Track compromised hosts, accounts, and IOCs
-- Map MITRE ATT&CK tactics & techniques
-- Import evidence from Excel/CSV spreadsheets
-- Chain of custody for forensic artifacts
+## What You Get
 
-</td>
-<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/incident_phases.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/incident_phases.png">
+  <img alt="Incident phase management" src="assets/images/dark_mode/incident_phases.png" width="100%">
+</picture>
 
-### 🕸️ Visualize
-- Auto-generated attack graphs from incident data
-- 11 node types · 12 edge types · interactive layout
-- Real-time graph sync between team members
-- Export to PNG
+<br /><br />
 
-</td>
-</tr>
-<tr>
-<td width="50%">
+### 🔍 Investigate & Track
 
-### 🤖 Report
-- AI-powered reports (OpenAI GPT-4 / Google Gemini)
-- Executive, metrics, IOC analysis, and trend reports
-- PDF generation with styled HTML
-- Auto-save to Google Drive case folders
+Track compromised hosts, accounts, network and host IOCs, and malware samples. Map findings to MITRE ATT&CK tactics and techniques. Import existing data from Excel or CSV.
 
-</td>
-<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/host_tracking.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/host_tracking.png">
+  <img alt="Host tracking" src="assets/images/dark_mode/host_tracking.png" width="100%">
+</picture>
 
-### 🛡️ Secure
-- 6 RBAC roles with 40+ granular permissions
-- MFA/TOTP with backup codes
-- SSO configuration (SAML/OIDC)
-- Fernet-encrypted credential storage
-- Full audit trail
+<br /><br />
 
-</td>
-</tr>
-<tr>
-<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/account_tracking.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/account_tracking.png">
+  <img alt="Account tracking" src="assets/images/dark_mode/account_tracking.png" width="100%">
+</picture>
 
-### 🔎 Threat Intelligence
-- CVE lookup with CISA KEV + CVSS scoring
-- IP, domain, email reputation lookups
-- Ransomware victim search (ransomware.live)
-- IOC defanging/refanging for safe sharing
-- Auto-enrichment when integrations configured
+<br /><br />
 
-</td>
-<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/malware_tracking.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/malware_tracking.png">
+  <img alt="Malware tracking" src="assets/images/dark_mode/malware_tracking.png" width="100%">
+</picture>
 
-### 📚 Knowledge Base
-- LOLBAS — living-off-the-land binaries & scripts
-- 65+ security-relevant Windows Event IDs
-- MITRE D3FEND defensive countermeasures
-- D3FEND ↔ ATT&CK suggestion engine
+<br /><br />
 
-</td>
-</tr>
-<tr>
-<td colspan="2">
+### 📋 Timeline & Evidence
 
-### 🤖 MCP Server — AI Assistant Integration
-- **70+ tools** across 17 modules for full platform control via natural language
-- Claude, Cursor, and custom AI agents can query incidents, enrich IOCs, build attack graphs, and generate reports
-- SSE transport with OAuth 2.1 authentication and Redis-backed client persistence
-- 5 IR-focused prompt templates (incident analysis, timeline summary, MITRE mapping, lateral movement, executive summary)
-- 5 reference data resources (IR phases, severities, statuses, MITRE tactics & techniques)
+Build a chronological event timeline with kill-chain phase tagging and MITRE ATT&CK mapping. Store artifacts with hash verification and full chain of custody.
 
-</td>
-</tr>
-</table>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/expanded_event_entry.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/expanded_event_entry.png">
+  <img alt="Timeline event entry" src="assets/images/dark_mode/expanded_event_entry.png" width="100%">
+</picture>
+
+<br /><br />
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/artifact_storage.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/artifact_storage.png">
+  <img alt="Artifact storage" src="assets/images/dark_mode/artifact_storage.png" width="100%">
+</picture>
+
+<br /><br />
+
+### 🕸️ MITRE ATT&CK Coverage
+
+Automatically map incident activity to MITRE ATT&CK and visualize your coverage across tactics and techniques.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/mitre_att&ck_coverage.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/mitre_att&ck_coverage.png">
+  <img alt="MITRE ATT&CK coverage" src="assets/images/dark_mode/mitre_att&ck_coverage.png" width="100%">
+</picture>
+
+<br /><br />
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/mitre_att&ck_coverage_expanded.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/mitre_att&ck_coverage_expanded.png">
+  <img alt="MITRE ATT&CK expanded view" src="assets/images/dark_mode/mitre_att&ck_coverage_expanded.png" width="100%">
+</picture>
+
+<br /><br />
+
+### 🔎 Threat Intelligence & Knowledge Base
+
+Look up CVEs (CISA KEV + CVSS), IP/domain/email reputation, and ransomware victims. Access built-in knowledge bases for LOLBAS, Windows Event IDs, and MITRE D3FEND defensive countermeasures.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/threat_intelligence.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/threat_intelligence.png">
+  <img alt="Threat intelligence" src="assets/images/dark_mode/threat_intelligence.png" width="100%">
+</picture>
+
+<br /><br />
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/knowledge_base.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/knowledge_base.png">
+  <img alt="Knowledge base" src="assets/images/dark_mode/knowledge_base.png" width="100%">
+</picture>
+
+<br /><br />
+
+### And More
+
+- **AI-Powered Reports** — generate executive summaries, IOC analysis, metrics, and trend reports via OpenAI GPT-4 or Google Gemini, with PDF export and Google Drive auto-save.
+- **Attack Graph Visualization** — auto-generated interactive attack graphs with 11 node types and 12 edge types, real-time sync between team members.
+- **Real-time Collaboration** — WebSocket-powered live updates, so your entire team sees changes as they happen.
+- **RBAC & Security** — 6 roles with 40+ granular permissions, MFA/TOTP, SSO (SAML/OIDC), encrypted credential storage, and full audit trail.
+- **MCP Server** — 70+ tools for AI assistant integration (Claude, Cursor, custom agents) with OAuth 2.1 auth.
+- **IOC Management** — defang/refang IOCs for safe sharing, auto-enrichment when integrations are configured.
 
 ---
 
@@ -115,118 +142,46 @@ git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
 chmod +x start.sh && ./start.sh
 ```
 
-That's it. The script generates secrets, builds 6 Docker containers, runs migrations, and seeds an admin user.
+That's it. The script generates secrets, builds the Docker containers, runs migrations, and seeds an admin user.
 
 | Service    | URL                              |
 |------------|----------------------------------|
-| Frontend   | http://127.0.0.1:3000            |
-| API        | http://127.0.0.1:5000/api/v1     |
-| MCP Server | http://127.0.0.1:8811/sse        |
+| Frontend   | `http://127.0.0.1:3000`         |
+| API        | `http://127.0.0.1:5000/api/v1`  |
+| MCP Server | `http://127.0.0.1:8811/sse`     |
 
-> **Default login:** `admin@sheetstorm.local` · password in `ADMIN_PASSWORD` from `.env`
+> **Default login:** `admin@sheetstorm.local` — password is the value of `ADMIN_PASSWORD` in your `.env` file (default: `changeme`).
 
----
+### Requirements
 
-## Tech Stack
+- Docker & Docker Compose
+- ~2 GB RAM for all services
+- Ports 3000, 5000, 8811 available
 
-| Layer          | Stack |
-|----------------|-------|
-| **Frontend**   | Next.js 14 · TypeScript · Tailwind CSS · Zustand · React Flow · Radix UI · Framer Motion |
-| **Backend**    | Flask 3.0 · SQLAlchemy · Flask-SocketIO · Flask-JWT-Extended · WeasyPrint · pandas |
-| **MCP Server** | Python 3.12 · FastMCP SDK · httpx · SSE transport · OAuth 2.1 |
-| **Database**   | PostgreSQL 16 · Redis 7 |
-| **AI**         | OpenAI GPT-4 · Google Gemini Pro |
-| **Infra**      | Docker Compose · Nginx · S3 · Google Drive · Slack |
+### Optional Integrations
 
----
+SheetStorm works fully standalone. For enhanced capabilities, you can configure:
 
-## Project Status
+- **OpenAI / Google Gemini** — AI-powered report generation
+- **VirusTotal** — file and IOC reputation lookups
+- **MISP** — IOC sharing with threat intel platforms
+- **Google Drive** — auto-save reports to case folders
+- **Slack** — incident notifications
+- **S3-compatible storage** — artifact storage
 
-**76 / 84** tasks completed across 15 epics.
-
-| Epic | Status |
-|------|--------|
-| Critical bug fixes | ✅ 6/6 |
-| Attack graph auto-linking | ✅ 2/2 |
-| WebSocket real-time | ✅ 3/3 |
-| Frontend features (artifacts, reports, notifications, admin) | ✅ 7/7 |
-| Code quality (hooks, error boundaries, validation, stores) | ✅ 8/8 |
-| Security (MFA, SSO, sanitization, rate limiting, OAuth MFA) | ✅ 6/6 |
-| Backend documentation | ✅ 1/1 |
-| AI reports & Google Drive | ✅ 4/4 |
-| Integrations expansion (25 types, test buttons, DB config) | ✅ 4/4 |
-| RBAC & team-based access control | ✅ 2/2 |
-| Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
-| Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
-| Auto-enrichment & soft fallback | ✅ 1/1 |
-| MCP server (70+ tools, 5 prompts, 5 resources, OAuth, Docker) | ✅ 20/20 |
-| Testing | 🔜 0/4 deferred |
+See the [Configuration Guide](assets/docs/configuration.md) for details.
 
 ---
 
-## MCP Server
+## Who Is This For?
 
-SheetStorm includes a fully operational **Model Context Protocol (MCP) server** that enables AI assistants (Claude, Cursor, custom agents) to interact with the incident response platform through natural language.
-
-```
-AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Server  ──── REST + JWT ────►  Flask Backend
-```
-
-### Capabilities
-
-| Module | Tools | Description |
-|--------|-------|-------------|
-| **auth** | 3 | Login, logout, session info |
-| **incidents** | 7 | Full incident CRUD + search |
-| **timeline** | 6 | Timeline events + MITRE tactic/technique lookup |
-| **tasks** | 7 | Task management with comments |
-| **assets** | 8 | Compromised hosts + accounts |
-| **iocs** | 9 | Network IOCs, host IOCs, malware |
-| **artifacts** | 5 | Evidence upload/download + chain of custody |
-| **attack_graph** | 9 | Nodes, edges, auto-generation |
-| **reports** | 3 | PDF + AI report generation |
-| **admin** | 5 | Users, notifications, audit logs |
-| **case_notes** | 5 | Case note CRUD |
-| **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |
-| **knowledge_base** | 4 | LOLBAS, Event IDs, D3FEND |
-| **defang** | 2 | IOC defanging/refanging |
-| **prompts** | 5 | IR analysis templates |
-| **resources** | 5 | Reference data (phases, severities, MITRE) |
-
-**Transport:** SSE on port 8811 · **Auth:** OAuth 2.1 with Redis-backed client persistence · **Runtime:** Python 3.12 + FastMCP SDK
-
-> See [MCP Server Roadmap](assets/docs/mcp-server-roadmap.md) for full tool reference, future phases (Velociraptor, cross-incident correlation), and architecture details.
-
----
-
-## Roadmap
-
-| Priority | Feature | Status |
-|----------|---------|--------|
-| P0 | MFA enforcement on OAuth flows (GitHub/Supabase) | ✅ Done |
-| P0 | Team-based incident access restrictions | ✅ Done |
-| P0 | Roles management admin page | ✅ Done |
-| P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
-| P1 | Case notes & kill chain phase per event | ✅ Done |
-| P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
-| P1 | MCP server for AI assistant integration (70+ tools) | ✅ Done |
-| P1 | Test suite — pytest · Vitest · Playwright | 🔜 Planned |
-| P1 | CI/CD — GitHub Actions | 🔜 Planned |
-| P1 | CVE lookup (CISA KEV + NVD) | ✅ Done |
-| P1 | IP / domain / email reputation lookups | ✅ Done |
-| P1 | IOC defanging for safe sharing | ✅ Done |
-| P1 | Ransomware victim lookup (ransomware.live) | ✅ Done |
-| P1 | LOLBAS knowledge base | ✅ Done |
-| P1 | Windows Event ID knowledge base | ✅ Done |
-| P1 | MITRE D3FEND defensive countermeasure mapping | ✅ Done |
-| P1 | Auto-enrichment service with soft fallback | ✅ Done |
-| P2 | MITRE ATT&CK navigator heatmap | 🔜 Planned |
-| P2 | Lateral movement graph visualization | 🔜 Planned |
-| P2 | Incident templates (ransomware, phishing, insider threat) | 🔜 Planned |
-| P3 | VERIS incident classification & reporting | 🔜 Planned |
-| P3 | Dashboard analytics & MTTR charts | 🔜 Planned |
-| P3 | STIX 2.1 export | 🔜 Planned |
-| P3 | Activity distribution plots | 🔜 Planned |
+| Use Case | How SheetStorm Helps |
+|----------|----------------------|
+| **DFIR Training & Labs** | Hands-on IR lifecycle practice with a realistic platform — no vendor licenses needed. |
+| **Small Security Teams** | Structured incident management without the overhead of enterprise SOAR. |
+| **Enterprise SOCs** | Self-hosted, extensible IR platform that integrates with existing tools via API and MCP. |
+| **CTF & Competitions** | Collaborative incident tracking for blue team exercises. |
+| **Solo Analysts** | Organize your investigations with proper evidence handling and timeline tracking. |
 
 ---
 
@@ -234,12 +189,19 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 
 | Doc | Description |
 |-----|-------------|
-| [Architecture](assets/docs/architecture.md) | System design, tech stack, project structure, design system |
+| [Architecture](assets/docs/architecture.md) | System design, tech stack, project structure |
 | [API Reference](assets/docs/api-reference.md) | All REST endpoints with methods and descriptions |
 | [WebSocket Events](assets/docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
-| [Configuration](assets/docs/configuration.md) | Environment variables and database schema |
+| [Configuration](assets/docs/configuration.md) | Environment variables and service configuration |
 | [Development](assets/docs/development.md) | Setup guide, useful commands, migration workflow |
-| [MCP Server Roadmap](assets/docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and future phases |
+| [MCP Server](assets/docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and architecture |
+| [Roadmap](assets/docs/roadmap.md) | Project status, planned features, and tech stack details |
+
+---
+
+## Contributing
+
+Contributions are welcome. Whether it's bug reports, feature requests, documentation improvements, or code — open an issue or submit a PR.
 
 ---
 

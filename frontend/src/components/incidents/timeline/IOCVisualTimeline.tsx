@@ -1,7 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useMemo, memo, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useState, useCallback, useMemo, memo } from 'react'
 import {
     ReactFlow,
     Background,
@@ -700,15 +699,6 @@ function AddEventDialog({
     const [techToTactic, setTechToTactic] = useState<Record<string, string>>({})
     const [allTechniques, setAllTechniques] = useState<{ id: string; name: string }[]>([])
     const [techSearch, setTechSearch] = useState('')
-    const techInputRef = useRef<HTMLInputElement>(null)
-    const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
-
-    // Recompute dropdown position when the input is focused / search changes
-    const updateDropdownPos = useCallback(() => {
-        if (!techInputRef.current) return
-        const rect = techInputRef.current.getBoundingClientRect()
-        setDropdownPos({ top: rect.top, left: rect.left, width: rect.width })
-    }, [])
 
     // Fetch form data once on open
     useEffect(() => {
@@ -845,23 +835,14 @@ function AddEventDialog({
                             <Label>Technique ID</Label>
                             <div className="relative">
                                 <Input
-                                    ref={techInputRef}
                                     value={techSearch || form.mitre_technique}
-                                    onChange={e => { handleTechniqueInput(e.target.value); updateDropdownPos() }}
+                                    onChange={e => { handleTechniqueInput(e.target.value) }}
                                     placeholder="Search T1059 or name..."
-                                    onFocus={() => { setTechSearch(form.mitre_technique); setTimeout(updateDropdownPos, 0) }}
-                                    onBlur={() => setTimeout(() => { setTechSearch(''); setDropdownPos(null) }, 200)}
+                                    onFocus={() => setTechSearch(form.mitre_technique)}
+                                    onBlur={() => setTimeout(() => setTechSearch(''), 200)}
                                 />
-                                {techSearch && filteredTechniques.length > 0 && dropdownPos && createPortal(
-                                    <div
-                                        className="fixed z-[9999] max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg"
-                                        style={{
-                                            top: dropdownPos.top - 4,
-                                            left: dropdownPos.left,
-                                            width: dropdownPos.width,
-                                            transform: 'translateY(-100%)',
-                                        }}
-                                    >
+                                {techSearch && filteredTechniques.length > 0 && (
+                                    <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
                                         {filteredTechniques.map(t => (
                                             <button
                                                 key={t.id}
@@ -873,8 +854,7 @@ function AddEventDialog({
                                                 <span className="truncate">{t.name}</span>
                                             </button>
                                         ))}
-                                    </div>,
-                                    document.body
+                                    </div>
                                 )}
                             </div>
                         </div>

@@ -862,8 +862,10 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: 'attack' }}
         fitView
-        minZoom={0.2}
-        maxZoom={3}
+        minZoom={0.1}
+        maxZoom={2}
+        panOnScroll
+        zoomOnScroll
         selectionKeyCode="Shift"
         multiSelectionKeyCode="Shift"
         selectionOnDrag={false}

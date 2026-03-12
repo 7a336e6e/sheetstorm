@@ -789,7 +789,6 @@ function AddEventDialog({
                             type="datetime-local"
                             value={form.timestamp}
                             onChange={e => setForm({ ...form, timestamp: e.target.value })}
-                            variant="glass"
                         />
                     </div>
                     <div className="space-y-2">
@@ -797,7 +796,6 @@ function AddEventDialog({
                         <Textarea
                             value={form.activity}
                             onChange={e => setForm({ ...form, activity: e.target.value })}
-                            variant="glass"
                         />
                     </div>
                     <div className="space-y-2">
@@ -806,13 +804,12 @@ function AddEventDialog({
                             value={form.source}
                             onChange={e => setForm({ ...form, source: e.target.value })}
                             placeholder="e.g. Sysmon, EDR, Firewall..."
-                            variant="glass"
                         />
                     </div>
                     <div className="space-y-2">
                         <Label>Host</Label>
                         <Select value={form.host_id} onValueChange={v => setForm({ ...form, host_id: v })}>
-                            <SelectTrigger variant="glass"><SelectValue placeholder="Select Host" /></SelectTrigger>
+                            <SelectTrigger><SelectValue placeholder="Select Host" /></SelectTrigger>
                             <SelectContent>
                                 {hosts.map(h => (
                                     <SelectItem key={h.id} value={h.id}>
@@ -826,7 +823,7 @@ function AddEventDialog({
                         <div className="space-y-2">
                             <Label>MITRE Tactic</Label>
                             <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
-                                <SelectTrigger variant="glass"><SelectValue placeholder="Select Tactic" /></SelectTrigger>
+                                <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
                                 <SelectContent>
                                     {tactics.map(t => (
                                         <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
@@ -841,7 +838,6 @@ function AddEventDialog({
                                     value={techSearch || form.mitre_technique}
                                     onChange={e => handleTechniqueInput(e.target.value)}
                                     placeholder="Search T1059 or name..."
-                                    variant="glass"
                                     onFocus={() => setTechSearch(form.mitre_technique)}
                                     onBlur={() => setTimeout(() => setTechSearch(''), 200)}
                                 />

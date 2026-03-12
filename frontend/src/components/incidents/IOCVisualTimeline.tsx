@@ -375,16 +375,16 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                     <DialogBody className="space-y-4">
                         <div className="space-y-2">
                             <Label>Timestamp *</Label>
-                            <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} variant="glass" />
+                            <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} />
                         </div>
                         <div className="space-y-2">
                             <Label>Activity *</Label>
-                            <Textarea value={form.activity} onChange={e => setForm({ ...form, activity: e.target.value })} variant="glass" />
+                            <Textarea value={form.activity} onChange={e => setForm({ ...form, activity: e.target.value })} />
                         </div>
                         <div className="space-y-2">
                             <Label>Host</Label>
                             <Select value={form.host_id} onValueChange={v => setForm({ ...form, host_id: v })}>
-                                <SelectTrigger variant="glass"><SelectValue placeholder="Select Host" /></SelectTrigger>
+                                <SelectTrigger><SelectValue placeholder="Select Host" /></SelectTrigger>
                                 <SelectContent>
                                     {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname}</SelectItem>)}
                                 </SelectContent>
@@ -394,7 +394,7 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                             <div className="space-y-2">
                                 <Label>MITRE Tactic</Label>
                                 <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
-                                    <SelectTrigger variant="glass"><SelectValue placeholder="Select Tactic" /></SelectTrigger>
+                                    <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
                                     <SelectContent>
                                         {tactics.map(t => (
                                             <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
@@ -409,7 +409,6 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                         value={techSearch || form.mitre_technique}
                                         onChange={e => handleTechniqueInput(e.target.value)}
                                         placeholder="Search T1059 or name..."
-                                        variant="glass"
                                         onFocus={() => setTechSearch(form.mitre_technique)}
                                         onBlur={() => setTimeout(() => setTechSearch(''), 200)}
                                     />

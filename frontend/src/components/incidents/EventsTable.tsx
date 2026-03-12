@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
@@ -115,6 +115,92 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         mitre_tactic: '',
         mitre_technique: '',
     })
+
+    // MITRE ATT&CK form data for bidirectional tactic/technique linking
+    const [mitreFormData, setMitreFormData] = useState<{
+        tactics: { id: string; name: string; slug: string }[]
+        techByTactic: Record<string, { id: string; name: string }[]>
+        techToTactic: Record<string, string>
+        allTechniques: { id: string; name: string }[]
+    }>({ tactics: [], techByTactic: {}, techToTactic: {}, allTechniques: [] })
+    const [techSearch, setTechSearch] = useState('')
+
+    // Fetch MITRE ATT&CK form data once on dialog open
+    useEffect(() => {
+        if (!showAddModal || mitreFormData.tactics.length > 0) return
+        api.get<{
+            tactics: { id: string; name: string; slug: string }[]
+            technique_by_tactic: Record<string, { id: string; name: string }[]>
+            technique_to_tactic: Record<string, string>
+        }>('/knowledge-base/mitre-attack/form-data').then(data => {
+            const all: { id: string; name: string }[] = []
+            const seen = new Set<string>()
+            for (const techs of Object.values(data.technique_by_tactic)) {
+                for (const t of techs) {
+                    if (!seen.has(t.id)) { seen.add(t.id); all.push(t) }
+                }
+            }
+            all.sort((a, b) => a.id.localeCompare(b.id))
+            setMitreFormData({
+                tactics: data.tactics,
+                techByTactic: data.technique_by_tactic,
+                techToTactic: data.technique_to_tactic,
+                allTechniques: all,
+            })
+        }).catch(() => {})
+    }, [showAddModal, mitreFormData.tactics.length])
+
+    // Techniques available for the selected tactic (or all if none selected)
+    const availableTechniques = useMemo(() => {
+        if (form.mitre_tactic && mitreFormData.techByTactic[form.mitre_tactic]) {
+            return mitreFormData.techByTactic[form.mitre_tactic]
+        }
+        return mitreFormData.allTechniques
+    }, [form.mitre_tactic, mitreFormData])
+
+    // Filtered techniques based on search input
+    const filteredTechniques = useMemo(() => {
+        if (!techSearch) return availableTechniques.slice(0, 50)
+        const q = techSearch.toLowerCase()
+        return availableTechniques.filter(
+            t => t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)
+        ).slice(0, 50)
+    }, [availableTechniques, techSearch])
+
+    // Handle tactic change — clear technique if it doesn't belong to the new tactic
+    const handleTacticChange = (slug: string) => {
+        const techs = mitreFormData.techByTactic[slug] || []
+        const currentTechInNewTactic = techs.some(t => t.id === form.mitre_technique)
+        setForm({
+            ...form,
+            mitre_tactic: slug,
+            mitre_technique: currentTechInNewTactic ? form.mitre_technique : '',
+        })
+        setTechSearch('')
+    }
+
+    // Handle technique selection — auto-select tactic
+    const handleTechniqueSelect = (techId: string) => {
+        const tacticSlug = mitreFormData.techToTactic[techId]
+        setForm({
+            ...form,
+            mitre_technique: techId,
+            mitre_tactic: tacticSlug || form.mitre_tactic,
+        })
+        setTechSearch('')
+    }
+
+    // Handle manual technique ID input — auto-resolve tactic
+    const handleTechniqueInput = (value: string) => {
+        const upper = value.toUpperCase().trim()
+        setTechSearch(value)
+        const resolvedTactic = mitreFormData.techToTactic[upper]
+        setForm({
+            ...form,
+            mitre_technique: upper,
+            mitre_tactic: resolvedTactic || form.mitre_tactic,
+        })
+    }
 
     const fetchD3fendSuggestions = useCallback(async (techniqueId: string) => {
         if (d3fendCache[techniqueId]) return
@@ -441,7 +527,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                                                                 Loading D3FEND countermeasures...
                                                                             </div>
                                                                         ) : d3fendResults && d3fendResults.length > 0 ? (
-                                                                            <div className="grid gap-2">
+                                                                            <div className="max-h-64 overflow-y-auto rounded-md border border-white/10 p-2 grid gap-2">
                                                                                 {d3fendResults.map((d3) => (
                                                                                     <div
                                                                                         key={d3.id}
@@ -494,20 +580,20 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                     <DialogBody className="space-y-4">
                         <div className="space-y-2">
                             <Label>Timestamp *</Label>
-                            <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} variant="glass" />
+                            <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} />
                         </div>
                         <div className="space-y-2">
                             <Label>Activity *</Label>
-                            <Textarea value={form.activity} onChange={e => setForm({ ...form, activity: e.target.value })} variant="glass" />
+                            <Textarea value={form.activity} onChange={e => setForm({ ...form, activity: e.target.value })} />
                         </div>
                         <div className="space-y-2">
                             <Label>Source</Label>
-                            <Input value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} placeholder="e.g. Sysmon, EDR, Firewall..." variant="glass" />
+                            <Input value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} placeholder="e.g. Sysmon, EDR, Firewall..." />
                         </div>
                         <div className="space-y-2">
                             <Label>Host</Label>
                             <Select value={form.host_id} onValueChange={v => setForm({ ...form, host_id: v })}>
-                                <SelectTrigger variant="glass"><SelectValue placeholder="Select Host" /></SelectTrigger>
+                                <SelectTrigger><SelectValue placeholder="Select Host" /></SelectTrigger>
                                 <SelectContent>
                                     {hosts.map(h => (
                                         <SelectItem key={h.id} value={h.id}>
@@ -520,27 +606,41 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>MITRE Tactic</Label>
-                                <Select value={form.mitre_tactic} onValueChange={v => setForm({ ...form, mitre_tactic: v })}>
-                                    <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
+                                <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
+                                    <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="initial-access">Initial Access</SelectItem>
-                                        <SelectItem value="execution">Execution</SelectItem>
-                                        <SelectItem value="persistence">Persistence</SelectItem>
-                                        <SelectItem value="privilege-escalation">Privilege Escalation</SelectItem>
-                                        <SelectItem value="defense-evasion">Defense Evasion</SelectItem>
-                                        <SelectItem value="credential-access">Credential Access</SelectItem>
-                                        <SelectItem value="discovery">Discovery</SelectItem>
-                                        <SelectItem value="lateral-movement">Lateral Movement</SelectItem>
-                                        <SelectItem value="collection">Collection</SelectItem>
-                                        <SelectItem value="command-and-control">C2</SelectItem>
-                                        <SelectItem value="exfiltration">Exfiltration</SelectItem>
-                                        <SelectItem value="impact">Impact</SelectItem>
+                                        {mitreFormData.tactics.map(t => (
+                                            <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>
                             <div className="space-y-2">
                                 <Label>Technique ID</Label>
-                                <Input value={form.mitre_technique} onChange={e => setForm({ ...form, mitre_technique: e.target.value })} placeholder="T1059" variant="glass" />
+                                <div className="relative">
+                                    <Input
+                                        value={techSearch || form.mitre_technique}
+                                        onChange={e => handleTechniqueInput(e.target.value)}
+                                        placeholder="Search T1059 or name..."
+                                        onFocus={() => setTechSearch(form.mitre_technique)}
+                                        onBlur={() => setTimeout(() => setTechSearch(''), 200)}
+                                    />
+                                    {techSearch && filteredTechniques.length > 0 && (
+                                        <div className="absolute z-50 top-full mt-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                            {filteredTechniques.map(t => (
+                                                <button
+                                                    key={t.id}
+                                                    type="button"
+                                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                                                    onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
+                                                >
+                                                    <span className="font-mono text-muted-foreground">{t.id}</span>
+                                                    <span className="truncate">{t.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </DialogBody>

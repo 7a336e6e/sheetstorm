@@ -679,7 +679,6 @@ export default function IncidentDetailPage() {
         {/* Phase Progress — Interactive IR Phase Tracker */}
         <IRPhaseTracker
           currentPhase={incident.phase}
-          events={timeline}
           context="incident"
         />
 

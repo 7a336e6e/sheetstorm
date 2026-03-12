@@ -101,21 +101,13 @@ const PHASE_RECOMMENDATIONS: Record<number, { title: string; subtitle: string; s
 
 interface IRPhaseTrackerProps {
   currentPhase: number
-  events: { phase?: number }[]
   context?: 'incident' | 'dashboard'
   incidents?: unknown[]
 }
 
-export function IRPhaseTracker({ currentPhase, events }: IRPhaseTrackerProps) {
+export function IRPhaseTracker({ currentPhase }: IRPhaseTrackerProps) {
   const [selectedPhase, setSelectedPhase] = useState<number | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-
-  // Count events per phase
-  const eventCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
-  for (const event of events) {
-    const phase = event.phase || 2
-    if (phase >= 1 && phase <= 6) eventCounts[phase]++
-  }
 
   const handlePhaseClick = (phaseNum: number) => {
     setSelectedPhase(selectedPhase === phaseNum ? null : phaseNum)
@@ -145,7 +137,6 @@ export function IRPhaseTracker({ currentPhase, events }: IRPhaseTrackerProps) {
           {PHASE_INFO.map((phase, index) => {
             const isCompleted = phase.number < currentPhase
             const isCurrent = phase.number === currentPhase
-            const count = eventCounts[phase.number]
             const isSelected = selectedPhase === phase.number
 
             return (
@@ -170,11 +161,6 @@ export function IRPhaseTracker({ currentPhase, events }: IRPhaseTrackerProps) {
                     ) : (
                       <span className={isCurrent ? 'drop-shadow-[0_0_6px_rgba(255,255,255,0.5)]' : ''}>
                         {phase.number}
-                      </span>
-                    )}
-                    {count > 0 && (
-                      <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-cyan-500 text-white text-[10px] font-bold flex items-center justify-center shadow-md">
-                        {count > 99 ? '99+' : count}
                       </span>
                     )}
                   </button>

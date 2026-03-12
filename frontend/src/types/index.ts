@@ -457,7 +457,25 @@ export interface DomainReputationResult {
   enriched: boolean
   vt_configured?: boolean
   vt_error?: string
+  dns_error?: string
   sources: {
+    dns?: {
+      a: string[]
+      aaaa: string[]
+      mx: { priority: number; exchange: string }[]
+      ns: string[]
+      txt: string[]
+      cname: string[]
+      soa: {
+        mname: string
+        rname: string
+        serial: number
+        refresh: number
+        retry: number
+        expire: number
+        minimum: number
+      } | null
+    }
     virustotal?: {
       malicious: number
       suspicious: number

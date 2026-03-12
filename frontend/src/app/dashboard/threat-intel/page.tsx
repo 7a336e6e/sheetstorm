@@ -518,6 +518,7 @@ function IPResultCard({ data }: { data: IPReputationResult }) {
 /* -- Domain -- */
 function DomainResultCard({ data }: { data: DomainReputationResult }) {
   const vt = data.sources.virustotal
+  const dns = data.sources.dns
 
   return (
     <div className="divide-y divide-border">
@@ -531,6 +532,101 @@ function DomainResultCard({ data }: { data: DomainReputationResult }) {
           <Badge variant="destructive" title={data.vt_error}>VirusTotal lookup failed</Badge>
         )}
       </div>
+
+      {/* DNS Records */}
+      {dns && (
+        <div className="p-4 space-y-3">
+          <SectionHeader>DNS Records</SectionHeader>
+          <div className="space-y-2">
+            {dns.a.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">A</span>
+                <div className="flex flex-wrap gap-1">
+                  {dns.a.map((ip, i) => (
+                    <Badge key={i} variant="outline" className="font-mono text-xs">{ip}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.aaaa.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">AAAA</span>
+                <div className="flex flex-wrap gap-1">
+                  {dns.aaaa.map((ip, i) => (
+                    <Badge key={i} variant="outline" className="font-mono text-xs">{ip}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.cname.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">CNAME</span>
+                <div className="flex flex-wrap gap-1">
+                  {dns.cname.map((c, i) => (
+                    <Badge key={i} variant="outline" className="font-mono text-xs">{c}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.mx.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">MX</span>
+                <div className="flex flex-col gap-1">
+                  {dns.mx.map((mx, i) => (
+                    <span key={i} className="text-xs font-mono">
+                      <span className="text-muted-foreground">{mx.priority}</span>{' '}
+                      {mx.exchange}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.ns.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">NS</span>
+                <div className="flex flex-wrap gap-1">
+                  {dns.ns.map((ns, i) => (
+                    <Badge key={i} variant="outline" className="font-mono text-xs">{ns}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.txt.length > 0 && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">TXT</span>
+                <div className="flex flex-col gap-1">
+                  {dns.txt.map((txt, i) => (
+                    <span key={i} className="text-xs font-mono break-all text-muted-foreground bg-muted/50 px-2 py-1 rounded">
+                      {txt}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {dns.soa && (
+              <div className="flex items-start gap-3">
+                <span className="text-xs font-mono font-medium text-muted-foreground w-14 shrink-0 pt-0.5">SOA</span>
+                <div className="text-xs font-mono space-y-0.5">
+                  <div>Primary: {dns.soa.mname}</div>
+                  <div>Admin: {dns.soa.rname}</div>
+                  <div className="text-muted-foreground">
+                    Serial: {dns.soa.serial} · Refresh: {dns.soa.refresh}s · Retry: {dns.soa.retry}s
+                  </div>
+                </div>
+              </div>
+            )}
+            {dns.a.length === 0 && dns.aaaa.length === 0 && dns.mx.length === 0 && dns.ns.length === 0 && dns.txt.length === 0 && dns.cname.length === 0 && !dns.soa && (
+              <div className="text-xs text-muted-foreground">No DNS records found</div>
+            )}
+          </div>
+        </div>
+      )}
+      {data.dns_error && (
+        <div className="p-4">
+          <SectionHeader>DNS Records</SectionHeader>
+          <div className="text-xs text-destructive mt-1">{data.dns_error}</div>
+        </div>
+      )}
 
       {vt && (
         <div className="p-4 space-y-2">

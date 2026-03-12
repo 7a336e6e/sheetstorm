@@ -556,6 +556,52 @@ def domain_reputation_lookup():
 
     result = {'domain': domain, 'sources': {}, 'vt_configured': False}
 
+    # --- DNS Resolution (always available, no external API key needed) ---
+    try:
+        import dns.resolver
+        dns_data: dict = {'a': [], 'aaaa': [], 'mx': [], 'ns': [], 'txt': [], 'cname': [], 'soa': None}
+
+        for rtype in ('A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'SOA'):
+            try:
+                answers = dns.resolver.resolve(domain, rtype, lifetime=5)
+                if rtype == 'A':
+                    dns_data['a'] = [r.address for r in answers]
+                elif rtype == 'AAAA':
+                    dns_data['aaaa'] = [r.address for r in answers]
+                elif rtype == 'MX':
+                    dns_data['mx'] = [
+                        {'priority': r.preference, 'exchange': str(r.exchange).rstrip('.')}
+                        for r in sorted(answers, key=lambda r: r.preference)
+                    ]
+                elif rtype == 'NS':
+                    dns_data['ns'] = [str(r.target).rstrip('.') for r in answers]
+                elif rtype == 'TXT':
+                    dns_data['txt'] = [
+                        b''.join(r.strings).decode('utf-8', errors='replace') for r in answers
+                    ]
+                elif rtype == 'CNAME':
+                    dns_data['cname'] = [str(r.target).rstrip('.') for r in answers]
+                elif rtype == 'SOA':
+                    r = list(answers)[0]
+                    dns_data['soa'] = {
+                        'mname': str(r.mname).rstrip('.'),
+                        'rname': str(r.rname).rstrip('.'),
+                        'serial': r.serial,
+                        'refresh': r.refresh,
+                        'retry': r.retry,
+                        'expire': r.expire,
+                        'minimum': r.minimum,
+                    }
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
+                pass
+            except Exception:
+                pass
+
+        result['sources']['dns'] = dns_data
+    except Exception as e:
+        logger.warning('DNS resolution failed for %s: %s', domain, e)
+        result['dns_error'] = f'DNS resolution failed: {str(e)}'
+
     # --- VirusTotal (optional) ---
     vt_integration = Integration.query.filter_by(
         organization_id=user.organization_id, type='virustotal', is_enabled=True

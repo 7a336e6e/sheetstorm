@@ -77,6 +77,7 @@ class StoredRefreshToken:
     scopes: list[str]
     sheetstorm_refresh_token: str | None = None
     sheetstorm_access_token: str = ""
+    expires_at: float | None = None  # MCP SDK checks this on /token
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +127,24 @@ class SheetStormOAuthProvider(
     def _new_token(nbytes: int = 32) -> str:
         return secrets.token_urlsafe(nbytes)
 
+    def _get_http(self) -> httpx.AsyncClient:
+        """Return the httpx client, re-creating it if it was previously closed.
+
+        The server lifespan calls ``close()`` on shutdown, but this provider
+        is a module-level singleton that survives lifespan cycles.  If the
+        lifespan restarts (MCP session reconnect, ASGI reload, etc.) the old
+        ``AsyncClient`` is permanently closed.  This helper transparently
+        re-creates it so callers never hit
+        ``RuntimeError('Cannot send a request, as the client has been closed.')``.
+        """
+        if self._http.is_closed:
+            logger.info("HTTP client was closed — re-creating")
+            self._http = httpx.AsyncClient(timeout=httpx.Timeout(20))
+        return self._http
+
     async def close(self) -> None:
-        await self._http.aclose()
+        if not self._http.is_closed:
+            await self._http.aclose()
         if self._redis:
             self._redis.close()
 
@@ -267,7 +284,7 @@ class SheetStormOAuthProvider(
 
         if ss_refresh:
             try:
-                resp = await self._http.post(
+                resp = await self._get_http().post(
                     f"{self._api_url}/auth/refresh",
                     headers={"Authorization": f"Bearer {ss_refresh}"},
                 )
@@ -367,7 +384,7 @@ class SheetStormOAuthProvider(
             payload["mfa_code"] = mfa_code
 
         try:
-            resp = await self._http.post(f"{self._api_url}/auth/login", json=payload)
+            resp = await self._get_http().post(f"{self._api_url}/auth/login", json=payload)
         except Exception as exc:
             # Put pending auth back so user can retry
             self._pending_auth[pending_id] = pending

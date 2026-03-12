@@ -64,7 +64,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict]:
     cfg = get_config()
     _client = SheetStormClient(cfg)
     # Provider is created in module scope for FastMCP constructor,
-    # but we store a reference here for cleanup.
+    # but we store a reference here for cleanup.  Re-create its HTTP
+    # client in case a previous lifespan cycle closed it.
+    _oauth_provider._get_http()
     _provider = _oauth_provider
 
     logger.info(
@@ -137,6 +139,7 @@ def _register_all_tools() -> None:
     from sheetstorm_mcp.tools import defang  # noqa: F401
     from sheetstorm_mcp.tools import prompts  # noqa: F401
     from sheetstorm_mcp.tools import advanced_analysis  # noqa: F401
+    from sheetstorm_mcp.tools import assignments  # noqa: F401
 
 
 _register_all_tools()

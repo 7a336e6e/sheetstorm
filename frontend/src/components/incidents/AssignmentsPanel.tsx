@@ -33,6 +33,7 @@ interface Assignment {
 
 interface AssignmentsPanelProps {
   incidentId: string
+  refreshKey?: number
 }
 
 const ASSIGNMENT_ROLES = [
@@ -44,7 +45,7 @@ const ASSIGNMENT_ROLES = [
   'Observer',
 ]
 
-export function AssignmentsPanel({ incidentId }: AssignmentsPanelProps) {
+export function AssignmentsPanel({ incidentId, refreshKey }: AssignmentsPanelProps) {
   const { hasPermission } = useAuthStore()
   const canEdit = hasPermission('incidents:update')
 
@@ -80,7 +81,7 @@ export function AssignmentsPanel({ incidentId }: AssignmentsPanelProps) {
 
   useEffect(() => {
     fetchAssignments()
-  }, [fetchAssignments])
+  }, [fetchAssignments, refreshKey])
 
   useEffect(() => {
     if (showAddForm && orgUsers.length === 0) {

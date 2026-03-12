@@ -9,7 +9,7 @@ from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 
 
-@api_bp.route('/incidents/<uuid:incident_id>/notes', methods=['GET'])
+@api_bp.route('/incidents/<uuid:incident_id>/case-notes', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:read')
 def list_case_notes(incident_id):
@@ -36,7 +36,7 @@ def list_case_notes(incident_id):
     }), 200
 
 
-@api_bp.route('/incidents/<uuid:incident_id>/notes', methods=['POST'])
+@api_bp.route('/incidents/<uuid:incident_id>/case-notes', methods=['POST'])
 @jwt_required()
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'create', 'case_note')
@@ -73,7 +73,7 @@ def create_case_note(incident_id):
     return jsonify(note.to_dict()), 201
 
 
-@api_bp.route('/incidents/<uuid:incident_id>/notes/<uuid:note_id>', methods=['GET'])
+@api_bp.route('/incidents/<uuid:incident_id>/case-notes/<uuid:note_id>', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:read')
 def get_case_note(incident_id, note_id):
@@ -85,7 +85,7 @@ def get_case_note(incident_id, note_id):
     return jsonify(note.to_dict()), 200
 
 
-@api_bp.route('/incidents/<uuid:incident_id>/notes/<uuid:note_id>', methods=['PUT'])
+@api_bp.route('/incidents/<uuid:incident_id>/case-notes/<uuid:note_id>', methods=['PUT'])
 @jwt_required()
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'update', 'case_note')
@@ -123,7 +123,7 @@ def update_case_note(incident_id, note_id):
     return jsonify(note.to_dict()), 200
 
 
-@api_bp.route('/incidents/<uuid:incident_id>/notes/<uuid:note_id>', methods=['DELETE'])
+@api_bp.route('/incidents/<uuid:incident_id>/case-notes/<uuid:note_id>', methods=['DELETE'])
 @jwt_required()
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'delete', 'case_note')

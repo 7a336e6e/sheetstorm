@@ -219,9 +219,49 @@ def update_incident(incident_id):
         incident.lessons_learned = update_data['lessons_learned']
     if 'lead_responder_id' in update_data:
         user = get_current_user()
-        lead = User.query.filter_by(id=update_data['lead_responder_id'], organization_id=user.organization_id).first()
+        new_lead_id = update_data['lead_responder_id']
+        lead = User.query.filter_by(id=new_lead_id, organization_id=user.organization_id).first() if new_lead_id else None
         if lead:
             incident.lead_responder_id = lead.id
+            # Sync assignments: demote old Lead Responder(s)
+            old_leads = IncidentAssignment.query.filter(
+                IncidentAssignment.incident_id == incident.id,
+                IncidentAssignment.role == 'Lead Responder',
+                IncidentAssignment.user_id != lead.id,
+                IncidentAssignment.removed_at.is_(None)
+            ).all()
+            for old_lead in old_leads:
+                old_lead.role = None
+            # Ensure new lead has an assignment with Lead Responder role
+            new_assignment = IncidentAssignment.query.filter_by(
+                incident_id=incident.id,
+                user_id=lead.id
+            ).first()
+            if new_assignment:
+                if new_assignment.removed_at is not None:
+                    new_assignment.removed_at = None
+                new_assignment.role = 'Lead Responder'
+                new_assignment.assigned_by = user.id
+                new_assignment.assigned_at = datetime.now(timezone.utc)
+            else:
+                new_assignment = IncidentAssignment(
+                    incident_id=incident.id,
+                    user_id=lead.id,
+                    role='Lead Responder',
+                    assigned_by=user.id,
+                    assigned_at=datetime.now(timezone.utc)
+                )
+                db.session.add(new_assignment)
+        elif new_lead_id is None:
+            # Clearing lead responder — demote any Lead Responder assignments
+            old_leads = IncidentAssignment.query.filter(
+                IncidentAssignment.incident_id == incident.id,
+                IncidentAssignment.role == 'Lead Responder',
+                IncidentAssignment.removed_at.is_(None)
+            ).all()
+            for old_lead in old_leads:
+                old_lead.role = None
+            incident.lead_responder_id = None
     if 'tlp' in update_data:
         incident.tlp = update_data['tlp']
     if 'team_id' in update_data:
@@ -350,24 +390,52 @@ def assign_user(incident_id):
     if not target_user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
-    # Check if already assigned
+    new_role = data.get('role')
+
+    # Check for ANY existing assignment (including soft-deleted)
     existing = IncidentAssignment.query.filter_by(
         incident_id=incident.id,
-        user_id=target_user.id,
-        removed_at=None
+        user_id=target_user.id
     ).first()
 
     if existing:
-        return jsonify({'error': 'conflict', 'message': 'User already assigned'}), 409
+        if existing.removed_at is not None:
+            # Reactivate soft-deleted assignment
+            existing.removed_at = None
+            existing.role = new_role
+            existing.assigned_by = user.id
+            existing.assigned_at = datetime.now(timezone.utc)
+            assignment = existing
+        elif existing.role == new_role:
+            return jsonify({'error': 'conflict', 'message': 'User already assigned with this role'}), 409
+        else:
+            # User is already assigned with a different role — update the role
+            existing.role = new_role
+            existing.assigned_by = user.id
+            existing.assigned_at = datetime.now(timezone.utc)
+            assignment = existing
+    else:
+        assignment = IncidentAssignment(
+            incident_id=incident.id,
+            user_id=target_user.id,
+            role=new_role,
+            assigned_by=user.id,
+            assigned_at=datetime.now(timezone.utc)
+        )
+        db.session.add(assignment)
 
-    assignment = IncidentAssignment(
-        incident_id=incident.id,
-        user_id=target_user.id,
-        role=data.get('role'),
-        assigned_by=user.id,
-        assigned_at=datetime.now(timezone.utc)
-    )
-    db.session.add(assignment)
+    # If the role is Lead Responder, demote any existing Lead Responder and update incident
+    if new_role == 'Lead Responder':
+        old_leads = IncidentAssignment.query.filter(
+            IncidentAssignment.incident_id == incident.id,
+            IncidentAssignment.role == 'Lead Responder',
+            IncidentAssignment.user_id != target_user.id,
+            IncidentAssignment.removed_at.is_(None)
+        ).all()
+        for old_lead in old_leads:
+            old_lead.role = None
+        incident.lead_responder_id = target_user.id
+
     db.session.commit()
 
     # Notify assigned user
@@ -395,6 +463,11 @@ def remove_assignment(incident_id, assignment_id):
         return jsonify({'error': 'not_found', 'message': 'Assignment not found'}), 404
 
     assignment.removed_at = datetime.now(timezone.utc)
+
+    # If this was the Lead Responder, clear the incident's lead_responder_id
+    if assignment.role == 'Lead Responder' and incident.lead_responder_id == assignment.user_id:
+        incident.lead_responder_id = None
+
     db.session.commit()
 
     socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')

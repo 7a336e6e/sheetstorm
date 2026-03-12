@@ -36,26 +36,21 @@ def _get_drive_integration(user):
 
 
 def _get_valid_access_token(integration, creds):
-    """Get a valid access token, refreshing if necessary."""
+    """Get a valid access token, always refreshing to avoid expired tokens."""
     if not creds or 'refresh_token' not in creds:
         return None
 
-    access_token = creds.get('access_token')
-    if not access_token:
-        # Need to refresh
-        try:
-            new_tokens = google_drive_service.refresh_access_token(creds['refresh_token'])
-            creds['access_token'] = new_tokens['access_token']
-            # Save updated tokens
-            creds_json = json.dumps(creds)
-            integration.credentials_encrypted = encryption_service.encrypt(creds_json)
-            db.session.commit()
-            return new_tokens['access_token']
-        except Exception as e:
-            current_app.logger.error(f"Failed to refresh Google Drive token: {e}")
-            return None
-
-    return access_token
+    try:
+        new_tokens = google_drive_service.refresh_access_token(creds['refresh_token'])
+        creds['access_token'] = new_tokens['access_token']
+        # Save updated tokens
+        creds_json = json.dumps(creds)
+        integration.credentials_encrypted = encryption_service.encrypt(creds_json)
+        db.session.commit()
+        return new_tokens['access_token']
+    except Exception as e:
+        current_app.logger.error(f"Failed to refresh Google Drive token: {e}")
+        return None
 
 
 @api_bp.route('/google-drive/status', methods=['GET'])
@@ -69,7 +64,7 @@ def google_drive_status():
         return jsonify({
             'configured': False,
             'connected': False,
-            'message': 'Google Drive OAuth not configured. Set GOOGLE_DRIVE_CLIENT_ID and GOOGLE_DRIVE_CLIENT_SECRET.',
+            'message': 'Google Drive OAuth not configured. Add your Client ID and Client Secret on the Settings → Integrations page.',
         }), 200
 
     integration, creds = _get_drive_integration(user)
@@ -135,25 +130,31 @@ def google_drive_callback():
     error = request.args.get('error')
     state = request.args.get('state')
 
-    frontend_url = current_app.config.get('FRONTEND_URL', 'http://127.0.0.1:3000')
+    # Derive frontend URL: prefer config, then use the request's origin
+    frontend_url = current_app.config.get('FRONTEND_URL') or ''
+    if not frontend_url:
+        # Use the proxy host from the incoming browser request (via X-Forwarded-*)
+        frontend_url = f"{request.scheme}://{request.host}"
+
+    settings_url = f'{frontend_url}/dashboard/admin/settings'
 
     if error:
-        return redirect(f'{frontend_url}/dashboard/admin?drive_error={error}')
+        return redirect(f'{settings_url}?drive_error={error}')
 
     if not code:
-        return redirect(f'{frontend_url}/dashboard/admin?drive_error=no_code')
+        return redirect(f'{settings_url}?drive_error=no_code')
 
     try:
         tokens = google_drive_service.exchange_code(code)
         # Store tokens temporarily — they'll be saved by the complete endpoint
         return redirect(
-            f'{frontend_url}/dashboard/admin?drive_connected=true'
+            f'{settings_url}?drive_connected=true'
             f'&drive_token={tokens.get("access_token", "")}'
             f'&drive_refresh={tokens.get("refresh_token", "")}'
         )
     except Exception as e:
         current_app.logger.error(f"Google Drive OAuth callback error: {e}")
-        return redirect(f'{frontend_url}/dashboard/admin?drive_error=token_exchange_failed')
+        return redirect(f'{settings_url}?drive_error=token_exchange_failed')
 
 
 @api_bp.route('/google-drive/connect', methods=['POST'])
@@ -171,7 +172,11 @@ def google_drive_connect():
     if not data or not data.get('access_token') or not data.get('refresh_token'):
         return jsonify({'error': 'bad_request', 'message': 'Tokens required'}), 400
 
+    # Store OAuth app credentials alongside tokens so the record is self-contained
+    oauth_config = google_drive_service.get_oauth_config()
     creds = {
+        'client_id': oauth_config.get('client_id', ''),
+        'client_secret': oauth_config.get('client_secret', ''),
         'access_token': data['access_token'],
         'refresh_token': data['refresh_token'],
         'root_folder_id': data.get('root_folder_id', 'root'),
@@ -291,7 +296,7 @@ def google_drive_set_root():
 
 @api_bp.route('/incidents/<uuid:incident_id>/google-drive/setup', methods=['POST'])
 @jwt_required()
-@require_incident_access('artifacts:write')
+@require_incident_access('artifacts:upload')
 @audit_log('data_modification', 'create', 'google_drive_case_folder')
 def google_drive_setup_case(incident_id):
     """Create the CASE-xxxx folder structure in Google Drive for this incident."""
@@ -325,7 +330,7 @@ def google_drive_setup_case(incident_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/google-drive/upload', methods=['POST'])
 @jwt_required()
-@require_incident_access('artifacts:write')
+@require_incident_access('artifacts:upload')
 @audit_log('data_modification', 'upload', 'google_drive_file')
 def google_drive_upload_artifact(incident_id):
     """Upload an artifact to the incident's Google Drive case folder.

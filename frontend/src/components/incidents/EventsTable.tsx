@@ -608,7 +608,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                 <Label>MITRE Tactic</Label>
                                 <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
                                     <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
-                                    <SelectContent>
+                                    <SelectContent side="top">
                                         {mitreFormData.tactics.map(t => (
                                             <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
                                         ))}

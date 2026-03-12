@@ -108,6 +108,11 @@ class IntegrationConfigResolver:
                 'client_id': app.config.get('GOOGLE_DRIVE_CLIENT_ID'),
                 'client_secret': app.config.get('GOOGLE_DRIVE_CLIENT_SECRET'),
             }),
+            'google_drive': lambda: _non_empty({
+                'client_id': app.config.get('GOOGLE_DRIVE_CLIENT_ID'),
+                'client_secret': app.config.get('GOOGLE_DRIVE_CLIENT_SECRET'),
+                'redirect_uri': app.config.get('GOOGLE_DRIVE_REDIRECT_URI'),
+            }),
         }
 
         resolver = env_map.get(integration_type)

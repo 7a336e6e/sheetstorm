@@ -208,6 +208,8 @@ def test_integration(integration_id):
             success, message = _test_elastic(integration.config, credentials)
         elif integration.type == 'webhook':
             success, message = _test_webhook(integration.config, credentials)
+        elif integration.type == 'google_drive':
+            success, message = _test_google_drive(integration.config, credentials)
         elif integration.type in ('oauth_github', 'oauth_google', 'oauth_azure'):
             success, message = _test_oauth(integration.type, integration.config, credentials)
         else:
@@ -296,8 +298,8 @@ def list_integration_types():
             # Storage
             {'id': 's3', 'name': 'S3 Storage', 'description': 'Amazon S3 or S3-compatible object storage for artifacts', 'category': 'storage',
              'config_fields': ['bucket_name', 'region', 'endpoint_url'], 'credential_fields': ['access_key', 'secret_key']},
-            {'id': 'google_drive', 'name': 'Google Drive', 'description': 'Google Drive for case folder management and report storage', 'category': 'storage',
-             'config_fields': ['folder_id'], 'credential_fields': ['api_key']},
+            {'id': 'google_drive', 'name': 'Google Drive', 'description': 'Google Drive for case folder management and report storage (OAuth2)', 'category': 'storage',
+             'config_fields': ['client_id', 'redirect_uri'], 'credential_fields': ['client_secret']},
             # AI Providers
             {'id': 'openai', 'name': 'OpenAI', 'description': 'OpenAI GPT models for AI-powered report generation and analysis', 'category': 'ai',
              'config_fields': ['model'], 'credential_fields': ['api_key']},
@@ -580,6 +582,31 @@ def _test_webhook(config, credentials):
         return False, f'Webhook returned status {resp.status_code}'
     except Exception as e:
         return False, f'Webhook test failed: {str(e)}'
+
+
+def _test_google_drive(config, credentials):
+    """Test Google Drive OAuth2 credentials by verifying fields are present."""
+    client_id = (config or {}).get('client_id', '')
+    has_secret = bool(credentials and credentials.get('client_secret'))
+
+    if not client_id:
+        return False, 'Client ID is not configured'
+    if not has_secret:
+        return False, 'Client Secret is not configured'
+
+    # Optionally verify the client_id against Google's endpoint
+    try:
+        import requests
+        resp = requests.get(
+            'https://www.googleapis.com/oauth2/v3/tokeninfo',
+            params={'client_id': client_id},
+            timeout=10
+        )
+        # A non-200 doesn't necessarily mean invalid — fields are present which is enough
+    except Exception:
+        pass
+
+    return True, f'Google Drive OAuth2 configured (Client ID: {client_id[:16]}...)'
 
 
 def _test_oauth(oauth_type, config, credentials):

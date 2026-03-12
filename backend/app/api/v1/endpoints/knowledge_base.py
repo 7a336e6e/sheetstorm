@@ -169,9 +169,17 @@ def kb_d3fend_suggest():
     if not techniques:
         return jsonify({'error': 'bad_request', 'message': 'attack_techniques list required'}), 400
 
+    # Build an expanded lookup set: include both exact IDs and parent technique IDs
+    # so that sub-techniques like T1059.001 also match D3FEND entries for T1059
+    lookup_ids = set(techniques)
+    for tid in techniques:
+        if '.' in tid:
+            lookup_ids.add(tid.split('.')[0])
+
     suggestions: dict = {}
     for d3 in D3FEND_TECHNIQUES:
-        matched = [t for t in techniques if t in d3.get('mitre_attack_mappings', [])]
+        mappings = d3.get('mitre_attack_mappings', [])
+        matched = [t for t in lookup_ids if t in mappings]
         if matched:
             suggestions[d3['id']] = {
                 **d3,

@@ -201,7 +201,7 @@ CREATE TABLE compromised_accounts (
     password_encrypted BYTEA,
     host_system VARCHAR(255),
     sid VARCHAR(100),
-    account_type VARCHAR(50) NOT NULL CHECK (account_type IN ('domain', 'local', 'ftp', 'service', 'application', 'other')),
+    account_type VARCHAR(50) NOT NULL CHECK (account_type IN ('domain', 'local', 'ftp', 'service', 'application', 'admin', 'other')),
     domain VARCHAR(255),
     is_privileged BOOLEAN DEFAULT FALSE,
     status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'reset', 'deleted')),

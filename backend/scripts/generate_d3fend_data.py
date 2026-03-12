@@ -59,7 +59,47 @@ MANUAL_ATTACK_OVERRIDES: dict[str, list[str]] = {
 
     # T1569 — System Services (abusing services for execution)
     # (D3-PSA, D3-SCA, D3-SFA covered above)
+
+    # T1595 — Active Scanning (port scanning, vulnerability scanning from external)
+    # D3-NTA, D3-NTSA, D3-NTCD, D3-CAA already exist above for T1046; append T1595 family
+    # (handled by extending existing keys below)
+
+    # T1589 — Gather Victim Identity Information (OSINT on credentials, emails, names)
+    "D3-SMRA": ["T1589"],  # Sender MTA Reputation Analysis — detect spoofed identity reuse
+    "D3-MA":   ["T1589"],  # Message Analysis — detect phishing using harvested identities
+
+    # T1489 — Service Stop (stopping critical services for impact)
+    "D3-OSM":  ["T1489"],  # Operating System Monitoring — detect service state changes
+    "D3-SDM":  ["T1489"],  # System Daemon Monitoring — detect daemon termination
+    "D3-PA":   ["T1489"],  # Process Analysis — detect service process kill
 }
+
+# Extend existing override keys with additional ATT&CK technique families.
+# This avoids overwriting the original lists defined above.
+_EXTENSIONS: dict[str, list[str]] = {
+    # T1595 (Active Scanning) shares the same D3FEND countermeasures as T1046
+    "D3-NTA":  ["T1595", "T1595.001", "T1595.002"],
+    "D3-CAA":  ["T1595", "T1595.001", "T1595.002"],
+    "D3-NTCD": ["T1595", "T1595.001", "T1595.002"],
+    "D3-NTSA": ["T1595", "T1595.001", "T1595.002"],
+    "D3-ISVA": ["T1595", "T1595.001", "T1595.002"],  # Inbound Session Volume Analysis
+    "D3-PMAD": ["T1595", "T1595.001", "T1595.002"],  # Protocol Metadata Anomaly Detection
+
+    # T1589 (Gather Victim Identity) — detection/monitoring overlaps
+    "D3-UBA":  ["T1589", "T1589.001", "T1589.002"],
+    "D3-SRA":  ["T1589", "T1589.001", "T1589.002"],  # Sender Reputation Analysis
+
+    # T1489 (Service Stop) — system monitoring overlaps
+    "D3-SFA":  ["T1489"],  # System File Analysis — detect service binary deletion
+    "D3-PSA":  ["T1489"],  # Process Spawn Analysis — detect service-killing commands
+}
+
+# Merge extensions into MANUAL_ATTACK_OVERRIDES
+for _key, _ids in _EXTENSIONS.items():
+    if _key in MANUAL_ATTACK_OVERRIDES:
+        MANUAL_ATTACK_OVERRIDES[_key].extend(_ids)
+    else:
+        MANUAL_ATTACK_OVERRIDES[_key] = _ids
 
 
 def fetch_all_technique_ids():

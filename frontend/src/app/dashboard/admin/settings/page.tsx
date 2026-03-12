@@ -5,14 +5,15 @@
 
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Settings, Bell, Shield, Database, Slack, Mail, Save, Key, Loader2, CheckCircle, Plus, Trash2, Zap, Globe, Server, Search, Bug, FileText, AlertTriangle, Network } from 'lucide-react'
+import { Settings, Bell, Shield, Database, Slack, Mail, Save, Key, Loader2, CheckCircle, Plus, Trash2, Zap, Globe, Server, Search, Bug, FileText, AlertTriangle, Network, Link2, Unlink, FolderOpen, ChevronRight } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -95,6 +96,7 @@ const FIELD_LABELS: Record<string, string> = {
     token: 'API Token',
     index: 'Index',
     verify_ssl: 'Verify SSL',
+    redirect_uri: 'Redirect URI',
 }
 
 const SECRET_FIELDS = new Set([
@@ -104,6 +106,8 @@ const SECRET_FIELDS = new Set([
 export default function SettingsPage() {
     const { toast } = useToast()
     const confirm = useConfirm()
+    const router = useRouter()
+    const searchParams = useSearchParams()
     const [loading, setLoading] = useState(true)
     const [integrations, setIntegrations] = useState<Integration[]>([])
     const [integrationTypes, setIntegrationTypes] = useState<IntegrationType[]>([])
@@ -132,9 +136,63 @@ export default function SettingsPage() {
     // Category filter
     const [categoryFilter, setCategoryFilter] = useState<string>('all')
 
+    // Google Drive OAuth state
+    const [driveStatus, setDriveStatus] = useState<{
+        configured: boolean; connected: boolean; email?: string;
+        display_name?: string; root_folder_id?: string; root_folder_name?: string; message?: string;
+    } | null>(null)
+    const [driveLoading, setDriveLoading] = useState(false)
+    const [showFolderPicker, setShowFolderPicker] = useState(false)
+    const [driveFolders, setDriveFolders] = useState<{ id: string; name: string; createdTime?: string }[]>([])
+    const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([{ id: 'root', name: 'My Drive' }])
+    const [foldersLoading, setFoldersLoading] = useState(false)
+
+    const loadDriveStatus = useCallback(async () => {
+        try {
+            const res = await api.get<any>('/google-drive/status')
+            setDriveStatus(res)
+        } catch {
+            setDriveStatus(null)
+        }
+    }, [])
+
+    // Handle Google Drive OAuth callback params
+    useEffect(() => {
+        const driveConnected = searchParams.get('drive_connected')
+        const driveToken = searchParams.get('drive_token')
+        const driveRefresh = searchParams.get('drive_refresh')
+        const driveError = searchParams.get('drive_error')
+
+        if (driveError) {
+            toast({ title: 'Google Drive Error', description: driveError, variant: 'destructive' })
+            router.replace('/dashboard/admin/settings')
+            return
+        }
+
+        if (driveConnected === 'true' && driveToken && driveRefresh) {
+            // Complete the OAuth connection
+            setDriveLoading(true)
+            api.post('/google-drive/connect', {
+                access_token: driveToken,
+                refresh_token: driveRefresh,
+            }).then(() => {
+                toast({ title: 'Google Drive Connected', description: 'Your Google Drive account has been linked.' })
+                loadDriveStatus()
+                loadData()
+                setShowFolderPicker(true)
+            }).catch(() => {
+                toast({ title: 'Connection Failed', description: 'Could not save Google Drive tokens.', variant: 'destructive' })
+            }).finally(() => {
+                setDriveLoading(false)
+                router.replace('/dashboard/admin/settings')
+            })
+        }
+    }, [searchParams])  // eslint-disable-line react-hooks/exhaustive-deps
+
     useEffect(() => {
         loadData()
-    }, [])
+        loadDriveStatus()
+    }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
     const loadData = async () => {
         try {
@@ -165,6 +223,80 @@ export default function SettingsPage() {
             setLoading(false)
         }
     }
+
+    // --- Google Drive Connect / Disconnect / Folder picker ---
+    const handleDriveConnect = async () => {
+        setDriveLoading(true)
+        try {
+            const res = await api.post<{ auth_url: string }>('/google-drive/auth')
+            window.location.href = res.auth_url
+        } catch {
+            toast({ title: 'Error', description: 'Could not start Google Drive OAuth flow.', variant: 'destructive' })
+            setDriveLoading(false)
+        }
+    }
+
+    const handleDriveDisconnect = async () => {
+        const confirmed = await confirm({
+            title: 'Disconnect Google Drive',
+            description: 'This will remove the connection to Google Drive. Existing files in Drive will not be deleted.',
+            confirmLabel: 'Disconnect',
+            variant: 'destructive',
+        })
+        if (!confirmed) return
+        try {
+            await api.post('/google-drive/disconnect')
+            toast({ title: 'Disconnected', description: 'Google Drive has been disconnected.' })
+            setDriveStatus(prev => prev ? { ...prev, connected: false, email: undefined, root_folder_id: undefined, root_folder_name: undefined } : null)
+            loadData()
+        } catch {
+            toast({ title: 'Error', description: 'Failed to disconnect Google Drive.', variant: 'destructive' })
+        }
+    }
+
+    const loadDriveFolders = async (parentId: string) => {
+        setFoldersLoading(true)
+        try {
+            const res = await api.get<{ folders: { id: string; name: string; createdTime?: string }[] }>(`/google-drive/folders?parent_id=${parentId}`)
+            setDriveFolders(res.folders || [])
+        } catch {
+            toast({ title: 'Error', description: 'Could not load Google Drive folders.', variant: 'destructive' })
+        } finally {
+            setFoldersLoading(false)
+        }
+    }
+
+    const openFolderPicker = () => {
+        setFolderStack([{ id: 'root', name: 'My Drive' }])
+        setDriveFolders([])
+        setShowFolderPicker(true)
+        loadDriveFolders('root')
+    }
+
+    const navigateToFolder = (folder: { id: string; name: string }) => {
+        setFolderStack(prev => [...prev, folder])
+        loadDriveFolders(folder.id)
+    }
+
+    const navigateBack = (index: number) => {
+        const newStack = folderStack.slice(0, index + 1)
+        setFolderStack(newStack)
+        loadDriveFolders(newStack[newStack.length - 1].id)
+    }
+
+    const selectRootFolder = async () => {
+        const current = folderStack[folderStack.length - 1]
+        try {
+            await api.post('/google-drive/set-root', { folder_id: current.id, folder_name: current.name })
+            toast({ title: 'Root Folder Set', description: `Case folders will be created in "${current.name}".` })
+            setShowFolderPicker(false)
+            loadDriveStatus()
+        } catch {
+            toast({ title: 'Error', description: 'Failed to set root folder.', variant: 'destructive' })
+        }
+    }
+
+    const isGoogleDrive = (typeId: string) => typeId === 'google_drive'
 
     const handleSaveOrg = async () => {
         setSaving('org')
@@ -413,6 +545,7 @@ export default function SettingsPage() {
                             filteredIntegrations.map(integration => {
                                 const typeInfo = getTypeInfo(integration.type)
                                 const catMeta = CATEGORY_META[typeInfo?.category || '']
+                                const isDrive = isGoogleDrive(integration.type)
                                 return (
                                     <Card key={integration.id}>
                                         <CardContent className="flex items-center justify-between p-5">
@@ -428,6 +561,9 @@ export default function SettingsPage() {
                                                         ) : (
                                                             <Badge variant="outline" className="text-muted-foreground text-xs">Disabled</Badge>
                                                         )}
+                                                        {isDrive && driveStatus?.connected && (
+                                                            <Badge variant="outline" className="text-cyan-400 border-cyan-500/30 text-xs">Connected</Badge>
+                                                        )}
                                                     </h4>
                                                     <p className="text-sm text-muted-foreground">
                                                         {typeInfo?.description || integration.type}
@@ -435,6 +571,17 @@ export default function SettingsPage() {
                                                             <span className="ml-2 text-xs opacity-50">· {catMeta.label}</span>
                                                         )}
                                                     </p>
+                                                    {isDrive && driveStatus?.connected && driveStatus.email && (
+                                                        <p className="text-xs mt-1 text-cyan-400/80">
+                                                            {driveStatus.email}
+                                                            {driveStatus.root_folder_name && (
+                                                                <span className="ml-2 text-muted-foreground">· Root: {driveStatus.root_folder_name}</span>
+                                                            )}
+                                                        </p>
+                                                    )}
+                                                    {isDrive && driveStatus && !driveStatus.connected && driveStatus.configured && (
+                                                        <p className="text-xs mt-1 text-amber-400">Not connected — click Connect to link your Google account</p>
+                                                    )}
                                                     {testResult?.id === integration.id && (
                                                         <p className={`text-xs mt-1 ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
                                                             {testResult.success ? '✓' : '✗'} {testResult.message}
@@ -443,6 +590,39 @@ export default function SettingsPage() {
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
+                                                {isDrive && driveStatus?.configured && !driveStatus.connected && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={handleDriveConnect}
+                                                        disabled={driveLoading}
+                                                        className="text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10"
+                                                    >
+                                                        {driveLoading ? (
+                                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                                                        )}
+                                                        Connect
+                                                    </Button>
+                                                )}
+                                                {isDrive && driveStatus?.connected && (
+                                                    <>
+                                                        <Button variant="outline" size="sm" onClick={openFolderPicker}>
+                                                            <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
+                                                            {driveStatus.root_folder_id && driveStatus.root_folder_id !== 'root' ? 'Change Folder' : 'Set Folder'}
+                                                        </Button>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={handleDriveDisconnect}
+                                                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                                                        >
+                                                            <Unlink className="mr-1.5 h-3.5 w-3.5" />
+                                                            Disconnect
+                                                        </Button>
+                                                    </>
+                                                )}
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
@@ -557,7 +737,7 @@ export default function SettingsPage() {
                                         const meta = CATEGORY_META[cat]
                                         return types.map((t, idx) => (
                                             <SelectItem key={t.id} value={t.id}>
-                                                {idx === 0 && meta ? `[${meta.label}] ` : ''}{t.name}
+                                                <span>{idx === 0 && meta ? `[${meta.label}] ` : ''}{t.name}</span>
                                             </SelectItem>
                                         ))
                                     })}
@@ -632,6 +812,68 @@ export default function SettingsPage() {
                         <Button onClick={handleSaveIntegration} disabled={!!saving || !integrationForm.name}>
                             {saving === 'integration' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             {editingIntegration ? 'Update' : 'Create'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Google Drive Folder Picker Dialog */}
+            <Dialog open={showFolderPicker} onOpenChange={setShowFolderPicker}>
+                <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Select Root Folder</DialogTitle>
+                        <DialogDescription>
+                            Choose the Google Drive folder where SheetStorm will create CASE-xxxx directories for each incident.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogBody className="space-y-3">
+                        {/* Breadcrumb navigation */}
+                        <div className="flex items-center gap-1 text-sm flex-wrap">
+                            {folderStack.map((f, i) => (
+                                <span key={f.id} className="flex items-center gap-1">
+                                    {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+                                    <button
+                                        onClick={() => navigateBack(i)}
+                                        className={`hover:underline ${i === folderStack.length - 1 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
+                                    >
+                                        {f.name}
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                        {/* Folder list */}
+                        <div className="border rounded-md divide-y max-h-64 overflow-y-auto">
+                            {foldersLoading ? (
+                                <div className="flex items-center justify-center p-6">
+                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : driveFolders.length === 0 ? (
+                                <div className="p-4 text-sm text-muted-foreground text-center">
+                                    No subfolders here. You can select this folder as the root.
+                                </div>
+                            ) : (
+                                driveFolders.map(folder => (
+                                    <button
+                                        key={folder.id}
+                                        onClick={() => navigateToFolder(folder)}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors text-left"
+                                    >
+                                        <FolderOpen className="h-4 w-4 text-yellow-500 shrink-0" />
+                                        <span className="truncate">{folder.name}</span>
+                                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            Current selection: <span className="font-medium text-foreground">{folderStack[folderStack.length - 1]?.name}</span>
+                        </p>
+                    </DialogBody>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowFolderPicker(false)}>Cancel</Button>
+                        <Button onClick={selectRootFolder}>
+                            <FolderOpen className="mr-2 h-4 w-4" />
+                            Use This Folder
                         </Button>
                     </DialogFooter>
                 </DialogContent>

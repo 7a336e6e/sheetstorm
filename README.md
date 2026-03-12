@@ -10,11 +10,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/api-reference.md">API Reference</a> ·
-  <a href="docs/architecture.md">Architecture</a> ·
-  <a href="docs/development.md">Development</a> ·
-  <a href="docs/configuration.md">Configuration</a> ·
-  <a href="docs/mcp-server-roadmap.md">MCP Server</a>
+  <a href="assets/docs/api-reference.md">API Reference</a> ·
+  <a href="assets/docs/architecture.md">Architecture</a> ·
+  <a href="assets/docs/development.md">Development</a> ·
+  <a href="assets/docs/configuration.md">Configuration</a> ·
+  <a href="assets/docs/mcp-server-roadmap.md">MCP Server</a>
 </p>
 
 ---
@@ -195,7 +195,7 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 
 **Transport:** SSE on port 8811 · **Auth:** OAuth 2.1 with Redis-backed client persistence · **Runtime:** Python 3.12 + FastMCP SDK
 
-> See [MCP Server Roadmap](docs/mcp-server-roadmap.md) for full tool reference, future phases (Velociraptor, cross-incident correlation), and architecture details.
+> See [MCP Server Roadmap](assets/docs/mcp-server-roadmap.md) for full tool reference, future phases (Velociraptor, cross-incident correlation), and architecture details.
 
 ---
 
@@ -234,12 +234,12 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 
 | Doc | Description |
 |-----|-------------|
-| [Architecture](docs/architecture.md) | System design, tech stack, project structure, design system |
-| [API Reference](docs/api-reference.md) | All REST endpoints with methods and descriptions |
-| [WebSocket Events](docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
-| [Configuration](docs/configuration.md) | Environment variables and database schema |
-| [Development](docs/development.md) | Setup guide, useful commands, migration workflow |
-| [MCP Server Roadmap](docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and future phases |
+| [Architecture](assets/docs/architecture.md) | System design, tech stack, project structure, design system |
+| [API Reference](assets/docs/api-reference.md) | All REST endpoints with methods and descriptions |
+| [WebSocket Events](assets/docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
+| [Configuration](assets/docs/configuration.md) | Environment variables and database schema |
+| [Development](assets/docs/development.md) | Setup guide, useful commands, migration workflow |
+| [MCP Server Roadmap](assets/docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and future phases |
 
 ---
 

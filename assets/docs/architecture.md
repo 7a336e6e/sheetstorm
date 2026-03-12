@@ -106,7 +106,8 @@ SheetStorm/
 ├── database/
 │   └── init/                          # SQL schema + role seeds
 │
-├── docs/                              # Technical documentation
+├── assets/
+│   └── docs/                          # Technical documentation
 └── IRSpreadsheet/                     # Sample IR data (HTML)
 ```
 

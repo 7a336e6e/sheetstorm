@@ -28,9 +28,12 @@ interface ArtifactsTabProps {
 interface CustodyEntry {
   id: string
   action: string
-  performed_by: { id: string; name: string }
-  details?: Record<string, unknown>
-  hash_at_action?: string
+  performer: { id: string; name: string } | null
+  performed_by: string
+  verification_result?: string
+  extra_data?: Record<string, unknown>
+  ip_address?: string
+  purpose?: string
   created_at: string
 }
 
@@ -63,7 +66,6 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
   const [loadingDrive, setLoadingDrive] = useState(true)
   const [settingUpCase, setSettingUpCase] = useState(false)
   const [caseSetup, setCaseSetup] = useState(false)
-  const [uploadingToDrive, setUploadingToDrive] = useState<string | null>(null)
 
   const fetchArtifacts = useCallback(async () => {
     try {
@@ -125,10 +127,10 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
   const handleVerify = async (artifact: Artifact) => {
     setVerifying(artifact.id)
     try {
-      const result = await api.post<{ is_valid: boolean; details: Record<string, unknown> }>(
+      const result = await api.post<{ result: string; matches: Record<string, boolean> }>(
         `/incidents/${incidentId}/artifacts/${artifact.id}/verify`
       )
-      if (result.is_valid) {
+      if (result.result === 'match') {
         toast({ title: 'Verification Passed', description: 'File integrity verified — hashes match' })
       } else {
         toast({ title: 'Verification Failed', description: 'Hash mismatch detected!', variant: 'destructive' })
@@ -160,10 +162,10 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
     setCustodyArtifact(artifact)
     setLoadingCustody(true)
     try {
-      const res = await api.get<{ items: CustodyEntry[] }>(
+      const res = await api.get<{ chain_of_custody: CustodyEntry[] }>(
         `/incidents/${incidentId}/artifacts/${artifact.id}/custody`
       )
-      setCustodyEntries(res.items || [])
+      setCustodyEntries(res.chain_of_custody || [])
     } catch {
       setCustodyEntries([])
     } finally {
@@ -210,30 +212,6 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
       })
     } finally {
       setSettingUpCase(false)
-    }
-  }
-
-  const handleUploadToDrive = async (artifact: Artifact) => {
-    setUploadingToDrive(artifact.id)
-    try {
-      const result = await api.post<{ message: string; web_link?: string }>(
-        `/incidents/${incidentId}/google-drive/upload`,
-        { artifact_id: artifact.id, subfolder: 'Artifacts' }
-      )
-      toast({
-        title: 'Uploaded to Google Drive',
-        description: result.web_link
-          ? `${artifact.original_filename} uploaded successfully`
-          : result.message,
-      })
-    } catch (err) {
-      toast({
-        title: 'Upload Failed',
-        description: err instanceof Error ? err.message : 'Failed to upload to Drive',
-        variant: 'destructive',
-      })
-    } finally {
-      setUploadingToDrive(null)
     }
   }
 
@@ -351,6 +329,7 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                   <TableHead>File</TableHead>
                   <TableHead>Size</TableHead>
                   <TableHead>SHA-256</TableHead>
+                  <TableHead>Storage</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Uploaded</TableHead>
                   <TableHead className="w-[180px]">Actions</TableHead>
@@ -360,14 +339,14 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                 {loading ? (
                   Array.from({ length: 3 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((_, j) => (
+                      {Array.from({ length: 7 }).map((_, j) => (
                         <TableCell key={j}><div className="h-4 bg-black/5 dark:bg-white/5 rounded animate-pulse" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : filteredArtifacts.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6}>
+                    <TableCell colSpan={7}>
                       <TableEmpty
                         title={search ? 'No matching artifacts' : 'No artifacts yet'}
                         description={search ? 'Try adjusting your search criteria.' : 'Upload digital evidence files to maintain a verified chain of custody for this incident.'}
@@ -396,6 +375,24 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                         </code>
                       </TableCell>
                       <TableCell>
+                        {artifact.storage_type === 'google_drive' ? (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-blue-500/30 text-blue-400">
+                            <HardDrive className="h-3 w-3" />
+                            Google Drive
+                          </Badge>
+                        ) : artifact.storage_type === 's3' ? (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-amber-500/30 text-amber-400">
+                            <FolderOpen className="h-3 w-3" />
+                            S3
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-white/20 text-muted-foreground">
+                            <FolderOpen className="h-3 w-3" />
+                            Local
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <div className="flex items-center gap-1.5">
                           <VerificationIcon status={artifact.verification_status} />
                           <span className="text-xs capitalize">{artifact.verification_status}</span>
@@ -405,21 +402,17 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                         {formatDateTime(artifact.created_at)}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1">
                           <Button variant="ghost" size="sm" onClick={() => handleDownload(artifact)} title="Download">
                             <Download className="h-4 w-4" />
                           </Button>
-                          {driveStatus?.connected && (
+                          {artifact.extra_data?.google_drive_web_link && (
                             <Button
                               variant="ghost" size="sm"
-                              onClick={() => handleUploadToDrive(artifact)}
-                              disabled={uploadingToDrive === artifact.id}
-                              title="Upload to Google Drive"
+                              title="Open in Google Drive"
+                              onClick={() => window.open(artifact.extra_data?.google_drive_web_link, '_blank', 'noopener,noreferrer')}
                             >
-                              {uploadingToDrive === artifact.id
-                                ? <Loader2 className="h-4 w-4 animate-spin" />
-                                : <HardDrive className="h-4 w-4" />
-                              }
+                              <ExternalLink className="h-4 w-4 text-blue-400" />
                             </Button>
                           )}
                           <Button
@@ -488,14 +481,19 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                     <div className="flex-1 min-w-0 pb-4">
                       <p className="text-sm font-medium capitalize">{entry.action}</p>
                       <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                        <User className="h-3 w-3" /> {entry.performed_by?.name || 'System'}
+                        <User className="h-3 w-3" /> {entry.performer?.name || 'System'}
                         <span className="mx-1">·</span>
                         {formatDateTime(entry.created_at)}
                       </p>
-                      {entry.hash_at_action && (
-                        <code className="text-[10px] text-muted-foreground font-mono mt-1 block">
-                          SHA-256: {entry.hash_at_action.slice(0, 24)}...
-                        </code>
+                      {entry.verification_result && (
+                        <p className={`text-[10px] mt-1 ${entry.verification_result === 'match' ? 'text-green-400' : 'text-red-400'}`}>
+                          Integrity: {entry.verification_result}
+                        </p>
+                      )}
+                      {entry.ip_address && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          IP: {entry.ip_address}
+                        </p>
                       )}
                     </div>
                   </div>

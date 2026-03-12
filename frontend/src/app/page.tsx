@@ -97,7 +97,7 @@ export default function LandingPage() {
             {/* Badge */}
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-sm mb-8">
               <Zap className="h-4 w-4" />
-              <span>Powered by MITRE ATT&CK Framework</span>
+              <span>Powered by the Security Community</span>
             </div>
 
             {/* Headline */}
@@ -116,31 +116,10 @@ export default function LandingPage() {
             <div className="flex flex-col sm:flex-row justify-center gap-4">
               <Link href="/register">
                 <Button size="lg">
-                  Start Free Trial
+                  Get Started
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </Link>
-              <Link href="/login">
-                <Button size="lg" variant="outline">
-                  View Demo
-                </Button>
-              </Link>
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-8 max-w-xl mx-auto mt-16 pt-8 border-t border-border">
-              <div className="text-center">
-                <div className="text-2xl lg:text-3xl font-bold">99.9%</div>
-                <div className="text-sm text-muted-foreground mt-1">Uptime SLA</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl lg:text-3xl font-bold">&lt;5min</div>
-                <div className="text-sm text-muted-foreground mt-1">Setup Time</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl lg:text-3xl font-bold">SOC 2</div>
-                <div className="text-sm text-muted-foreground mt-1">Compliant</div>
-              </div>
             </div>
           </div>
         </section>
@@ -217,13 +196,8 @@ export default function LandingPage() {
                 <div className="flex flex-col sm:flex-row justify-center gap-4">
                   <Link href="/register">
                     <Button size="lg">
-                      Start Free Trial
+                      Get Started
                       <ArrowRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <Link href="/login">
-                    <Button size="lg" variant="outline">
-                      Contact Sales
                     </Button>
                   </Link>
                 </div>
@@ -242,7 +216,7 @@ export default function LandingPage() {
               <span className="font-semibold">SheetStorm</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Built for security teams. Powered by MITRE ATT&CK. Made with care.
+              Built for security teams. Made with care.
             </p>
             <div className="flex items-center gap-6 text-sm text-muted-foreground">
               <Link href="#" className="hover:text-foreground transition-colors">Privacy</Link>

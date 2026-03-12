@@ -41,7 +41,7 @@ import {
   TableEmpty,
 } from '@/components/ui/table'
 import { SkeletonTableRow, Skeleton } from '@/components/ui/skeleton'
-import { useIncidentStore } from '@/lib/store'
+import { useIncidentStore, useAuthStore } from '@/lib/store'
 import { formatDateTime, formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
@@ -80,6 +80,8 @@ import {
   Send,
   Search,
   Star,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 
 // Import new Tab Components
@@ -252,6 +254,112 @@ function TLPBadge({ tlp }: { tlp: string }) {
   )
 }
 
+// --- Collapsible Description Block ---
+const DESCRIPTION_COLLAPSE_THRESHOLD = 300 // characters
+
+function DescriptionBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = text.length > DESCRIPTION_COLLAPSE_THRESHOLD
+
+  return (
+    <div className="max-w-full">
+      <div
+        className={`text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words ${
+          !expanded && isLong ? 'line-clamp-4' : ''
+        }`}
+      >
+        {text}
+      </div>
+      {isLong && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="inline-flex items-center gap-1 mt-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+        >
+          {expanded ? (
+            <>Show less <ChevronUp className="h-3 w-3" /></>
+          ) : (
+            <>Show more <ChevronDown className="h-3 w-3" /></>
+          )}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// --- Lead Responder Selector (inline in Details card) ---
+function LeadResponderSelector({
+  incidentId,
+  currentLead,
+  onUpdated,
+}: {
+  incidentId: string
+  currentLead?: { id: string; name: string } | null
+  onUpdated: () => void
+}) {
+  const { hasPermission } = useAuthStore()
+  const canEdit = hasPermission('incidents:update')
+  const [editing, setEditing] = useState(false)
+  const [users, setUsers] = useState<UserType[]>([])
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (editing && users.length === 0) {
+      api.get<{ items: UserType[] }>('/users?per_page=200').then((data) => setUsers(data.items)).catch(() => {})
+    }
+  }, [editing, users.length])
+
+  const handleChange = async (userId: string) => {
+    setSaving(true)
+    try {
+      await api.put(`/incidents/${incidentId}`, { lead_responder_id: userId })
+      onUpdated()
+      setEditing(false)
+    } catch {
+      // handled by api client
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing && canEdit) {
+    return (
+      <div className="space-y-2">
+        <Select onValueChange={handleChange} disabled={saving}>
+          <SelectTrigger className="h-8 text-sm">
+            <SelectValue placeholder={saving ? 'Saving...' : 'Select lead responder'} />
+          </SelectTrigger>
+          <SelectContent>
+            {users.map((u) => (
+              <SelectItem key={u.id} value={u.id}>
+                {u.name} <span className="text-muted-foreground ml-1 text-xs">{u.email}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="ghost" size="sm" className="text-xs h-6" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={`flex items-center gap-2 ${canEdit ? 'cursor-pointer group' : ''}`}
+      onClick={() => canEdit && setEditing(true)}
+      title={canEdit ? 'Click to change lead responder' : undefined}
+    >
+      <div className="w-7 h-7 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-xs font-medium">
+        {currentLead?.name?.charAt(0) || '?'}
+      </div>
+      <span className="font-medium text-foreground">{currentLead?.name || 'Unassigned'}</span>
+      {canEdit && (
+        <Edit2 className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+      )}
+    </div>
+  )
+}
+
 // --- Main Page Component ---
 export default function IncidentDetailPage() {
   const params = useParams()
@@ -276,6 +384,7 @@ export default function IncidentDetailPage() {
   const [showReportModal, setShowReportModal] = useState(false)
   const [selectedReportType, setSelectedReportType] = useState('executive')
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [assignmentsKey, setAssignmentsKey] = useState(0)
   const { toast } = useToast()
 
   // Edit Forms
@@ -644,7 +753,7 @@ export default function IncidentDetailPage() {
           </Link>
 
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-            <div className="space-y-3">
+            <div className="space-y-3 min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-mono text-sm text-muted-foreground">
                   #{incident.incident_number}
@@ -656,7 +765,7 @@ export default function IncidentDetailPage() {
               </div>
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{incident.title}</h1>
               {incident.description && (
-                <p className="text-muted-foreground max-w-2xl">{incident.description}</p>
+                <DescriptionBlock text={incident.description} />
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -865,12 +974,11 @@ export default function IncidentDetailPage() {
                         )}
                         <div>
                           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Lead Responder</p>
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-xs font-medium">
-                              {incident.lead_responder?.name?.charAt(0) || '?'}
-                            </div>
-                            <span className="font-medium text-foreground">{incident.lead_responder?.name || 'Unassigned'}</span>
-                          </div>
+                          <LeadResponderSelector
+                            incidentId={incidentId}
+                            currentLead={incident.lead_responder as any}
+                            onUpdated={() => { fetchIncident(incidentId); setAssignmentsKey(k => k + 1) }}
+                          />
                         </div>
                         {incident.teams && incident.teams.length > 0 && (
                           <div>
@@ -912,7 +1020,7 @@ export default function IncidentDetailPage() {
                       </CardContent>
                     </Card>
 
-                    <AssignmentsPanel incidentId={incidentId} />
+                    <AssignmentsPanel incidentId={incidentId} refreshKey={assignmentsKey} />
                   </div>
                 </div>
               )

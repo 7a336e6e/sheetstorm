@@ -28,7 +28,7 @@ class ChainOfCustodyService:
             performed_by=user_id,
             ip_address=request.remote_addr if request else None,
             user_agent=request.headers.get('User-Agent', '')[:500] if request else None,
-            metadata={
+            extra_data={
                 'original_filename': artifact.original_filename,
                 'file_size': artifact.file_size,
                 'source': source,
@@ -100,7 +100,7 @@ class ChainOfCustodyService:
             user_agent=request.headers.get('User-Agent', '')[:500] if request else None,
             purpose=purpose,
             verification_result=verification_result,
-            metadata={
+            extra_data={
                 'filename': artifact.original_filename,
                 'file_size': artifact.file_size,
             }
@@ -191,7 +191,7 @@ class ChainOfCustodyService:
             ip_address=request.remote_addr if request else None,
             user_agent=request.headers.get('User-Agent', '')[:500] if request else None,
             verification_result=result,
-            metadata={
+            extra_data={
                 'computed_hashes': computed_hashes,
                 'stored_hashes': {
                     'md5': artifact.md5,

@@ -58,6 +58,9 @@ class BaseConfig:
     # Slack
     SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')
 
+    # Frontend URL (for OAuth redirects etc.)
+    FRONTEND_URL = os.getenv('FRONTEND_URL', '')
+
     # File uploads
     MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max upload
 

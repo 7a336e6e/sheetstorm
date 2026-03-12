@@ -29,8 +29,36 @@ class GoogleDriveService:
         self._credentials_cache: Dict[str, Any] = {}
 
     @staticmethod
+    def _get_db_credentials() -> Optional[Dict[str, str]]:
+        """Try to load Google Drive credentials from the DB integration record."""
+        try:
+            from app.services.integration_config import config_resolver
+            resolved = config_resolver.get_credentials('google_drive')
+            if resolved and resolved.get('client_id') and resolved.get('client_secret'):
+                return resolved
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def get_oauth_config() -> Dict[str, str]:
-        """Get Google OAuth2 configuration from app config."""
+        """Get Google OAuth2 configuration — DB integration first, env fallback."""
+        # Try DB-stored integration credentials first
+        db_creds = GoogleDriveService._get_db_credentials()
+        if db_creds:
+            return {
+                'client_id': db_creds.get('client_id', ''),
+                'client_secret': db_creds.get('client_secret', ''),
+                'redirect_uri': db_creds.get(
+                    'redirect_uri',
+                    current_app.config.get(
+                        'GOOGLE_DRIVE_REDIRECT_URI',
+                        'http://127.0.0.1:5000/api/v1/google-drive/oauth/callback'
+                    ),
+                ),
+            }
+
+        # Fallback to environment variables
         return {
             'client_id': current_app.config.get('GOOGLE_DRIVE_CLIENT_ID', ''),
             'client_secret': current_app.config.get('GOOGLE_DRIVE_CLIENT_SECRET', ''),
@@ -42,7 +70,10 @@ class GoogleDriveService:
 
     @staticmethod
     def is_configured() -> bool:
-        """Check if Google Drive OAuth is configured."""
+        """Check if Google Drive OAuth is configured (DB or env)."""
+        db_creds = GoogleDriveService._get_db_credentials()
+        if db_creds:
+            return True
         return bool(
             current_app.config.get('GOOGLE_DRIVE_CLIENT_ID')
             and current_app.config.get('GOOGLE_DRIVE_CLIENT_SECRET')
@@ -64,7 +95,7 @@ class GoogleDriveService:
             'client_id': config['client_id'],
             'redirect_uri': config['redirect_uri'],
             'response_type': 'code',
-            'scope': 'https://www.googleapis.com/auth/drive.file',
+            'scope': 'https://www.googleapis.com/auth/drive',
             'access_type': 'offline',
             'prompt': 'consent',
             'state': state,
@@ -367,6 +398,33 @@ class GoogleDriveService:
             headers=self._get_headers(access_token),
         )
         return response.status_code == 204
+
+    def download_file(self, access_token: str, file_id: str) -> Optional[bytes]:
+        """Download a file's content from Google Drive.
+
+        Args:
+            access_token: Valid Google access token
+            file_id: Google Drive file ID
+
+        Returns:
+            File content as bytes, or None on failure
+        """
+        import requests
+
+        # Use only Authorization header for binary download (no Accept: application/json)
+        # acknowledgeAbuse=true is required for IR platforms — Google may flag
+        # uploaded malware samples / suspicious artifacts as abusive content.
+        response = requests.get(
+            f'https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&acknowledgeAbuse=true',
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        if response.status_code == 200:
+            return response.content
+        current_app.logger.warning(
+            f"Google Drive download failed: status={response.status_code}, "
+            f"file_id={file_id}, response={response.text[:500]}"
+        )
+        return None
 
 
 # Singleton instance

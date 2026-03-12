@@ -210,7 +210,7 @@ export interface Artifact {
   incident_id: string
   filename: string
   original_filename: string
-  storage_type: 'local' | 's3'
+  storage_type: 'local' | 's3' | 'google_drive'
   mime_type?: string
   file_size: number
   md5: string
@@ -222,6 +222,10 @@ export interface Artifact {
   is_verified: boolean
   verification_status: 'verified' | 'mismatch' | 'pending'
   uploader?: { id: string; name: string }
+  extra_data?: {
+    google_drive_file_id?: string
+    google_drive_web_link?: string
+  }
   created_at: string
 }
 

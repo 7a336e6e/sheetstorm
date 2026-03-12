@@ -842,7 +842,7 @@ function AddEventDialog({
                                     onBlur={() => setTimeout(() => setTechSearch(''), 200)}
                                 />
                                 {techSearch && filteredTechniques.length > 0 && (
-                                    <div className="absolute z-50 top-full mt-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                    <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
                                         {filteredTechniques.map(t => (
                                             <button
                                                 key={t.id}

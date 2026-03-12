@@ -14,6 +14,34 @@ from app.services.encryption_service import encryption_service
 logger = logging.getLogger(__name__)
 
 
+def _extract_threat_labels(classification: dict) -> list[str]:
+    """Safely extract popular threat labels from VirusTotal classification data.
+
+    The ``suggested_threat_label`` field can be either:
+      - a plain string  (e.g. ``"trojan.generickd"``)
+      - a list of dicts (e.g. ``[{"value": "trojan.generickd"}]``)
+    This helper handles both forms gracefully.
+    """
+    if not classification:
+        return []
+    raw = classification.get('suggested_threat_label')
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw] if raw else []
+    if isinstance(raw, list):
+        labels = []
+        for item in raw:
+            if isinstance(item, dict):
+                val = item.get('value')
+                if val:
+                    labels.append(val)
+            elif isinstance(item, str) and item:
+                labels.append(item)
+        return labels
+    return []
+
+
 @api_bp.route('/threat-intel/virustotal/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
@@ -110,9 +138,9 @@ def virustotal_lookup():
                 'first_seen': attrs.get('first_submission_date'),
                 'last_seen': attrs.get('last_analysis_date'),
                 'tags': attrs.get('tags', []),
-                'popular_threat_names': [
-                    r.get('value') for r in attrs.get('popular_threat_classification', {}).get('suggested_threat_label', [])
-                ] if attrs.get('popular_threat_classification') else [],
+                'popular_threat_names': _extract_threat_labels(
+                    attrs.get('popular_threat_classification', {})
+                ),
             })
         elif lookup_type in ('domain', 'ip'):
             stats = attrs.get('last_analysis_stats', {})

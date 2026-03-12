@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
@@ -85,6 +86,14 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
     const [techToTactic, setTechToTactic] = useState<Record<string, string>>({})
     const [allTechniques, setAllTechniques] = useState<{ id: string; name: string }[]>([])
     const [techSearch, setTechSearch] = useState('')
+    const techInputRef = useRef<HTMLInputElement>(null)
+    const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
+
+    const updateDropdownPos = useCallback(() => {
+        if (!techInputRef.current) return
+        const rect = techInputRef.current.getBoundingClientRect()
+        setDropdownPos({ top: rect.top, left: rect.left, width: rect.width })
+    }, [])
 
     // Fetch MITRE ATT&CK form data once on dialog open
     useEffect(() => {
@@ -406,14 +415,25 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                 <Label>Technique ID</Label>
                                 <div className="relative">
                                     <Input
+                                        ref={techInputRef}
                                         value={techSearch || form.mitre_technique}
                                         onChange={e => handleTechniqueInput(e.target.value)}
                                         placeholder="Search T1059 or name..."
-                                        onFocus={() => setTechSearch(form.mitre_technique)}
+                                        onFocus={() => { setTechSearch(form.mitre_technique); setTimeout(updateDropdownPos, 0) }}
                                         onBlur={() => setTimeout(() => setTechSearch(''), 200)}
                                     />
-                                    {techSearch && filteredTechniques.length > 0 && (
-                                        <div className="absolute z-50 top-full mt-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                    {techSearch && filteredTechniques.length > 0 && dropdownPos && createPortal(
+                                        <div
+                                            style={{
+                                                position: 'fixed',
+                                                top: dropdownPos.top,
+                                                left: dropdownPos.left,
+                                                width: dropdownPos.width,
+                                                transform: 'translateY(-100%)',
+                                                zIndex: 99999,
+                                            }}
+                                            className="max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg"
+                                        >
                                             {filteredTechniques.map(t => (
                                                 <button
                                                     key={t.id}
@@ -425,7 +445,8 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                                     <span className="truncate">{t.name}</span>
                                                 </button>
                                             ))}
-                                        </div>
+                                        </div>,
+                                        document.body
                                     )}
                                 </div>
                             </div>

@@ -83,12 +83,8 @@ const config: Config = {
           "50%": { opacity: "0.8", boxShadow: "0 0 20px -4px hsl(var(--primary))" },
         },
         "phase-pulse": {
-          "0%, 100%": { boxShadow: "0 0 0 0 rgba(6,182,212,0.5), 0 0 12px rgba(6,182,212,0.3)" },
-          "50%": { boxShadow: "0 0 0 8px rgba(6,182,212,0), 0 0 20px rgba(6,182,212,0.15)" },
-        },
-        "phase-scan": {
-          "0%": { transform: "rotate(0deg)" },
-          "100%": { transform: "rotate(360deg)" },
+          "0%, 100%": { boxShadow: "0 0 8px rgba(6,182,212,0.15)" },
+          "50%": { boxShadow: "0 0 18px rgba(6,182,212,0.30)" },
         },
         "line-fill": {
           "0%": { backgroundPosition: "100% 0" },
@@ -105,8 +101,7 @@ const config: Config = {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "pulse-glow": "pulse-glow 65s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-        "phase-pulse": "phase-pulse 65s ease-in-out infinite",
-        "phase-scan": "phase-scan 22s linear infinite",
+        "phase-pulse": "phase-pulse 4s ease-in-out infinite",
         "line-fill": "line-fill 1.5s ease-out forwards",
         "data-flow": "data-flow 6s linear infinite",
       },

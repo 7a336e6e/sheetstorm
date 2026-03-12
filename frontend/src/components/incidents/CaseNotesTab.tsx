@@ -199,7 +199,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {[1, 2, 3].map(i => (
-            <div key={i} className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
+            <div key={i} className="rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 p-4 space-y-3">
               <Skeleton className="h-5 w-1/3" />
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-2/3" />
@@ -276,7 +276,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                 return (
                   <div
                     key={note.id}
-                    className={`rounded-xl bg-white/5 border p-4 ${note.is_pinned ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-white/10'}`}
+                    className={`rounded-xl bg-black/5 dark:bg-white/5 border p-4 ${note.is_pinned ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-black/10 dark:border-white/10'}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -383,7 +383,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                 id="pin-note"
                 checked={form.is_pinned}
                 onChange={e => setForm({ ...form, is_pinned: e.target.checked })}
-                className="rounded border-white/20 bg-white/5"
+                className="rounded border-black/10 dark:border-white/20 bg-black/5 dark:bg-white/5"
               />
               <Label htmlFor="pin-note" className="text-sm cursor-pointer">Pin this note to the top</Label>
             </div>

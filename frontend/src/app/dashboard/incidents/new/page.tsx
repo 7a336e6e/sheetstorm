@@ -208,7 +208,7 @@ export default function NewIncidentPage() {
                       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-left transition-colors ${
                         selectedTeamIds.includes(team.id)
                           ? 'border-blue-500 bg-blue-500/10 text-blue-400'
-                          : 'border-white/10 bg-white/5 text-muted-foreground hover:border-white/20'
+                          : 'border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 text-muted-foreground hover:border-black/10 dark:hover:border-white/20'
                       }`}
                     >
                       <Users className="h-3.5 w-3.5 shrink-0" />

@@ -22,6 +22,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import {
     Table,
     TableBody,
@@ -70,12 +71,15 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
         dns_ip: '',
         source_host: '',
         destination_host: '',
+        source_host_id: '',
+        destination_host_id: '',
         direction: 'outbound',
         host_id: '',
         timeline_event_id: '',
         description: '',
         is_malicious: true,
         threat_intel_source: '',
+        add_to_attack_graph: false,
     })
 
     useEffect(() => {
@@ -103,7 +107,9 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
     const resetForm = () => {
         setForm({
             timestamp: '', protocol: '', port: '', dns_ip: '', source_host: '', destination_host: '',
-            direction: 'outbound', host_id: '', timeline_event_id: '', description: '', is_malicious: true, threat_intel_source: ''
+            source_host_id: '', destination_host_id: '',
+            direction: 'outbound', host_id: '', timeline_event_id: '', description: '', is_malicious: true, threat_intel_source: '',
+            add_to_attack_graph: false,
         })
         setEditingItem(null)
     }
@@ -118,12 +124,15 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                 dns_ip: item.dns_ip,
                 source_host: item.source_host || '',
                 destination_host: item.destination_host || '',
+                source_host_id: item.source_host_id || '',
+                destination_host_id: item.destination_host_id || '',
                 direction: item.direction || 'outbound',
                 host_id: item.host_id || '',
                 timeline_event_id: item.timeline_event_id || '',
                 description: item.description || '',
                 is_malicious: item.is_malicious,
                 threat_intel_source: item.threat_intel_source || '',
+                add_to_attack_graph: false,
             })
         } else {
             resetForm()
@@ -135,19 +144,25 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
         if (!form.dns_ip) return
         setIsSubmitting(true)
         try {
-            const payload = {
+            const payload: Record<string, any> = {
                 timestamp: form.timestamp || null,
                 protocol: form.protocol || null,
                 port: form.port ? parseInt(form.port) : null,
                 dns_ip: form.dns_ip,
                 source_host: form.source_host || null,
                 destination_host: form.destination_host || null,
+                source_host_id: form.source_host_id || null,
+                destination_host_id: form.destination_host_id || null,
                 direction: form.direction,
                 host_id: form.host_id || null,
                 timeline_event_id: form.timeline_event_id || null,
                 description: form.description || null,
                 is_malicious: form.is_malicious,
                 threat_intel_source: form.threat_intel_source || null,
+            }
+
+            if (!editingItem && form.add_to_attack_graph) {
+                payload.add_to_attack_graph = true
             }
 
             if (editingItem) {
@@ -218,8 +233,8 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                                     <TableHead>Direction</TableHead>
                                     <TableHead>Value (IP/DNS)</TableHead>
                                     <TableHead>Protocol/Port</TableHead>
-                                    <TableHead>Timestamp</TableHead>
-                                    <TableHead>Host Correlation</TableHead>
+                                    <TableHead>Source Host</TableHead>
+                                    <TableHead>Dest Host</TableHead>
                                     <TableHead>Description</TableHead>
                                     <TableHead className="w-[50px]"></TableHead>
                                 </TableRow>
@@ -238,14 +253,22 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                                         <TableRow key={item.id} className="group">
                                             <TableCell>
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-white/5">{getDirectionIcon(item.direction || '')}</div>
+                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getDirectionIcon(item.direction || '')}</div>
                                                     <span className="capitalize text-xs">{item.direction}</span>
                                                 </div>
                                             </TableCell>
                                             <TableCell className="font-mono text-sm">{item.dns_ip}</TableCell>
                                             <TableCell>{item.protocol} {item.port ? `:${item.port}` : ''}</TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">{item.timestamp ? formatDateTime(item.timestamp) : '-'}</TableCell>
-                                            <TableCell>{item.host_id ? hosts.find(h => h.id === item.host_id)?.hostname : '-'}</TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                                {item.source_host_id
+                                                    ? hosts.find(h => h.id === item.source_host_id)?.hostname
+                                                    : item.source_host || '-'}
+                                            </TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                                {item.destination_host_id
+                                                    ? hosts.find(h => h.id === item.destination_host_id)?.hostname
+                                                    : item.destination_host || '-'}
+                                            </TableCell>
                                             <TableCell className="text-sm text-muted-foreground">{item.description || '-'}</TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-1">
@@ -296,7 +319,20 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Protocol</Label>
-                                <Input value={form.protocol} onChange={e => setForm({ ...form, protocol: e.target.value })} placeholder="TCP/UDP" variant="glass" />
+                                <Select value={form.protocol} onValueChange={v => setForm({ ...form, protocol: v })}>
+                                    <SelectTrigger variant="glass"><SelectValue placeholder="Select Protocol" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="TCP">TCP</SelectItem>
+                                        <SelectItem value="UDP">UDP</SelectItem>
+                                        <SelectItem value="HTTP">HTTP</SelectItem>
+                                        <SelectItem value="HTTPS">HTTPS</SelectItem>
+                                        <SelectItem value="DNS">DNS</SelectItem>
+                                        <SelectItem value="ICMP">ICMP</SelectItem>
+                                        <SelectItem value="SMB">SMB</SelectItem>
+                                        <SelectItem value="RDP">RDP</SelectItem>
+                                        <SelectItem value="SSH">SSH</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                             <div className="space-y-2">
                                 <Label>Port</Label>
@@ -304,20 +340,76 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label>Observed on Host</Label>
-                            <Select value={form.host_id} onValueChange={v => setForm({ ...form, host_id: v })}>
-                                <SelectTrigger variant="glass"><SelectValue placeholder="Select Host" /></SelectTrigger>
-                                <SelectContent>
-                                    {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                        {/* Source / Destination Host Selection */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label>Source Host</Label>
+                                <Combobox
+                                    options={hosts.map(h => ({
+                                        value: h.id,
+                                        label: h.hostname + (h.ip_address ? ` (${h.ip_address})` : ''),
+                                        description: h.ip_address || undefined,
+                                    }))}
+                                    value={form.source_host_id}
+                                    onChange={v => {
+                                        const host = hosts.find(h => h.id === v)
+                                        setForm({
+                                            ...form,
+                                            source_host_id: host ? v : '',
+                                            source_host: host ? '' : v,
+                                        })
+                                    }}
+                                    placeholder="Type IP/hostname or select..."
+                                    allowCustom
+                                    variant="glass"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Destination Host</Label>
+                                <Combobox
+                                    options={hosts.map(h => ({
+                                        value: h.id,
+                                        label: h.hostname + (h.ip_address ? ` (${h.ip_address})` : ''),
+                                        description: h.ip_address || undefined,
+                                    }))}
+                                    value={form.destination_host_id}
+                                    onChange={v => {
+                                        const host = hosts.find(h => h.id === v)
+                                        setForm({
+                                            ...form,
+                                            destination_host_id: host ? v : '',
+                                            destination_host: host ? '' : v,
+                                        })
+                                    }}
+                                    placeholder="Type IP/hostname or select..."
+                                    allowCustom
+                                    variant="glass"
+                                />
+                            </div>
                         </div>
 
                         <div className="space-y-2">
                             <Label>Description</Label>
                             <Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} variant="glass" />
                         </div>
+
+                        {/* Attack Graph Integration */}
+                        {!editingItem && (
+                            <div className="flex items-center gap-2 p-3 rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]">
+                                <input
+                                    type="checkbox"
+                                    checked={form.add_to_attack_graph}
+                                    onChange={e => setForm({ ...form, add_to_attack_graph: e.target.checked })}
+                                    className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
+                                />
+                                <div>
+                                    <Label className="cursor-pointer">Add to Attack Graph</Label>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Automatically create an attack graph node for this network indicator
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                     </DialogBody>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>

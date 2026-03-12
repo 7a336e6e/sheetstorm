@@ -23,11 +23,11 @@ function AccountNode({ data, selected }: NodeProps<GraphNode>) {
 
   return (
     <div
-      className={`relative min-w-[140px] max-w-[180px] bg-card rounded-full shadow-lg border ${selected ? 'border-cyan-500/50' : 'border-border'
+      className={`relative min-w-[140px] max-w-[180px] bg-card rounded-xl shadow-lg border overflow-hidden ${selected ? 'border-cyan-500/50' : 'border-border'
         }`}
     >
-      {/* Gradient header strip - thin top line for pill shape */}
-      <div className="h-1 rounded-t-full bg-gradient-to-r from-emerald-500 to-emerald-400" />
+      {/* Gradient header strip */}
+      <div className="h-1 bg-gradient-to-r from-emerald-500 to-emerald-400" />
 
       <div className="px-3 py-2">
         {/* Icon + label row */}

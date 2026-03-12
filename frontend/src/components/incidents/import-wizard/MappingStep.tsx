@@ -130,7 +130,7 @@ export function MappingStep({ parsedData, onMappingComplete, onBack }: MappingSt
 
                 {parsedData.sheets.map(sheet => (
                     <TabsContent key={sheet.name} value={sheet.name} className="space-y-4">
-                        <div className="flex items-center gap-4 bg-white/5 p-4 rounded-lg border border-white/10">
+                        <div className="flex items-center gap-4 bg-black/5 dark:bg-white/5 p-4 rounded-lg border border-black/10 dark:border-white/10">
                             <span className="text-sm font-medium whitespace-nowrap">Map this sheet to:</span>
                             <Select
                                 value={mapping[sheet.name]?.targetEntity}
@@ -200,7 +200,7 @@ export function MappingStep({ parsedData, onMappingComplete, onBack }: MappingSt
                 ))}
             </Tabs>
 
-            <div className="flex justify-between pt-4 border-t border-white/10">
+            <div className="flex justify-between pt-4 border-t border-black/10 dark:border-white/10">
                 <Button variant="ghost" onClick={onBack}>
                     <ArrowLeft className="mr-2 h-4 w-4" /> Upload
                 </Button>

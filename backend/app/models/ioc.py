@@ -18,8 +18,10 @@ class NetworkIndicator(BaseModel):
     protocol = Column(String(20))
     port = Column(Integer)
     dns_ip = Column(String(255), nullable=False)
-    source_host = Column(String(255))  # Keep for backwards compatibility
-    destination_host = Column(String(255))
+    source_host = Column(String(255))  # Keep for backwards compatibility (free-text)
+    destination_host = Column(String(255))  # Keep for backwards compatibility (free-text)
+    source_host_id = Column(UUID(as_uuid=True), ForeignKey('compromised_hosts.id', ondelete='SET NULL'), nullable=True)
+    destination_host_id = Column(UUID(as_uuid=True), ForeignKey('compromised_hosts.id', ondelete='SET NULL'), nullable=True)
     direction = Column(String(20))
     description = Column(Text)
     is_malicious = Column(Boolean, default=True)
@@ -30,7 +32,9 @@ class NetworkIndicator(BaseModel):
 
     # Relationships
     incident = relationship('Incident', back_populates='network_indicators')
-    host = relationship('CompromisedHost', back_populates='network_indicators')
+    host = relationship('CompromisedHost', foreign_keys=[host_id], back_populates='network_indicators')
+    source_host_ref = relationship('CompromisedHost', foreign_keys=[source_host_id])
+    destination_host_ref = relationship('CompromisedHost', foreign_keys=[destination_host_id])
     timeline_event = relationship('TimelineEvent')
     creator = relationship('User')
 
@@ -45,9 +49,15 @@ class NetworkIndicator(BaseModel):
         data = super().to_dict()
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
         data['host'] = self.host.to_dict() if self.host else None
+        data['source_host_id'] = str(self.source_host_id) if self.source_host_id else None
+        data['destination_host_id'] = str(self.destination_host_id) if self.destination_host_id else None
+        data['source_host_ref'] = self.source_host_ref.to_dict() if self.source_host_ref else None
+        data['destination_host_ref'] = self.destination_host_ref.to_dict() if self.destination_host_ref else None
         # Keep source_host for backwards compatibility
-        if not data.get('source_host') and self.host:
-            data['source_host'] = self.host.hostname
+        if not data.get('source_host') and self.source_host_ref:
+            data['source_host'] = self.source_host_ref.hostname
+        if not data.get('destination_host') and self.destination_host_ref:
+            data['destination_host'] = self.destination_host_ref.hostname
         return data
 
 

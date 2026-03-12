@@ -18,6 +18,7 @@ export interface Team {
   id: string
   name: string
   description?: string
+  is_default: boolean
   member_count: number
   members?: TeamMemberEntry[]
   created_at: string
@@ -40,6 +41,8 @@ export interface Role {
   is_system: boolean
 }
 
+export type TLPLevel = 'white' | 'green' | 'amber' | 'amber_strict' | 'red'
+
 export interface Incident {
   id: string
   incident_number: number
@@ -50,6 +53,9 @@ export interface Incident {
   classification?: string
   phase: number
   phase_name: string
+  tlp: TLPLevel
+  team_id?: string
+  owning_team?: { id: string; name: string }
   lead_responder?: User
   creator?: { id: string; name: string }
   teams?: { id: string; name: string | null }[]
@@ -68,6 +74,9 @@ export interface Incident {
     compromised_accounts: number
     artifacts: number
     tasks: number
+    network_indicators?: number
+    host_indicators?: number
+    malware_tools?: number
   }
 }
 
@@ -136,6 +145,10 @@ export interface NetworkIndicator {
   incident_id: string
   host_id?: string
   host?: CompromisedHost
+  source_host_id?: string
+  destination_host_id?: string
+  source_host_ref?: CompromisedHost
+  destination_host_ref?: CompromisedHost
   timeline_event_id?: string
   timestamp?: string
   protocol?: string
@@ -309,13 +322,28 @@ export interface AuditLog {
   action: string
   resource_type?: string
   resource_id?: string
-  user?: { id: string; email: string; name: string }
+  user?: { id: string; email: string; name: string; role?: string }
   user_email?: string
   ip_address?: string
   user_agent?: string
   request_method?: string
   request_path?: string
+  request_query_params?: Record<string, string>
+  request_body_summary?: Record<string, unknown>
+  content_type?: string
+  referrer?: string
+  origin?: string
   status_code?: number
+  duration_ms?: number
+  geo_country?: string
+  geo_city?: string
+  geo_region?: string
+  cf_ray?: string
+  browser?: string
+  os?: string
+  device_type?: string
+  incident?: { id: string; title: string }
+  incident_id?: string
   details?: Record<string, unknown>
   created_at: string
 }
@@ -529,5 +557,14 @@ export interface MITREAttackTactic {
   id: string
   name: string
   description: string
+}
+
+export interface CustomFieldOption {
+  id: string
+  field_name: string
+  field_value: string
+  display_label: string
+  is_default: boolean
+  created_at: string
 }
 

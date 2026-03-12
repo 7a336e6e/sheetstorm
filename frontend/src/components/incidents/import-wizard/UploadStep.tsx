@@ -35,7 +35,7 @@ export function UploadStep({ incidentId, onParsed }: UploadStepProps) {
     return (
         <div className="space-y-4">
             <div
-                className="border-2 border-dashed border-white/10 rounded-xl p-12 text-center hover:border-white/20 transition-colors cursor-pointer"
+                className="border-2 border-dashed border-black/10 dark:border-white/10 rounded-xl p-12 text-center hover:border-black/10 dark:hover:border-white/20 transition-colors cursor-pointer"
                 onClick={() => document.getElementById('wizard-upload')?.click()}
             >
                 {isUploading ? (

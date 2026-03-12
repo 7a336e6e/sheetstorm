@@ -99,6 +99,40 @@ def kb_mitre_attack_tactics():
     return jsonify({'items': MITRE_ATTACK_TACTICS, 'total': len(MITRE_ATTACK_TACTICS)}), 200
 
 
+@api_bp.route('/knowledge-base/mitre-attack/form-data', methods=['GET'])
+@jwt_required()
+def kb_mitre_attack_form_data():
+    """Return tactic→techniques mapping for Add Event form dropdowns.
+
+    Returns:
+      tactics: list of {id, name, slug}
+      technique_by_tactic: {slug: [{id, name}]}
+      technique_to_tactic: {technique_id: slug}
+    """
+    # Build tactic list with slugs (kebab-case)
+    tactics_list = []
+    for t in MITRE_ATTACK_TACTICS:
+        slug = t["name"].lower().replace(" ", "-")
+        tactics_list.append({"id": t["id"], "name": t["name"], "slug": slug})
+
+    # Group techniques by tactic slug
+    technique_by_tactic: dict = {}
+    technique_to_tactic: dict = {}
+    for tech in MITRE_ATTACK_TECHNIQUES:
+        slug = tech["tactic"].lower().replace(" ", "-")
+        entry = {"id": tech["id"], "name": tech["name"]}
+        technique_by_tactic.setdefault(slug, []).append(entry)
+        # Map technique ID → tactic slug (first tactic wins for multi-tactic techniques)
+        if tech["id"] not in technique_to_tactic:
+            technique_to_tactic[tech["id"]] = slug
+
+    return jsonify({
+        "tactics": tactics_list,
+        "technique_by_tactic": technique_by_tactic,
+        "technique_to_tactic": technique_to_tactic,
+    }), 200
+
+
 # ---------------------------------------------------------------------------
 # MITRE D3FEND  — Defensive Countermeasures
 # ---------------------------------------------------------------------------

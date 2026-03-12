@@ -69,6 +69,13 @@ echo "Seeding initial data..."
 docker compose exec -T backend python -c "from app.seed import seed_all; seed_all()" || echo "Seeding may have already run"
 
 echo ""
+echo "Setting up daily MITRE data update cronjob..."
+CRON_CMD="0 3 * * * cd $(pwd) && ./update_mitre_data.sh"
+# Remove any existing SheetStorm MITRE cron entries, then add the new one
+( crontab -l 2>/dev/null | grep -v 'update_mitre_data.sh' ; echo "$CRON_CMD" ) | crontab -
+echo "Cronjob installed: daily at 03:00 — updates ATT&CK and D3FEND data"
+
+echo ""
 echo "==================================="
 echo "SheetStorm is running!"
 echo "==================================="

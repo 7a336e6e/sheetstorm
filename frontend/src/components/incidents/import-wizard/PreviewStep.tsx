@@ -125,7 +125,7 @@ export function PreviewStep({ parsedData, mapping, onBack, onSubmit }: PreviewSt
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center gap-4 p-4 bg-white/5 rounded-lg border border-white/10">
+            <div className="flex items-center gap-4 p-4 bg-black/5 dark:bg-white/5 rounded-lg border border-black/10 dark:border-white/10">
                 <div className="flex-1">
                     <h3 className="font-medium text-lg">Ready to Import {totalItems} items</h3>
                     <p className="text-sm text-muted-foreground">
@@ -147,7 +147,7 @@ export function PreviewStep({ parsedData, mapping, onBack, onSubmit }: PreviewSt
                         return (
                             <TabsTrigger key={entity} value={entity} className="gap-2">
                                 {ENTITY_FIELDS[entity as EntityType][0].label.split(' ')[0]} {/* Approximate Label */}
-                                <span className="bg-white/10 px-1.5 rounded text-xs">{items.length}</span>
+                                <span className="bg-black/5 dark:bg-white/10 px-1.5 rounded text-xs">{items.length}</span>
                                 {errors[entity] > 0 && <span className="text-red-400 text-xs">({errors[entity]} errors)</span>}
                             </TabsTrigger>
                         )
@@ -199,7 +199,7 @@ export function PreviewStep({ parsedData, mapping, onBack, onSubmit }: PreviewSt
                 })}
             </Tabs>
 
-            <div className="flex justify-between pt-4 border-t border-white/10">
+            <div className="flex justify-between pt-4 border-t border-black/10 dark:border-white/10">
                 <Button variant="ghost" onClick={onBack} disabled={isSubmitting}>
                     <ArrowLeft className="mr-2 h-4 w-4" /> Mapping
                 </Button>

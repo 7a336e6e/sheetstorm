@@ -69,6 +69,18 @@ def create_app(config_name=None):
     config_name = config_name or os.getenv('FLASK_ENV', 'development')
     app.config.from_object(f'app.config.{config_name.capitalize()}Config')
 
+    # Fix request.remote_addr when behind nginx reverse proxy.
+    # This trusts 1 proxy (nginx) and uses X-Forwarded-For / X-Real-IP
+    # headers to populate the real client IP into request.remote_addr.
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=1,       # Trust X-Forwarded-For (1 proxy hop)
+        x_proto=1,     # Trust X-Forwarded-Proto
+        x_host=1,      # Trust X-Forwarded-Host
+        x_prefix=0,    # Don't trust X-Forwarded-Prefix
+    )
+
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)

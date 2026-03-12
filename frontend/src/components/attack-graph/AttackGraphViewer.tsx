@@ -18,6 +18,8 @@ import {
   ReactFlowProvider,
   addEdge,
   Connection,
+  getNodesBounds,
+  getViewportForBounds,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -186,7 +188,7 @@ function transformToReactFlowData(
 function GraphInner({ incidentId }: { incidentId: string }) {
   const { toast } = useToast()
   const { resolvedTheme } = useTheme()
-  const { fitView, zoomIn, zoomOut } = useReactFlow()
+  const { fitView, zoomIn, zoomOut, getNodes: getInternalNodes } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -582,15 +584,45 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }, [nodes, edges, setNodes, fitView])
 
   const handleExportPng = useCallback(() => {
-    // Use the React Flow viewport to export
-    const el = document.querySelector('.react-flow__viewport') as HTMLElement
-    if (!el) return
+    // Use getInternalNodes() to get nodes with measured dimensions for accurate bounds
+    const internalNodes = getInternalNodes()
+    if (internalNodes.length === 0) {
+      toast({ title: 'Export Failed', description: 'No nodes to export', variant: 'destructive' })
+      return
+    }
+
+    const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement
+    if (!viewportEl) return
 
     import('html-to-image' as string).then((mod: { toPng: (el: HTMLElement, opts: Record<string, unknown>) => Promise<string> }) => {
-      mod.toPng(el, {
+      // getNodesBounds with internal nodes includes measured width/height for tight bounds
+      const nodesBounds = getNodesBounds(internalNodes)
+      const padding = 30
+      const imageWidth = nodesBounds.width + padding * 2
+      const imageHeight = nodesBounds.height + padding * 2
+
+      // Compute viewport transform: zoom=1 means 1:1 pixel mapping for max clarity
+      const viewport = getViewportForBounds(
+        nodesBounds,
+        imageWidth,
+        imageHeight,
+        1,    // minZoom — force 1:1 scale so nodes render at native size
+        1,    // maxZoom — keep at 1:1 to avoid scaling artifacts
+        padding,
+      )
+
+      // Render at 2x pixel ratio for retina-quality output
+      mod.toPng(viewportEl, {
         backgroundColor: resolvedTheme === 'dark' ? '#0f172a' : '#ffffff',
-        width: el.scrollWidth,
-        height: el.scrollHeight,
+        width: imageWidth,
+        height: imageHeight,
+        pixelRatio: 2,
+        style: {
+          width: `${imageWidth}px`,
+          height: `${imageHeight}px`,
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+          transformOrigin: 'top left',
+        },
       }).then((dataUrl: string) => {
         const link = document.createElement('a')
         link.download = `attack-graph-${incidentId}.png`
@@ -602,7 +634,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     }).catch(() => {
       toast({ title: 'Export Unavailable', description: 'PNG export requires html-to-image package', variant: 'destructive' })
     })
-  }, [incidentId, toast])
+  }, [incidentId, toast, getInternalNodes, resolvedTheme])
 
   useEffect(() => {
     fetchGraph()
@@ -650,7 +682,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   ]
 
   return (
-    <div className="relative h-[600px] rounded-lg border border-white/10 overflow-hidden">
+    <div className="relative h-[600px] rounded-lg border border-black/10 dark:border-white/10 overflow-hidden">
       {/* Edge creation modal */}
       <Dialog
         open={isEdgeModalOpen}
@@ -921,7 +953,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             <Button variant="ghost" size="icon" onClick={() => zoomOut()} title="Zoom Out" className="h-8 w-8">
               <ZoomOut className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant="ghost"
               size="icon"
@@ -931,14 +963,14 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             >
               <Plus className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={() => fitView({ padding: 0.2, duration: 300 })} title="Fit to Screen" className="h-8 w-8">
               <Maximize className="h-4 w-4" />
             </Button>
             <Button variant="ghost" size="icon" onClick={handleAutoLayout} title="Auto Layout" className="h-8 w-8">
               <LayoutGrid className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant={isDrawMode ? 'default' : 'ghost'}
               size="icon"
@@ -951,11 +983,11 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             >
               <GitBranch className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={handleExportPng} title="Export PNG" className="h-8 w-8">
               <Download className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-white/10 mx-1" />
+            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button
               variant="ghost"
               size="icon"
@@ -1209,7 +1241,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
                           {Object.entries(selectedElement.data.correlation as Record<string, number>)
                             .filter(([, v]) => v > 0)
                             .map(([k, v]) => (
-                              <span key={k} className="text-xs bg-white/10 px-1.5 py-0.5 rounded">
+                              <span key={k} className="text-xs bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded">
                                 {v} {k.replace(/_/g, ' ')}
                               </span>
                             ))}

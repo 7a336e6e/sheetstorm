@@ -639,8 +639,37 @@ def email_reputation_lookup():
 
 
 # ---------------------------------------------------------------------------
-# Ransomware Victim Lookup  (ransomware.live — free, no key)
+# Ransomware Victim Lookup  (ransomware.live — data feed, no key)
 # ---------------------------------------------------------------------------
+
+# In-memory cache for ransomware data
+_ransomware_cache: dict = {'data': None, 'loaded_at': None}
+_CACHE_TTL_HOURS = 12
+_DATA_URL = 'https://data.ransomware.live/victims.json'
+
+
+def _load_ransomware_data() -> list:
+    """Download and cache ransomware.live victims data."""
+    import requests as req
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    if (
+        _ransomware_cache['data'] is not None
+        and _ransomware_cache['loaded_at']
+        and now - _ransomware_cache['loaded_at'] < timedelta(hours=_CACHE_TTL_HOURS)
+    ):
+        return _ransomware_cache['data']
+
+    logger.info('Downloading ransomware.live victims data...')
+    resp = req.get(_DATA_URL, timeout=60, headers={'User-Agent': 'SheetStorm-IR-Platform'})
+    resp.raise_for_status()
+    data = resp.json()
+    _ransomware_cache['data'] = data
+    _ransomware_cache['loaded_at'] = now
+    logger.info(f'Loaded {len(data)} ransomware victim records')
+    return data
+
 
 @api_bp.route('/threat-intel/ransomware/lookup', methods=['POST'])
 @jwt_required()
@@ -650,10 +679,8 @@ def ransomware_victim_lookup():
     """Search ransomware.live for victim postings.
 
     Body: { "query": "company name" }
-    No API key required — public API.
+    No API key required — uses public data feed from data.ransomware.live.
     """
-    import requests as req
-
     data = request.get_json() or {}
     query = data.get('query', '').strip()
 
@@ -661,43 +688,47 @@ def ransomware_victim_lookup():
         return jsonify({'error': 'bad_request', 'message': 'Search query must be at least 3 characters'}), 400
 
     try:
-        resp = req.get(
-            f'https://api.ransomware.live/v2/victims/{query}',
-            timeout=15,
-            headers={'User-Agent': 'SheetStorm-IR-Platform'},
-        )
+        victims_data = _load_ransomware_data()
+        query_lower = query.lower()
 
-        if resp.status_code == 200:
-            victims = resp.json()
-            if not isinstance(victims, list):
-                victims = []
+        # Search across post_title, group_name, website, description, activity
+        matches = []
+        for v in victims_data:
+            searchable = ' '.join(filter(None, [
+                str(v.get('post_title', '')),
+                str(v.get('group_name', '')),
+                str(v.get('website', '')),
+                str(v.get('description', '')),
+                str(v.get('activity', '')),
+            ])).lower()
+            if query_lower in searchable:
+                matches.append(v)
+            if len(matches) >= 50:
+                break
 
-            results = [
-                {
-                    'victim': v.get('victim', v.get('post_title', 'Unknown')),
-                    'group': v.get('group_name', v.get('group', 'Unknown')),
-                    'discovered': v.get('discovered', v.get('post_date')),
-                    'country': v.get('country'),
-                    'domain': v.get('website', v.get('domain')),
-                    'description': v.get('description'),
-                    'activity': v.get('activity'),
-                }
-                for v in victims[:50]
-            ]
+        results = [
+            {
+                'victim': v.get('post_title', 'Unknown'),
+                'group': v.get('group_name', 'Unknown'),
+                'discovered': v.get('discovered'),
+                'country': v.get('country'),
+                'domain': v.get('website'),
+                'description': v.get('description'),
+                'activity': v.get('activity'),
+            }
+            for v in matches
+        ]
 
-            return jsonify({
-                'query': query,
-                'found': len(results) > 0,
-                'items': results,
-                'total': len(results),
-            }), 200
-        elif resp.status_code == 404:
-            return jsonify({'query': query, 'found': False, 'items': [], 'total': 0}), 200
-        else:
-            return jsonify({'error': 'upstream_error', 'message': f'ransomware.live returned {resp.status_code}'}), 502
+        return jsonify({
+            'query': query,
+            'found': len(results) > 0,
+            'items': results,
+            'total': len(results),
+        }), 200
 
-    except req.exceptions.Timeout:
-        return jsonify({'error': 'timeout', 'message': 'ransomware.live request timed out'}), 504
     except Exception as e:
         logger.exception('Ransomware victim lookup failed')
-        return jsonify({'error': 'server_error', 'message': 'Ransomware lookup failed'}), 500
+        return jsonify({
+            'error': 'server_error',
+            'message': 'Ransomware lookup failed — data feed may be temporarily unavailable',
+        }), 500

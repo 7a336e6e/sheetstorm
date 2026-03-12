@@ -31,7 +31,8 @@ class CompromisedHost(BaseModel):
     timeline_events = relationship('TimelineEvent', back_populates='host', lazy='dynamic',
                                    foreign_keys='TimelineEvent.host_id')
     compromised_accounts = relationship('CompromisedAccount', back_populates='host', lazy='dynamic')
-    network_indicators = relationship('NetworkIndicator', back_populates='host', lazy='dynamic')
+    network_indicators = relationship('NetworkIndicator', back_populates='host', lazy='dynamic',
+                                      foreign_keys='NetworkIndicator.host_id')
     malware_tools = relationship('MalwareTool', back_populates='host_ref', lazy='dynamic')
     host_indicators = relationship('HostBasedIndicator', back_populates='host_ref', lazy='dynamic')
 

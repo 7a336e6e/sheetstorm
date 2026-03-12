@@ -69,11 +69,27 @@ def create_network_ioc(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     source_host = data.get('source_host')
+    source_host_id = data.get('source_host_id')
+    destination_host_id = data.get('destination_host_id')
     if host_id:
         host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host:
             return jsonify({'error': 'bad_request', 'message': 'Invalid host_id'}), 400
         source_host = host.hostname  # Auto-fill source_host from host
+
+    # Validate source_host_id if provided
+    if source_host_id:
+        src = CompromisedHost.query.filter_by(id=source_host_id, incident_id=incident.id).first()
+        if not src:
+            return jsonify({'error': 'bad_request', 'message': 'Invalid source_host_id'}), 400
+        if not source_host:
+            source_host = src.hostname
+
+    # Validate destination_host_id if provided
+    if destination_host_id:
+        dst = CompromisedHost.query.filter_by(id=destination_host_id, incident_id=incident.id).first()
+        if not dst:
+            return jsonify({'error': 'bad_request', 'message': 'Invalid destination_host_id'}), 400
 
     # Validate timeline_event_id if provided
     timeline_event_id = data.get('timeline_event_id')
@@ -85,6 +101,8 @@ def create_network_ioc(incident_id):
     ioc = NetworkIndicator(
         incident_id=incident.id,
         host_id=host_id,
+        source_host_id=source_host_id,
+        destination_host_id=destination_host_id,
         timeline_event_id=timeline_event_id,
         timestamp=parse_date(data['timestamp']) if data.get('timestamp') else None,
         protocol=data.get('protocol'),
@@ -101,6 +119,20 @@ def create_network_ioc(incident_id):
     )
 
     db.session.add(ioc)
+
+    # Auto-create attack graph node for the IOC if requested
+    if data.get('add_to_attack_graph', False):
+        from app.models import AttackGraphNode
+        node = AttackGraphNode(
+            incident_id=incident.id,
+            node_type='ip_address',
+            label=dns_ip,
+            description=data.get('description', ''),
+            properties={'ioc_id': str(ioc.id), 'direction': data.get('direction'), 'protocol': data.get('protocol')},
+            created_by=user.id,
+        )
+        db.session.add(node)
+
     db.session.commit()
 
     return jsonify(ioc.to_dict()), 201
@@ -137,6 +169,26 @@ def update_network_ioc(incident_id, ioc_id):
             ioc.source_host = host.hostname
         else:
             ioc.host_id = None
+
+    # Handle source_host_id
+    if 'source_host_id' in data:
+        if data['source_host_id']:
+            src = CompromisedHost.query.filter_by(id=data['source_host_id'], incident_id=incident.id).first()
+            if not src:
+                return jsonify({'error': 'bad_request', 'message': 'Invalid source_host_id'}), 400
+            ioc.source_host_id = data['source_host_id']
+        else:
+            ioc.source_host_id = None
+
+    # Handle destination_host_id
+    if 'destination_host_id' in data:
+        if data['destination_host_id']:
+            dst = CompromisedHost.query.filter_by(id=data['destination_host_id'], incident_id=incident.id).first()
+            if not dst:
+                return jsonify({'error': 'bad_request', 'message': 'Invalid destination_host_id'}), 400
+            ioc.destination_host_id = data['destination_host_id']
+        else:
+            ioc.destination_host_id = None
 
     db.session.commit()
 

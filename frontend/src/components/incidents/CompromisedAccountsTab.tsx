@@ -333,7 +333,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                                 <div className="flex items-center gap-3">
                                                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${account.is_privileged
                                                         ? 'bg-red-500/20 text-red-500'
-                                                        : 'bg-white/5 text-muted-foreground'
+                                                        : 'bg-black/5 dark:bg-white/5 text-muted-foreground'
                                                         }`}>
                                                         {account.is_privileged ? <Crown className="h-4 w-4" /> : <User className="h-4 w-4" />}
                                                     </div>
@@ -570,7 +570,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                     id="privileged"
                                     checked={form.is_privileged}
                                     onChange={(e) => setForm({ ...form, is_privileged: e.target.checked })}
-                                    className="w-4 h-4 rounded border-white/20 bg-white/5"
+                                    className="w-4 h-4 rounded border-black/10 dark:border-white/20 bg-black/5 dark:bg-white/5"
                                 />
                                 <Label htmlFor="privileged" className="text-sm font-normal cursor-pointer">
                                     Privileged / Admin Account

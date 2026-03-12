@@ -10,6 +10,8 @@ class IncidentCreate(BaseSchema):
     classification: Optional[str] = None
     detected_at: Optional[datetime] = None
     lead_responder_id: Optional[UUID4] = None
+    tlp: Optional[str] = Field('amber', pattern='^(white|green|amber|amber_strict|red)$')
+    team_id: Optional[UUID4] = None
 
 class IncidentUpdate(BaseSchema):
     title: Optional[str] = Field(None, min_length=3, max_length=500)
@@ -19,6 +21,8 @@ class IncidentUpdate(BaseSchema):
     executive_summary: Optional[str] = None
     lessons_learned: Optional[str] = None
     lead_responder_id: Optional[UUID4] = None
+    tlp: Optional[str] = Field(None, pattern='^(white|green|amber|amber_strict|red)$')
+    team_id: Optional[UUID4] = None
 
 class IncidentStatusUpdate(BaseSchema):
     status: Optional[str] = Field(None, pattern='^(open|investigating|contained|eradicated|recovered|closed)$')

@@ -77,7 +77,7 @@ function FadeIn({ children, className, delay = 0 }: { children: React.ReactNode;
 
 export default function LandingPage() {
   return (
-    <div className="dark force-dark min-h-screen relative">
+    <div className="dark force-dark min-h-screen relative bg-background text-foreground">
       <StarryBackground />
 
       <div className="relative z-10">

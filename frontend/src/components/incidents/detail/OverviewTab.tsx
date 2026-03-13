@@ -51,20 +51,6 @@ export function OverviewTab({
   const inProgressTasks = tasks.filter((t) => t.status === 'in_progress').length
   const taskProgress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : 0
 
-  const containmentGroups = hosts.reduce((acc, h) => {
-    const status = h.containment_status || 'active'
-    acc[status] = (acc[status] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-
-  const containmentColors: Record<string, string> = {
-    active: 'text-red-700 dark:text-red-400 bg-red-500/10 border-red-500/20',
-    monitoring: 'text-yellow-700 dark:text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
-    isolated: 'text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/20',
-    reimaged: 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    decommissioned: 'text-muted-foreground bg-muted border-border',
-  }
-
   // Calculate incident duration
   const createdDate = incident.created_at ? new Date(incident.created_at) : null
   const now = new Date()
@@ -86,7 +72,6 @@ export function OverviewTab({
             title="Hosts"
             value={incident.counts?.compromised_hosts || 0}
             icon={<Server className="h-4 w-4" />}
-            description={hosts.filter(h => h.containment_status === 'isolated').length > 0 ? `${hosts.filter(h => h.containment_status === 'isolated').length} isolated` : undefined}
           />
           <StatCard title="Network IOCs" value={incident.counts?.network_indicators || 0} icon={<Globe className="h-4 w-4" />} />
           <StatCard title="Host IOCs" value={incident.counts?.host_indicators || 0} icon={<Fingerprint className="h-4 w-4" />} />
@@ -124,25 +109,6 @@ export function OverviewTab({
                   <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{completedTasks}</div>
                   <div className="text-xs text-muted-foreground">Completed</div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Host Containment Status */}
-        {hosts.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Host Containment</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                {Object.entries(containmentGroups).map(([status, count]) => (
-                  <div key={status} className={`p-3 rounded-lg border text-center ${containmentColors[status] || 'bg-muted/50 border-border'}`}>
-                    <div className="text-xl font-bold">{count}</div>
-                    <div className="text-xs capitalize">{status.replace('_', ' ')}</div>
-                  </div>
-                ))}
               </div>
             </CardContent>
           </Card>

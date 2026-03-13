@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -63,7 +64,7 @@ export function NotificationPanel({ open, onClose, onUnreadCountChange }: Notifi
 
   const markAsRead = async (id: string) => {
     try {
-      await api.put(`/notifications/${id}/read`)
+      await api.post(`/notifications/${id}/read`)
       setNotifications(prev =>
         prev.map(n => n.id === id ? { ...n, is_read: true } : n)
       )
@@ -77,7 +78,7 @@ export function NotificationPanel({ open, onClose, onUnreadCountChange }: Notifi
   const markAllRead = async () => {
     setMarkingAll(true)
     try {
-      await api.post('/notifications/mark-all-read')
+      await api.post('/notifications/read-all')
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
       onUnreadCountChange(0)
       toast({ title: 'All caught up', description: 'All notifications marked as read' })
@@ -92,7 +93,7 @@ export function NotificationPanel({ open, onClose, onUnreadCountChange }: Notifi
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <>
       {/* Backdrop */}
       <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm" onClick={onClose} />
@@ -195,6 +196,7 @@ export function NotificationPanel({ open, onClose, onUnreadCountChange }: Notifi
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body
   )
 }

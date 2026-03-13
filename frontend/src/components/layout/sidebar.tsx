@@ -53,11 +53,17 @@ const adminNavigation = [
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()
-  const { user, logout, hasRole } = useAuthStore()
+  const { user, logout, hasRole, hasPermission } = useAuthStore()
   const isAdmin = hasRole('Administrator')
   const [collapsed, setCollapsed] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifPanelOpen, setNotifPanelOpen] = useState(false)
+
+  // Filter navigation items based on permissions
+  const filteredNavigation = navigation.filter((item) => {
+    if (item.href === '/dashboard/reports') return hasPermission('reports:read')
+    return true
+  })
 
   // Fetch unread notification count
   const fetchUnreadCount = useCallback(async () => {
@@ -112,7 +118,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
         <div className="space-y-1">
-          {navigation.map((item) => {
+          {filteredNavigation.map((item) => {
             const isActive = item.href === '/dashboard'
               ? pathname === '/dashboard'
               : pathname === item.href || pathname.startsWith(item.href + '/')

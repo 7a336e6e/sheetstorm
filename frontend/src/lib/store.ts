@@ -91,24 +91,44 @@ export const useAuthStore = create<AuthState>()(
       },
 
       register: async (email: string, password: string, name: string) => {
-        // Sign up via Supabase
-        const { data: sbData, error: sbError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { name } },
-        })
+        // Try Supabase first, then fallback to local backend auth
+        let registered = false
 
-        if (sbError) {
-          throw new Error(sbError.message)
+        try {
+          const { data: sbData, error: sbError } = await supabase.auth.signUp({
+            email,
+            password,
+            options: { data: { name } },
+          })
+
+          if (!sbError && sbData.session) {
+            const response = await api.post<{
+              access_token: string
+              refresh_token: string
+              user: User
+            }>('/auth/supabase', { access_token: sbData.session.access_token })
+
+            api.setToken(response.access_token)
+            localStorage.setItem('refresh_token', response.refresh_token)
+
+            set({
+              user: response.user,
+              isAuthenticated: true,
+              isLoading: false,
+            })
+            registered = true
+          }
+        } catch {
+          // Supabase failed — will try local auth below
         }
 
-        // If Supabase returns a session immediately (email confirm disabled)
-        if (sbData.session) {
+        if (!registered) {
+          // Fallback: local backend registration
           const response = await api.post<{
             access_token: string
             refresh_token: string
             user: User
-          }>('/auth/supabase', { access_token: sbData.session.access_token })
+          }>('/auth/register', { email, password, name })
 
           api.setToken(response.access_token)
           localStorage.setItem('refresh_token', response.refresh_token)
@@ -118,9 +138,6 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
             isLoading: false,
           })
-        } else {
-          // Email confirmation is required — user will need to verify email first
-          throw new Error('Check your email to confirm your account before signing in.')
         }
       },
 

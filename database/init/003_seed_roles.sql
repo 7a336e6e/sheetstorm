@@ -103,7 +103,7 @@ INSERT INTO roles (name, description, permissions, is_system) VALUES
 ),
 (
     'Viewer',
-    'Read-only access to incidents',
+    'Read-only access to assigned and TLP:WHITE incidents (no user, artifact, or report access)',
     '[
         "incidents:read",
         "timeline:read",
@@ -112,11 +112,8 @@ INSERT INTO roles (name, description, permissions, is_system) VALUES
         "network_iocs:read",
         "host_iocs:read",
         "malware:read",
-        "artifacts:read",
         "tasks:read",
-        "attack_graph:read",
-        "reports:read",
-        "users:read"
+        "attack_graph:read"
     ]'::jsonb,
     TRUE
 );

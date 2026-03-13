@@ -63,6 +63,13 @@ export default function IncidentDetailPage() {
   const params = useParams()
   const incidentId = params.id as string
   const { currentIncident, fetchIncident } = useIncidentStore()
+  const { hasPermission } = useAuthStore()
+  const canUpdateIncident = hasPermission('incidents:update')
+  const canCreateTask = hasPermission('tasks:create')
+  const canUpdateTask = hasPermission('tasks:update')
+  const canDeleteTask = hasPermission('tasks:delete')
+  const canGenerateReport = hasPermission('reports:generate')
+  const canViewArtifacts = hasPermission('artifacts:read')
   const [activeTab, setActiveTab] = useState('overview')
   const [eventsView, setEventsView] = useState<'table' | 'timeline' | 'table-timeline'>('table')
   const [isLoadingData, setIsLoadingData] = useState(true)
@@ -144,9 +151,13 @@ export default function IncidentDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {canGenerateReport && (
               <Button variant="outline" onClick={() => setShowReportModal(true)}>
                 <Download className="mr-2 h-4 w-4" /> Generate Report
               </Button>
+              )}
+              {canUpdateIncident && (
+              <>
               <Button variant="outline" onClick={() => setShowImportModal(true)}>
                 <Upload className="mr-2 h-4 w-4" /> Import
               </Button>
@@ -156,6 +167,8 @@ export default function IncidentDetailPage() {
               <Button onClick={() => setShowStatusModal(true)}>
                 <Zap className="mr-2 h-4 w-4" /> Update Status
               </Button>
+              </>
+              )}
             </div>
           </div>
         </div>
@@ -193,9 +206,11 @@ export default function IncidentDetailPage() {
             <TabsTrigger variant="underline" value="malware" className="gap-2">
               <Bug className="h-4 w-4" /> Malware
             </TabsTrigger>
-            <TabsTrigger variant="underline" value="artifacts" className="gap-2">
-              <FileText className="h-4 w-4" /> Artifacts
-            </TabsTrigger>
+            {canViewArtifacts && (
+              <TabsTrigger variant="underline" value="artifacts" className="gap-2">
+                <FileText className="h-4 w-4" /> Artifacts
+              </TabsTrigger>
+            )}
             <TabsTrigger variant="underline" value="notes" className="gap-2">
               <MessageSquare className="h-4 w-4" /> Notes
             </TabsTrigger>
@@ -301,7 +316,7 @@ export default function IncidentDetailPage() {
           </TabsContent>
 
           <TabsContent value="artifacts">
-            <ArtifactsTab incidentId={incidentId} />
+            {canViewArtifacts && <ArtifactsTab incidentId={incidentId} />}
           </TabsContent>
 
           <TabsContent value="notes">

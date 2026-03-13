@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast'
 import api from '@/lib/api'
 import { formatDateTime, formatBytes } from '@/lib/utils'
 import type { Artifact } from '@/types'
+import { useAuthStore } from '@/lib/store'
 import { Input } from '@/components/ui/input'
 import {
   Upload, Download, FileText, Shield, ShieldCheck, ShieldX, Trash2, Loader2,
@@ -39,6 +40,11 @@ interface CustodyEntry {
 
 export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
   const { toast } = useToast()
+  const { hasPermission } = useAuthStore()
+  const canUpload = hasPermission('artifacts:upload')
+  const canDownload = hasPermission('artifacts:download')
+  const canVerify = hasPermission('artifacts:verify')
+  const canDelete = hasPermission('artifacts:delete')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [loading, setLoading] = useState(true)
@@ -237,17 +243,21 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                   className="pl-10"
                 />
               </div>
-              <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                Upload File
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => handleUpload(e.target.files)}
-              />
+              {canUpload && (
+                <>
+                  <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                    {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                    Upload File
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleUpload(e.target.files)}
+                  />
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -255,26 +265,28 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
         <Card>
         <CardContent className="space-y-4">
           {/* Drop zone */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-              dragOver
-                ? 'border-cyan-500 bg-cyan-500/5'
-                : 'border-black/10 dark:border-white/10 hover:border-black/10 dark:hover:border-white/20'
-            }`}
-          >
-            <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">
-              Drag & drop files here, or click "Upload File" above
-            </p>
-            {uploading && (
-              <div className="flex items-center justify-center gap-2 mt-3 text-sm text-cyan-400">
-                <Loader2 className="h-4 w-4 animate-spin" /> Uploading...
-              </div>
-            )}
-          </div>
+          {canUpload && (
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+                dragOver
+                  ? 'border-cyan-500 bg-cyan-500/5'
+                  : 'border-black/10 dark:border-white/10 hover:border-black/10 dark:hover:border-white/20'
+              }`}
+            >
+              <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">
+                Drag & drop files here, or click &quot;Upload File&quot; above
+              </p>
+              {uploading && (
+                <div className="flex items-center justify-center gap-2 mt-3 text-sm text-cyan-400">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Uploading...
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Google Drive Integration */}
           {!loadingDrive && driveStatus?.configured && (
@@ -410,10 +422,12 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleDownload(artifact)} title="Download">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          {artifact.extra_data?.google_drive_web_link && (
+                          {canDownload && (
+                            <Button variant="ghost" size="sm" onClick={() => handleDownload(artifact)} title="Download">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {canDownload && artifact.extra_data?.google_drive_web_link && (
                             <Button
                               variant="ghost" size="sm"
                               title="Open in Google Drive"
@@ -422,28 +436,32 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                               <ExternalLink className="h-4 w-4 text-blue-400" />
                             </Button>
                           )}
-                          <Button
-                            variant="ghost" size="sm"
-                            onClick={() => handleVerify(artifact)}
-                            disabled={verifying === artifact.id}
-                            title="Verify integrity"
-                          >
-                            {verifying === artifact.id
-                              ? <Loader2 className="h-4 w-4 animate-spin" />
-                              : <Shield className="h-4 w-4" />
-                            }
-                          </Button>
+                          {canVerify && (
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => handleVerify(artifact)}
+                              disabled={verifying === artifact.id}
+                              title="Verify integrity"
+                            >
+                              {verifying === artifact.id
+                                ? <Loader2 className="h-4 w-4 animate-spin" />
+                                : <Shield className="h-4 w-4" />
+                              }
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" onClick={() => openCustody(artifact)} title="Chain of custody">
                             <Clock className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost" size="sm"
-                            onClick={() => setDeleteTarget(artifact)}
-                            className="hover:text-red-400"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {canDelete && (
+                            <Button
+                              variant="ghost" size="sm"
+                              onClick={() => setDeleteTarget(artifact)}
+                              className="hover:text-red-400"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

@@ -230,8 +230,13 @@ def require_incident_access(permission=None):
                     'message': 'You do not have access to this incident'
                 }), 403
 
-            # For limited roles (Operator, Viewer), check assignment
+            # For limited roles (Operator, Viewer), check assignment or TLP:WHITE
             if user.has_role('Operator') or user.has_role('Viewer'):
+                # Viewers can access TLP:WHITE incidents (read-only enforced by permissions)
+                if user.has_role('Viewer') and incident.tlp == 'white':
+                    g.incident = incident
+                    return f(*args, **kwargs)
+
                 assignment = IncidentAssignment.query.filter_by(
                     incident_id=incident_id,
                     user_id=user.id,
@@ -303,6 +308,10 @@ def check_incident_access(user, incident_id):
         ).first()
         if team_match:
             return True, incident
+
+    # Viewers can access TLP:WHITE incidents (read-only enforced by permissions)
+    if user.has_role('Viewer') and incident.tlp == 'white':
+        return True, incident
 
     # For limited roles or team-restricted, check assignment
     assignment = IncidentAssignment.query.filter_by(

@@ -32,11 +32,23 @@ def list_incidents():
 
     query = Incident.query.filter_by(organization_id=user.organization_id, is_deleted=False)
 
-    # For Operators/Viewers, only show directly assigned incidents
-    if user.has_role('Operator') or user.has_role('Viewer'):
+    # For Operators, only show directly assigned incidents
+    if user.has_role('Operator') and not user.has_role('Viewer'):
         query = query.join(IncidentAssignment).filter(
             IncidentAssignment.user_id == user.id,
             IncidentAssignment.removed_at.is_(None)
+        )
+    # For Viewers, show directly assigned incidents + all TLP:WHITE incidents in their org
+    elif user.has_role('Viewer') and not user.has_role('Administrator') and not user.has_role('Manager'):
+        has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
+            IncidentAssignment.user_id == user.id,
+            IncidentAssignment.removed_at.is_(None)
+        ).subquery()
+        query = query.filter(
+            db.or_(
+                Incident.id.in_(db.session.query(has_assignment)),
+                Incident.tlp == 'white'
+            )
         )
     # For Incident Responders/Analysts, show team-scoped + directly assigned
     elif not user.has_role('Administrator') and not user.has_role('Manager'):

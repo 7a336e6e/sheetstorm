@@ -14,9 +14,9 @@
 
 ## Why SheetStorm?
 
-Many security teams still rely on shared spreadsheets to coordinate during incidents. They're familiar, fast to set up, and everyone knows how to use them. That approach works — until it doesn't. Concurrent edits, lost context, no audit trail, and zero integration with the tools responders actually need.
+Many security teams still coordinate incidents through shared spreadsheets. They're familiar and fast to set up — until concurrent edits collide, context gets lost, audit trails vanish, and there's zero integration with the tools responders actually need.
 
-SheetStorm is a **free, open-source alternative** purpose-built for DFIR practitioners. It covers the full incident response lifecycle and is designed to be useful whether you're a **solo analyst learning the ropes**, a **training lab instructor**, or running an **enterprise SOC**.
+SheetStorm is a **free, open-source alternative** purpose-built for DFIR practitioners. It covers the full NIST incident response lifecycle and is designed to be useful whether you're a **solo analyst learning the ropes**, a **training lab instructor**, or running an **enterprise SOC**.
 
 ```
 Preparation → Identification → Containment → Eradication → Recovery → Lessons Learned
@@ -26,150 +26,133 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 ---
 
-## What You Get
+## Features
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/incident_phases.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/incident_phases.png">
-  <img alt="Incident phase management" src="assets/images/dark_mode/incident_phases.png" width="100%">
-</picture>
+### Incident Lifecycle Management
 
-<br /><br />
+- Create and manage incidents through all six NIST IR phases
+- Assign severity, classification, and responsible teams
+- Track incident status with phase-aware progression
+- Full audit trail on every entity change
 
-### 🔍 Investigate & Track
+### Investigation & Tracking
 
-Track compromised hosts, accounts, network and host IOCs, and malware samples. Map findings to MITRE ATT&CK tactics and techniques. Import existing data from Excel or CSV.
+- **Compromised Hosts** — track affected systems with OS, IP, hostname, and containment status
+- **Compromised Accounts** — log impacted user accounts with compromise type and reset status
+- **Network IOCs** — IPs, domains, URLs, and email addresses with defang/refang support
+- **Host IOCs** — file hashes, registry keys, services, scheduled tasks, and processes
+- **Malware Samples** — catalogue malware with hashes, file paths, and persistence mechanisms
+- **Excel / CSV Import** — bulk-import existing investigation data
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/host_tracking.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/host_tracking.png">
-  <img alt="Host tracking" src="assets/images/dark_mode/host_tracking.png" width="100%">
-</picture>
+### MITRE ATT&CK Integration
 
-<br /><br />
+- Map every finding to MITRE ATT&CK tactics and techniques
+- Full ATT&CK matrix browser built into the platform
+- Coverage heatmap showing which techniques are observed per incident
+- Form-integrated tactic/technique picker for fast tagging
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/account_tracking.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/account_tracking.png">
-  <img alt="Account tracking" src="assets/images/dark_mode/account_tracking.png" width="100%">
-</picture>
+### Timeline & Evidence
 
-<br /><br />
+- **Event Timeline** — chronological record of attacker activity with kill-chain phase tagging
+- **Case Notes** — rich-text analyst notes tied to each incident
+- **Artifact Storage** — upload, hash-verify, and maintain chain-of-custody for evidence files
+- **Google Drive Integration** — optionally sync artifacts to a shared Drive folder per case
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/malware_tracking.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/malware_tracking.png">
-  <img alt="Malware tracking" src="assets/images/dark_mode/malware_tracking.png" width="100%">
-</picture>
+### Threat Intelligence
 
-<br /><br />
+- **IOC Enrichment** — IP reputation, domain reputation, and email reputation lookups
+- **CVE Lookup** — search vulnerabilities by CVE ID
+- **Ransomware Lookup** — check ransomware group profiles
+- **VirusTotal** — optional integration for file and IOC analysis
+- **Bulk Enrichment** — enrich multiple IOCs in a single operation
+- **IOC Correlation** — find IOCs that appear across multiple incidents
+- **Defang / Refang** — safely share IOCs in reports and chat
+- **STIX Export** — export incident IOCs as STIX 2.1 bundles
 
-### 📋 Timeline & Evidence
+### Knowledge Bases
 
-Build a chronological event timeline with kill-chain phase tagging and MITRE ATT&CK mapping. Store artifacts with hash verification and full chain of custody.
+- **MITRE ATT&CK** — full tactic and technique reference
+- **MITRE D3FEND** — defensive technique suggestions mapped to observed ATT&CK techniques
+- **LOLBAS** — Living Off The Land Binaries and Scripts reference
+- **Windows Event IDs** — searchable log source reference for Windows forensics
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/expanded_event_entry.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/expanded_event_entry.png">
-  <img alt="Timeline event entry" src="assets/images/dark_mode/expanded_event_entry.png" width="100%">
-</picture>
+### Attack Graph
 
-<br /><br />
+- Visual node-and-edge graph of attack paths within an incident
+- Drag-and-drop graph editor with configurable node and edge types
+- Auto-generate graphs from existing incident data (hosts, IOCs, accounts, malware)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/artifact_storage.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/artifact_storage.png">
-  <img alt="Artifact storage" src="assets/images/dark_mode/artifact_storage.png" width="100%">
-</picture>
+### AI-Powered Reports
 
-<br /><br />
+- Generate executive summaries, technical deep-dives, and lessons-learned reports using GPT-4o or Gemini
+- Export reports as styled PDF documents
+- Multiple report templates (executive, technical, post-incident)
 
-### 🕸️ MITRE ATT&CK Coverage
+### Real-Time Collaboration
 
-Automatically map incident activity to MITRE ATT&CK and visualize your coverage across tactics and techniques.
+- **WebSocket-driven** live updates across all incident views
+- **Incident Rooms** — join a case and see changes from other analysts instantly
+- **In-app Notifications** — real-time alerts on assignments, status changes, and comments
+- **Task Management** — create, assign, and track response tasks with priority and due dates
+- **Task Comments** — threaded discussion on each task
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/mitre_att&ck_coverage.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/mitre_att&ck_coverage.png">
-  <img alt="MITRE ATT&CK coverage" src="assets/images/dark_mode/mitre_att&ck_coverage.png" width="100%">
-</picture>
+### Access Control & Security
 
-<br /><br />
+- **Role-Based Access Control** — six default roles with 40+ granular permissions (`entity:action` format)
+- **Custom Roles** — create roles tailored to your organization
+- **Multi-Factor Authentication** — TOTP-based MFA with QR setup
+- **GitHub SSO** — authenticate via GitHub OAuth
+- **JWT Authentication** — short-lived access tokens with refresh rotation
+- **Redis-backed Token Blocklist** — instant session revocation
+- **Rate Limiting** — per-endpoint rate limits to prevent abuse
+- **Input Sanitization** — HTML/XSS stripping on all user input
+- **Multi-tenancy** — organization-scoped data isolation
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/mitre_att&ck_coverage_expanded.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/mitre_att&ck_coverage_expanded.png">
-  <img alt="MITRE ATT&CK expanded view" src="assets/images/dark_mode/mitre_att&ck_coverage_expanded.png" width="100%">
-</picture>
+### MCP Server
 
-<br /><br />
+SheetStorm ships with a **Model Context Protocol (MCP) server** exposing 70+ tools, allowing AI assistants (Claude, Copilot, etc.) to interact with your incident data programmatically — create incidents, query IOCs, run enrichments, and more, all through natural language.
 
-### 🔎 Threat Intelligence & Knowledge Base
+### Search & Cross-Incident Analysis
 
-Look up CVEs (CISA KEV + CVSS), IP/domain/email reputation, and ransomware victims. Access built-in knowledge bases for LOLBAS, Windows Event IDs, and MITRE D3FEND defensive countermeasures.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/threat_intelligence.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/threat_intelligence.png">
-  <img alt="Threat intelligence" src="assets/images/dark_mode/threat_intelligence.png" width="100%">
-</picture>
-
-<br /><br />
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/images/dark_mode/knowledge_base.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/images/light_mode/knowledge_base.png">
-  <img alt="Knowledge base" src="assets/images/dark_mode/knowledge_base.png" width="100%">
-</picture>
-
-<br /><br />
-
-### And More
-
-- **AI-Powered Reports** — generate executive summaries, IOC analysis, metrics, and trend reports via OpenAI GPT-4 or Google Gemini, with PDF export and Google Drive auto-save.
-- **Attack Graph Visualization** — auto-generated interactive attack graphs with 11 node types and 12 edge types, real-time sync between team members.
-- **Real-time Collaboration** — WebSocket-powered live updates, so your entire team sees changes as they happen.
-- **RBAC & Security** — 6 roles with 40+ granular permissions, MFA/TOTP, SSO (SAML/OIDC), encrypted credential storage, and full audit trail.
-- **MCP Server** — 70+ tools for AI assistant integration (Claude, Cursor, custom agents) with OAuth 2.1 auth.
-- **IOC Management** — defang/refang IOCs for safe sharing, auto-enrichment when integrations are configured.
+- Full-text search across all incident entities (hosts, IOCs, accounts, malware, timeline, notes)
+- Cross-incident IOC correlation to surface shared indicators
+- Filterable, sortable tables on every entity type
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
-chmod +x start.sh && ./start.sh
+git clone https://github.com/7a336e6e/sheetstorm.git
+cd sheetstorm
+cp .env.example .env   # edit secrets as needed
+./start.sh             # builds, migrates, seeds — all Docker
 ```
 
-That's it. The script generates secrets, builds the Docker containers, runs migrations, and seeds an admin user.
+| Service   | URL                          |
+|-----------|------------------------------|
+| Frontend  | `http://localhost:8080`      |
+| API       | `http://localhost:8080/api/v1` |
 
-| Service    | URL                              |
-|------------|----------------------------------|
-| Frontend   | `http://127.0.0.1:3000`         |
-| API        | `http://127.0.0.1:5000/api/v1`  |
-| MCP Server | `http://127.0.0.1:8811/sse`     |
-
-> **Default login:** `admin@sheetstorm.local` — password is the value of `ADMIN_PASSWORD` in your `.env` file (default: `changeme`).
+**Default admin:** `admin@sheetstorm.local` / value of `ADMIN_PASSWORD` in `.env` (default `changeme`).
 
 ### Requirements
 
-- Docker & Docker Compose
-- ~2 GB RAM for all services
-- Ports 3000, 5000, 8811 available
+- Docker & Docker Compose v2
+- 2 GB RAM minimum (4 GB recommended)
 
 ### Optional Integrations
 
-SheetStorm works fully standalone. For enhanced capabilities, you can configure:
+Configure via environment variables in `.env`:
 
-- **OpenAI / Google Gemini** — AI-powered report generation
-- **VirusTotal** — file and IOC reputation lookups
-- **MISP** — IOC sharing with threat intel platforms
-- **Google Drive** — auto-save reports to case folders
-- **Slack** — incident notifications
-- **S3-compatible storage** — artifact storage
-
-See the [Configuration Guide](assets/docs/configuration.md) for details.
+| Integration | Purpose |
+|-------------|---------|
+| **OpenAI / Gemini** | AI-generated incident reports |
+| **VirusTotal** | IOC and file reputation lookups |
+| **MISP** | Push IOCs to a MISP instance |
+| **Google Drive** | Cloud artifact storage per case |
+| **Slack** | Notification webhooks |
+| **S3-compatible** | External artifact storage backend |
 
 ---
 
@@ -177,34 +160,52 @@ See the [Configuration Guide](assets/docs/configuration.md) for details.
 
 | Use Case | How SheetStorm Helps |
 |----------|----------------------|
-| **DFIR Training & Labs** | Hands-on IR lifecycle practice with a realistic platform — no vendor licenses needed. |
-| **Small Security Teams** | Structured incident management without the overhead of enterprise SOAR. |
-| **Enterprise SOCs** | Self-hosted, extensible IR platform that integrates with existing tools via API and MCP. |
-| **CTF & Competitions** | Collaborative incident tracking for blue team exercises. |
-| **Solo Analysts** | Organize your investigations with proper evidence handling and timeline tracking. |
+| **Solo analyst / student** | Practice structured IR with a real tool instead of spreadsheets |
+| **University / training lab** | Provide students with a multi-user IR platform at zero cost |
+| **Small security team** | Coordinate response across analysts with real-time collaboration |
+| **CTF / red-vs-blue exercises** | Track blue-team findings with MITRE mapping and kill-chain timelines |
+| **Enterprise SOC (lightweight)** | Quick stand-up for overflow incidents or teams evaluating IR tooling |
 
 ---
 
 ## Documentation
 
-| Doc | Description |
-|-----|-------------|
-| [Architecture](assets/docs/architecture.md) | System design, tech stack, project structure |
-| [API Reference](assets/docs/api-reference.md) | All REST endpoints with methods and descriptions |
-| [WebSocket Events](assets/docs/websocket-events.md) | Socket.IO event payloads (client ↔ server) |
-| [Configuration](assets/docs/configuration.md) | Environment variables and service configuration |
-| [Development](assets/docs/development.md) | Setup guide, useful commands, migration workflow |
-| [MCP Server](assets/docs/mcp-server-roadmap.md) | MCP server tools, prompts, resources, and architecture |
-| [Roadmap](assets/docs/roadmap.md) | Project status, planned features, and tech stack details |
+| Document | Description |
+|----------|-------------|
+| [Architecture](assets/docs/architecture.md) | System design, service topology, data flow |
+| [API Reference](assets/docs/api-reference.md) | REST endpoint catalogue |
+| [WebSocket Events](assets/docs/websocket-events.md) | Real-time event reference |
+| [Configuration](assets/docs/configuration.md) | Environment variables and settings |
+| [Development](assets/docs/development.md) | Local dev setup, testing, contributing |
+| [Roadmap](assets/docs/roadmap.md) | Planned features and milestones |
+| [MCP Server](assets/docs/mcp-server-roadmap.md) | MCP integration details |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 14, TypeScript, Tailwind CSS, shadcn/ui, Radix UI, Zustand |
+| Backend | Python, Flask 3, SQLAlchemy, Flask-JWT-Extended, Flask-SocketIO |
+| Database | PostgreSQL 16, Redis |
+| AI | OpenAI GPT-4o, Google Gemini (configurable) |
+| Infra | Docker Compose, Nginx reverse proxy |
+| MCP | Model Context Protocol server (70+ tools) |
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Whether it's bug reports, feature requests, documentation improvements, or code — open an issue or submit a PR.
+Contributions are welcome. Please open an issue to discuss significant changes before submitting a PR.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes
+4. Push and open a Pull Request
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE) — free for personal, educational, and commercial use.

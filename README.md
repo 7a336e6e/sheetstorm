@@ -48,7 +48,6 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 - Map every finding to MITRE ATT&CK tactics and techniques
 - Full ATT&CK matrix browser built into the platform
-- Coverage heatmap showing which techniques are observed per incident
 - Form-integrated tactic/technique picker for fast tagging
 
 ### Timeline & Evidence
@@ -65,7 +64,6 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 - **Ransomware Lookup** — check ransomware group profiles
 - **VirusTotal** — optional integration for file and IOC analysis
 - **Bulk Enrichment** — enrich multiple IOCs in a single operation
-- **IOC Correlation** — find IOCs that appear across multiple incidents
 - **Defang / Refang** — safely share IOCs in reports and chat
 - **STIX Export** — export incident IOCs as STIX 2.1 bundles
 
@@ -111,12 +109,6 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 ### MCP Server
 
 SheetStorm ships with a **Model Context Protocol (MCP) server** exposing 70+ tools, allowing AI assistants (Claude, Copilot, etc.) to interact with your incident data programmatically — create incidents, query IOCs, run enrichments, and more, all through natural language.
-
-### Search & Cross-Incident Analysis
-
-- Full-text search across all incident entities (hosts, IOCs, accounts, malware, timeline, notes)
-- Cross-incident IOC correlation to surface shared indicators
-- Filterable, sortable tables on every entity type
 
 ---
 

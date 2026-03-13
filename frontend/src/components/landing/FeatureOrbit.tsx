@@ -314,7 +314,7 @@ export function FeatureOrbit() {
                   }}
                   aria-label={f.title}
                 >
-                  <Icon className={cn('h-5 w-5', isActive ? f.color : 'text-slate-500')} />
+                  <Icon className={cn('h-5 w-5', isActive ? f.color : 'text-muted-foreground')} />
                 </button>
               )
             })}
@@ -339,17 +339,17 @@ export function FeatureOrbit() {
 
           {/* ── Right: Feature description ── */}
           <div className="flex-1 text-center lg:text-left">
-            <h2 className="text-3xl font-bold mb-4 text-white">
+            <h2 className="text-3xl font-bold mb-4">
               Everything You Need for Incident Response
             </h2>
-            <p className="text-slate-400 mb-8">
+            <p className="text-muted-foreground mb-8">
               Purpose-built by security practitioners. Every feature designed to
               accelerate your response workflow.
             </p>
 
             {/* Active feature card */}
             <div key={activeIndex} className="animate-phase-slide-in">
-              <div className="flex items-start gap-4 p-5 rounded-xl border border-white/[0.08] bg-[hsl(240,5%,12%)]/80 backdrop-blur-sm">
+              <div className="flex items-start gap-4 p-5 rounded-xl border border-border bg-card/80 backdrop-blur-sm">
                 <div
                   className="p-2.5 rounded-lg shrink-0 transition-colors duration-500"
                   style={{ backgroundColor: `${active.hex}15` }}
@@ -357,8 +357,8 @@ export function FeatureOrbit() {
                   <active.icon className={cn('h-5 w-5', active.color)} />
                 </div>
                 <div>
-                  <h3 className="font-semibold mb-1 text-white">{active.title}</h3>
-                  <p className="text-sm text-slate-400 leading-relaxed">
+                  <h3 className="font-semibold mb-1">{active.title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
                     {active.description}
                   </p>
                 </div>

@@ -77,17 +77,17 @@ function FadeIn({ children, className, delay = 0 }: { children: React.ReactNode;
 
 export default function LandingPage() {
   return (
-    <div className="dark min-h-screen relative text-white">
+    <div className="dark force-dark min-h-screen relative">
       <StarryBackground />
 
       <div className="relative z-10">
       {/* ── Header ── */}
-      <header className="border-b border-white/[0.06] sticky top-0 z-50 bg-[hsla(240,6%,9%,0.8)] backdrop-blur-xl" style={{ WebkitBackdropFilter: 'blur(24px)' }}>
+      <header className="border-b border-white/[0.06] sticky top-0 z-50 bg-background/80 backdrop-blur-xl" style={{ WebkitBackdropFilter: 'blur(24px)' }}>
         <div className="container mx-auto px-4 py-4">
           <nav className="flex items-center justify-between">
             <Link href="/" className="flex items-center gap-2.5">
               <SheetStormLogo size={28} />
-              <span className="text-xl font-semibold text-white">SheetStorm</span>
+              <span className="text-xl font-semibold">SheetStorm</span>
             </Link>
             <div className="flex items-center gap-2">
               <a
@@ -96,12 +96,12 @@ export default function LandingPage() {
                 rel="noopener noreferrer"
                 className="hidden sm:inline-flex"
               >
-                <Button variant="ghost" size="icon" className="text-white/70 hover:text-white">
+                <Button variant="ghost" size="icon">
                   <Github className="h-5 w-5" />
                 </Button>
               </a>
               <Link href="/login">
-                <Button variant="ghost" className="text-white/80 hover:text-white">Sign In</Button>
+                <Button variant="ghost">Sign In</Button>
               </Link>
             </div>
           </nav>
@@ -123,7 +123,7 @@ export default function LandingPage() {
             </FadeIn>
 
             <FadeIn delay={100}>
-              <h1 className="text-4xl lg:text-6xl font-bold mb-6 tracking-tight text-white">
+              <h1 className="text-4xl lg:text-6xl font-bold mb-6 tracking-tight">
                 Incident Response
                 <br />
                 <span className="bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500 bg-clip-text text-transparent">
@@ -133,7 +133,7 @@ export default function LandingPage() {
             </FadeIn>
 
             <FadeIn delay={200}>
-              <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
+              <p className="text-lg text-muted-foreground mb-10 max-w-2xl mx-auto">
                 A free, open-source platform for the DFIR community. Track incidents across the full
                 response lifecycle with real-time collaboration, evidence integrity, and AI-powered insights.
               </p>
@@ -173,8 +173,8 @@ export default function LandingPage() {
         <section className="py-20 bg-gradient-to-b from-indigo-950/20 via-background/80 to-indigo-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
             <div className="text-center mb-14">
-              <h2 className="text-3xl font-bold mb-4 text-white">Built for the DFIR Community</h2>
-              <p className="text-slate-400 max-w-2xl mx-auto">
+              <h2 className="text-3xl font-bold mb-4">Built for the DFIR Community</h2>
+              <p className="text-muted-foreground max-w-2xl mx-auto">
                 Whether you&apos;re training, competing, or responding to real incidents — SheetStorm gives
                 every responder access to structured, collaborative IR for free.
               </p>
@@ -197,8 +197,8 @@ export default function LandingPage() {
                       >
                         <Icon className={cn('h-4.5 w-4.5', item.color)} />
                       </div>
-                      <h3 className="font-semibold mb-1.5 text-sm text-white">{item.title}</h3>
-                      <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+                      <h3 className="font-semibold mb-1.5 text-sm">{item.title}</h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
                     </div>
                   </FadeIn>
                 )
@@ -214,8 +214,8 @@ export default function LandingPage() {
         <section className="py-20 bg-gradient-to-b from-violet-950/20 via-background/80 to-violet-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
             <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold mb-4 text-white">See It in Action</h2>
-              <p className="text-slate-400 max-w-2xl mx-auto">
+              <h2 className="text-3xl font-bold mb-4">See It in Action</h2>
+              <p className="text-muted-foreground max-w-2xl mx-auto">
                 A closer look at the tools and views that help responders stay organized, thorough, and fast.
               </p>
             </div>
@@ -231,8 +231,8 @@ export default function LandingPage() {
           <div className="container mx-auto px-4">
             <div className="max-w-3xl mx-auto">
               <div className="text-center mb-10">
-                <h2 className="text-3xl font-bold mb-4 text-white">Quick Start</h2>
-                <p className="text-slate-400">
+                <h2 className="text-3xl font-bold mb-4">Quick Start</h2>
+                <p className="text-muted-foreground">
                   Two commands. That&apos;s it. Docker handles the rest.
                 </p>
               </div>
@@ -245,22 +245,22 @@ export default function LandingPage() {
                     </pre>
                     <CopyButton text={QUICK_START_CODE} />
                   </div>
-                  <p className="text-sm text-slate-400 mt-4">
+                  <p className="text-sm text-muted-foreground mt-4">
                     The start script generates secrets, builds all Docker containers, runs database
                     migrations, and seeds an admin user automatically.
                   </p>
                   <div className="grid sm:grid-cols-3 gap-4 mt-6 text-sm">
                     <div className="flex flex-col items-center p-3 rounded-lg bg-muted">
-                      <span className="font-semibold text-white">Frontend</span>
-                      <span className="text-slate-400">:3000</span>
+                      <span className="font-semibold">Frontend</span>
+                      <span className="text-muted-foreground">:3000</span>
                     </div>
                     <div className="flex flex-col items-center p-3 rounded-lg bg-muted">
-                      <span className="font-semibold text-white">API</span>
-                      <span className="text-slate-400">:5000</span>
+                      <span className="font-semibold">API</span>
+                      <span className="text-muted-foreground">:5000</span>
                     </div>
                     <div className="flex flex-col items-center p-3 rounded-lg bg-muted">
-                      <span className="font-semibold text-white">MCP Server</span>
-                      <span className="text-slate-400">:8811</span>
+                      <span className="font-semibold">MCP Server</span>
+                      <span className="text-muted-foreground">:8811</span>
                     </div>
                   </div>
                 </CardContent>
@@ -270,14 +270,14 @@ export default function LandingPage() {
         </section>
 
         {/* ── Community Section ── */}
-        <section className="py-20 bg-gradient-to-b from-blue-950/20 via-transparent to-blue-950/20 backdrop-blur-sm border-t border-white/[0.03]">
+        <section className="py-20 bg-gradient-to-b from-blue-950/20 via-background/80 to-blue-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
-            <Card className="max-w-3xl mx-auto bg-[hsl(240,5%,12%)]/80 backdrop-blur-sm border-white/[0.06]">
+            <Card className="max-w-3xl mx-auto bg-card/80 backdrop-blur-sm border-white/[0.06]">
               <CardContent className="py-12 text-center">
-                <h2 className="text-2xl lg:text-3xl font-bold mb-4 text-white">
+                <h2 className="text-2xl lg:text-3xl font-bold mb-4">
                   Join the Community
                 </h2>
-                <p className="text-slate-400 mb-8 max-w-xl mx-auto">
+                <p className="text-muted-foreground mb-8 max-w-xl mx-auto">
                   SheetStorm is free, open source, and built by practitioners.
                   Star the repo, contribute features, or just say hello.
                 </p>
@@ -311,22 +311,22 @@ export default function LandingPage() {
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-white/[0.06] py-8 bg-[hsla(240,6%,9%,0.8)] backdrop-blur-sm" style={{ WebkitBackdropFilter: 'blur(12px)' }}>
+      <footer className="border-t border-white/[0.06] py-8 bg-background/80 backdrop-blur-sm">
         <div className="container mx-auto px-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
               <SheetStormLogo size={20} />
-              <span className="font-semibold text-white">SheetStorm</span>
+              <span className="font-semibold">SheetStorm</span>
             </div>
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted-foreground">
               Free & open source. Built for the DFIR community.
             </p>
-            <div className="flex items-center gap-6 text-sm text-slate-400">
+            <div className="flex items-center gap-6 text-sm text-muted-foreground">
               <a
                 href="https://github.com/7a336e6e/sheetstorm"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-white transition-colors"
+                className="hover:text-foreground transition-colors"
               >
                 GitHub
               </a>
@@ -334,11 +334,11 @@ export default function LandingPage() {
                 href="https://www.linkedin.com/in/cybergeorge/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-white transition-colors"
+                className="hover:text-foreground transition-colors"
               >
                 LinkedIn
               </a>
-              <a href="https://github.com/7a336e6e/sheetstorm/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">MIT License</a>
+              <a href="https://github.com/7a336e6e/sheetstorm/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">MIT License</a>
             </div>
           </div>
         </div>

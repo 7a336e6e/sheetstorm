@@ -43,7 +43,7 @@ export function ScreenshotCarousel({ items }: ScreenshotCarouselProps) {
       onMouseLeave={() => setIsPaused(false)}
     >
       {/* Carousel viewport — fixed 16:9 aspect ratio */}
-      <div className="relative rounded-xl overflow-hidden border border-white/[0.08] bg-white/[0.04] group" style={{ aspectRatio: '16 / 9' }}>
+      <div className="relative rounded-xl overflow-hidden border border-border bg-muted group" style={{ aspectRatio: '16 / 9' }}>
         {/* Screenshot — centered within fixed container */}
         <div key={active} className="animate-carousel-fade absolute inset-0 flex items-center justify-center">
           <Image

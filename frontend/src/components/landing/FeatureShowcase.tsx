@@ -140,7 +140,7 @@ const PANEL_HEIGHT = 'h-[420px]'
 
 function MockTableHead({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className={cn('h-10 px-4 text-left align-middle font-medium text-slate-400 text-[10px] uppercase tracking-wider', className)}>
+    <th className={cn('h-10 px-4 text-left align-middle font-medium text-muted-foreground text-[10px] uppercase tracking-wider', className)}>
       {children}
     </th>
   )
@@ -192,11 +192,11 @@ function OverviewPanel() {
           return (
             <div key={s.title} className="px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-slate-400">{s.title}</span>
-                <Icon className="h-3.5 w-3.5 text-slate-500" />
+                <span className="text-[10px] text-muted-foreground">{s.title}</span>
+                <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
               </div>
               <div className="text-xl font-bold">{s.value}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{s.desc}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">{s.desc}</div>
             </div>
           )
         })}
@@ -204,21 +204,21 @@ function OverviewPanel() {
 
       <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-slate-400">Task Progress</span>
+          <span className="text-xs font-medium text-muted-foreground">Task Progress</span>
           <span className="text-xs font-medium">38%</span>
         </div>
         <div className="bg-white/[0.06] rounded-full h-2 mb-2">
           <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-2 rounded-full" style={{ width: '38%' }} />
         </div>
         <div className="grid grid-cols-3 gap-2 text-center">
-          <div><span className="text-sm font-semibold">3</span><span className="text-[10px] text-slate-400 block">Pending</span></div>
-          <div><span className="text-sm font-semibold text-blue-400">2</span><span className="text-[10px] text-slate-400 block">In Progress</span></div>
-          <div><span className="text-sm font-semibold text-emerald-400">3</span><span className="text-[10px] text-slate-400 block">Completed</span></div>
+          <div><span className="text-sm font-semibold">3</span><span className="text-[10px] text-muted-foreground block">Pending</span></div>
+          <div><span className="text-sm font-semibold text-blue-400">2</span><span className="text-[10px] text-muted-foreground block">In Progress</span></div>
+          <div><span className="text-sm font-semibold text-emerald-400">3</span><span className="text-[10px] text-muted-foreground block">Completed</span></div>
         </div>
       </div>
 
       <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-        <span className="text-xs font-medium text-slate-400 block mb-2">Host Containment</span>
+        <span className="text-xs font-medium text-muted-foreground block mb-2">Host Containment</span>
         <div className="grid grid-cols-5 gap-2">
           {containment.map((c) => (
             <div key={c.status} className={cn('rounded-lg border px-2 py-2 text-center', c.color)}>
@@ -250,7 +250,7 @@ function EventsPanel() {
         <thead className="border-b border-white/[0.06]">
           <tr>
             <MockTableHead className="w-[32px]">{' '}</MockTableHead>
-            <MockTableHead className="w-[40px]"><Star className="h-3.5 w-3.5 text-slate-400" /></MockTableHead>
+            <MockTableHead className="w-[40px]"><Star className="h-3.5 w-3.5 text-muted-foreground" /></MockTableHead>
             <MockTableHead>Time</MockTableHead>
             <MockTableHead>Host</MockTableHead>
             <MockTableHead>Activity</MockTableHead>
@@ -261,23 +261,23 @@ function EventsPanel() {
           {events.map((ev, i) => (
             <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
               <MockTableCell className="w-[32px] px-2">
-                <ChevronRight className="h-4 w-4 text-slate-400" />
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
               </MockTableCell>
               <MockTableCell className="w-[40px]">
-                <Star className={cn('h-4 w-4', ev.isKey ? 'text-amber-400 fill-amber-400' : 'text-slate-600')} />
+                <Star className={cn('h-4 w-4', ev.isKey ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground/30')} />
               </MockTableCell>
-              <MockTableCell className="whitespace-nowrap text-xs text-slate-400">{ev.time}</MockTableCell>
+              <MockTableCell className="whitespace-nowrap text-xs text-muted-foreground">{ev.time}</MockTableCell>
               <MockTableCell>
                 <div className="flex items-center gap-1">
-                  <Server className="h-3 w-3 text-slate-400" />
+                  <Server className="h-3 w-3 text-muted-foreground" />
                   <span className="text-xs">{ev.host}</span>
                 </div>
               </MockTableCell>
               <MockTableCell className="max-w-[260px] truncate text-xs">{ev.activity}</MockTableCell>
               <MockTableCell>
                 <div className="flex flex-col gap-1 items-start">
-                  <MockBadge className="border-white/[0.1] bg-white/[0.04] text-white/80">{ev.tactic}</MockBadge>
-                  <span className="text-[10px] font-mono text-slate-400">{ev.technique}</span>
+                  <MockBadge className="border-white/[0.1] bg-white/[0.04] text-foreground/80">{ev.tactic}</MockBadge>
+                  <span className="text-[10px] font-mono text-muted-foreground">{ev.technique}</span>
                 </div>
               </MockTableCell>
             </tr>
@@ -318,18 +318,18 @@ function HostsPanel() {
             return (
               <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
                 <MockTableCell className="font-medium text-sm">{h.hostname}</MockTableCell>
-                <MockTableCell className="font-mono text-xs text-slate-400">{h.ip}</MockTableCell>
+                <MockTableCell className="font-mono text-xs text-muted-foreground">{h.ip}</MockTableCell>
                 <MockTableCell>
                   <div className="flex items-center gap-2">
-                    <div className="p-1 rounded bg-white/[0.05]"><TypeIcon className="h-3.5 w-3.5 text-slate-400" /></div>
+                    <div className="p-1 rounded bg-white/[0.05]"><TypeIcon className="h-3.5 w-3.5 text-muted-foreground" /></div>
                     <span className="text-xs">{h.type}</span>
                   </div>
                 </MockTableCell>
-                <MockTableCell className="text-xs text-slate-400">{h.os}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground">{h.os}</MockTableCell>
                 <MockTableCell>
                   <MockBadge className={h.statusColor}>{h.status}</MockBadge>
                 </MockTableCell>
-                <MockTableCell className="text-xs text-slate-400">{h.firstSeen}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground">{h.firstSeen}</MockTableCell>
               </tr>
             )
           })}
@@ -350,7 +350,7 @@ function TasksPanel() {
   ]
 
   const statusInfo: Record<string, { icon: React.ElementType; color: string; label: string }> = {
-    pending: { icon: Circle, color: 'text-slate-400', label: 'Pending' },
+    pending: { icon: Circle, color: 'text-muted-foreground', label: 'Pending' },
     in_progress: { icon: Clock, color: 'text-blue-400', label: 'In Progress' },
     completed: { icon: CheckCircle2, color: 'text-emerald-400', label: 'Completed' },
   }
@@ -375,18 +375,18 @@ function TasksPanel() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className={cn('text-sm font-medium', task.status === 'completed' ? 'line-through text-slate-400' : text-white)}>{task.title}</h4>
+                  <h4 className={cn('text-sm font-medium', task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground')}>{task.title}</h4>
                   <MockBadge className={cn('border', task.prColor)}>{task.priority}</MockBadge>
                   <MockBadge className={cn('border-white/[0.1] bg-white/[0.04]', st.color)}>{st.label}</MockBadge>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">{task.desc}</p>
+                <p className="text-xs text-muted-foreground mt-1">{task.desc}</p>
                 <div className="flex items-center gap-3 mt-2 flex-wrap">
-                  <span className="text-[10px] text-slate-400 flex items-center gap-1"><User className="w-3 h-3" /> {task.assignee}</span>
-                  <span className="text-[10px] text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" /> {task.due}</span>
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-1"><User className="w-3 h-3" /> {task.assignee}</span>
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-1"><Calendar className="w-3 h-3" /> {task.due}</span>
                 </div>
                 {task.linked.length > 0 && (
                   <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                    <Link2 className="w-3 h-3 text-slate-400" />
+                    <Link2 className="w-3 h-3 text-muted-foreground" />
                     {task.linked.map((ent, j) => {
                       const EntIcon = entityIcons[ent.type] || Server
                       return (
@@ -434,26 +434,26 @@ function AccountsPanel() {
             <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
               <MockTableCell>
                 <div className="flex items-center gap-2">
-                  <div className={cn('p-1 rounded', a.isPrivileged ? 'bg-red-500/20 text-red-400' : 'bg-white/[0.05] text-slate-400')}>
+                  <div className={cn('p-1 rounded', a.isPrivileged ? 'bg-red-500/20 text-red-400' : 'bg-white/[0.05] text-muted-foreground')}>
                     {a.isPrivileged ? <Crown className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
                   </div>
                   <div>
                     <span className="text-sm font-medium">{a.domain ? `${a.domain}\\${a.name}` : a.name}</span>
-                    <span className="block text-[10px] text-slate-400 font-mono">{a.sid}</span>
+                    <span className="block text-[10px] text-muted-foreground font-mono">{a.sid}</span>
                   </div>
                 </div>
               </MockTableCell>
               <MockTableCell>
-                <MockBadge className="border-white/[0.1] bg-white/[0.04] text-white/80">{a.type}</MockBadge>
+                <MockBadge className="border-white/[0.1] bg-white/[0.04] text-foreground/80">{a.type}</MockBadge>
               </MockTableCell>
               <MockTableCell className="text-xs">{a.host}</MockTableCell>
               <MockTableCell>
                 <div className="flex items-center gap-1">
-                  <span className="text-xs text-slate-400 font-mono">{'\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}</span>
-                  <Eye className="h-3 w-3 text-slate-500" />
+                  <span className="text-xs text-muted-foreground font-mono">{'\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}</span>
+                  <Eye className="h-3 w-3 text-muted-foreground/50" />
                 </div>
               </MockTableCell>
-              <MockTableCell className="text-xs text-slate-400">{a.dateSeen}</MockTableCell>
+              <MockTableCell className="text-xs text-muted-foreground">{a.dateSeen}</MockTableCell>
               <MockTableCell>
                 <MockBadge className={cn(
                   a.status === 'active' ? 'bg-red-500/20 text-red-400 border-red-500/30' : 'bg-slate-500/20 text-slate-400 border-slate-500/30'
@@ -507,7 +507,7 @@ function NetworkIOCsPanel() {
                 <MockTableCell className="text-xs">{ioc.protocol}:{ioc.port}</MockTableCell>
                 <MockTableCell className="text-xs">{ioc.srcHost}</MockTableCell>
                 <MockTableCell className="text-xs">{ioc.dstHost}</MockTableCell>
-                <MockTableCell className="text-xs text-slate-400 max-w-[200px] truncate">{ioc.desc}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{ioc.desc}</MockTableCell>
               </tr>
             )
           })}
@@ -547,7 +547,7 @@ function HostIOCsPanel() {
               <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
                 <MockTableCell>
                   <div className="flex items-center gap-2">
-                    <div className="p-1 rounded bg-white/[0.05]"><TypeIcon className="h-3.5 w-3.5 text-slate-400" /></div>
+                    <div className="p-1 rounded bg-white/[0.05]"><TypeIcon className="h-3.5 w-3.5 text-muted-foreground" /></div>
                     <span className="text-xs">{ioc.type}</span>
                   </div>
                 </MockTableCell>
@@ -560,7 +560,7 @@ function HostIOCsPanel() {
                     {ioc.status}
                   </MockBadge>
                 </MockTableCell>
-                <MockTableCell className="text-xs text-slate-400 max-w-[200px] truncate">{ioc.notes}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{ioc.notes}</MockTableCell>
               </tr>
             )
           })}
@@ -598,12 +598,12 @@ function MalwarePanel() {
             <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
               <MockTableCell>
                 <div className="text-sm font-medium">{m.name}</div>
-                <div className="text-[10px] text-slate-400 truncate max-w-[180px]">{m.path}</div>
+                <div className="text-[10px] text-muted-foreground truncate max-w-[180px]">{m.path}</div>
               </MockTableCell>
               <MockTableCell>
                 <MockBadge className={cn(
                   m.isTool
-                    ? 'border-white/[0.1] bg-white/[0.04] text-white/80'
+                    ? 'border-white/[0.1] bg-white/[0.04] text-foreground/80'
                     : 'bg-red-500/10 text-red-400 border-red-500/20'
                 )}>
                   {m.isTool ? <><Wrench className="w-3 h-3 mr-1" />Tool</> : <><Bug className="w-3 h-3 mr-1" />Malware</>}
@@ -612,17 +612,17 @@ function MalwarePanel() {
               <MockTableCell>
                 <div className="flex items-center gap-1 text-[10px] font-mono bg-white/[0.04] px-1.5 py-0.5 rounded w-fit">
                   MD5: {m.md5.substring(0, 8)}{'\u2026'}
-                  <Copy className="w-3 h-3 text-slate-500" />
+                  <Copy className="w-3 h-3 text-muted-foreground/50" />
                 </div>
               </MockTableCell>
               <MockTableCell className="text-xs">{m.host}</MockTableCell>
               <MockTableCell>
                 <div className="text-xs">{m.size}</div>
-                <div className="text-[10px] text-slate-400">{m.time}</div>
+                <div className="text-[10px] text-muted-foreground">{m.time}</div>
               </MockTableCell>
               <MockTableCell>
                 <div className="text-xs">{m.family}</div>
-                <div className="text-[10px] text-slate-400">{m.actor}</div>
+                <div className="text-[10px] text-muted-foreground">{m.actor}</div>
               </MockTableCell>
             </tr>
           ))}
@@ -638,14 +638,14 @@ function ArtifactsPanel() {
   const artifacts = [
     { name: 'invoice_q4_2024.docm', desc: 'Phishing attachment \u2014 initial access vector', size: '248 KB', sha256: 'a7f3d2c8e91c4b', storage: 'Google Drive', storageColor: 'border-blue-500/30 text-blue-400', status: 'verified', uploaded: 'Jan 15, 14:45' },
     { name: 'lsass_dump.dmp', desc: 'LSASS memory dump from DC-01', size: '1.2 GB', sha256: 'c4e891f23bf7a2', storage: 'S3', storageColor: 'border-amber-500/30 text-amber-400', status: 'verified', uploaded: 'Jan 15, 15:02' },
-    { name: 'upload.aspx', desc: 'Web shell recovered from SRV-WEB03', size: '4.7 KB', sha256: '9d2f1a065ec803', storage: 'Local', storageColor: 'border-white/20 text-slate-400', status: 'verified', uploaded: 'Jan 15, 16:30' },
+    { name: 'upload.aspx', desc: 'Web shell recovered from SRV-WEB03', size: '4.7 KB', sha256: '9d2f1a065ec803', storage: 'Local', storageColor: 'border-white/20 text-muted-foreground', status: 'verified', uploaded: 'Jan 15, 16:30' },
     { name: 'schtask_export.xml', desc: 'Exported malicious scheduled task XML', size: '12 KB', sha256: 'f1b8c3d07a4d09', storage: 'Google Drive', storageColor: 'border-blue-500/30 text-blue-400', status: 'unverified', uploaded: 'Jan 15, 17:15' },
     { name: 'pcap_capture.pcapng', desc: 'Network capture \u2014 C2 communication', size: '847 MB', sha256: 'b2e7f4a19c0d53', storage: 'S3', storageColor: 'border-amber-500/30 text-amber-400', status: 'verified', uploaded: 'Jan 16, 08:30' },
   ]
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border-2 border-dashed border-white/[0.08] p-3 flex items-center justify-center gap-2 text-slate-500">
+      <div className="rounded-xl border-2 border-dashed border-white/[0.08] p-3 flex items-center justify-center gap-2 text-muted-foreground/60">
         <Upload className="h-4 w-4" />
         <span className="text-xs">Drag & drop evidence files or click to upload</span>
       </div>
@@ -667,11 +667,11 @@ function ArtifactsPanel() {
               <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group">
                 <MockTableCell>
                   <div className="text-sm font-medium">{a.name}</div>
-                  <div className="text-[10px] text-slate-400">{a.desc}</div>
+                  <div className="text-[10px] text-muted-foreground">{a.desc}</div>
                 </MockTableCell>
-                <MockTableCell className="text-xs text-slate-400">{a.size}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground">{a.size}</MockTableCell>
                 <MockTableCell>
-                  <code className="text-[10px] font-mono text-slate-400 bg-white/[0.04] px-1.5 py-0.5 rounded">
+                  <code className="text-[10px] font-mono text-muted-foreground bg-white/[0.04] px-1.5 py-0.5 rounded">
                     {a.sha256.substring(0, 16)}{'\u2026'}
                   </code>
                 </MockTableCell>
@@ -683,12 +683,12 @@ function ArtifactsPanel() {
                     {a.status === 'verified' ? (
                       <ShieldCheck className="h-3.5 w-3.5 text-green-400" />
                     ) : (
-                      <Shield className="h-3.5 w-3.5 text-slate-400" />
+                      <Shield className="h-3.5 w-3.5 text-muted-foreground" />
                     )}
-                    <span className={cn('text-[10px]', a.status === 'verified' ? 'text-green-400' : 'text-slate-400')}>{a.status}</span>
+                    <span className={cn('text-[10px]', a.status === 'verified' ? 'text-green-400' : 'text-muted-foreground')}>{a.status}</span>
                   </div>
                 </MockTableCell>
-                <MockTableCell className="text-xs text-slate-400">{a.uploaded}</MockTableCell>
+                <MockTableCell className="text-xs text-muted-foreground">{a.uploaded}</MockTableCell>
               </tr>
             ))}
           </tbody>
@@ -726,8 +726,8 @@ function NotesPanel() {
                 <CatIcon className="w-3 h-3 mr-1" />{note.category.replace('_', ' ')}
               </MockBadge>
             </div>
-            <p className="text-xs text-slate-400 whitespace-pre-wrap leading-relaxed">{note.content}</p>
-            <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400">
+            <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{note.content}</p>
+            <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
               <span className="flex items-center gap-1"><User className="w-3 h-3" /> {note.author}</span>
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {note.time}</span>
             </div>
@@ -806,15 +806,15 @@ export function FeatureShowcase() {
                       isActive ? 'bg-white/[0.08]' : 'bg-transparent'
                     )}
                   >
-                    <Icon className={cn('h-4 w-4 transition-colors duration-300', isActive ? f.color : 'text-slate-400')} />
+                    <Icon className={cn('h-4 w-4 transition-colors duration-300', isActive ? f.color : 'text-muted-foreground')} />
                   </div>
                   <span className={cn(
                     'text-sm font-medium transition-colors duration-300 hidden lg:block',
-                    isActive ? text-white : 'text-slate-400'
+                    isActive ? 'text-foreground' : 'text-muted-foreground'
                   )}>
                     {f.title}
                   </span>
-                  {isActive && <ChevronRight className="h-3.5 w-3.5 text-slate-400 ml-auto hidden lg:block" />}
+                  {isActive && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-auto hidden lg:block" />}
                 </button>
               )
             })}
@@ -823,12 +823,12 @@ export function FeatureShowcase() {
 
         {/* Right: Mock panel */}
         <div className="flex-1 min-w-0">
-          <div className="rounded-xl border border-white/[0.06] bg-[hsl(240,5%,12%)]/60 backdrop-blur-sm overflow-hidden">
+          <div className="rounded-xl border border-white/[0.06] bg-card/60 backdrop-blur-sm overflow-hidden">
             {/* Panel header bar */}
             <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
               <active.icon className={cn('h-4 w-4', active.color)} />
               <span className="text-sm font-medium">{active.title}</span>
-              <span className="text-xs text-slate-400 hidden sm:block">{active.description}</span>
+              <span className="text-xs text-muted-foreground hidden sm:block">{active.description}</span>
               {/* Dot timer indicator */}
               <div className="ml-auto flex gap-1 shrink-0">
                 {features.map((f) => (

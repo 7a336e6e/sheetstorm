@@ -204,6 +204,37 @@
   100% { stroke-dashoffset: 0; }
 }
 
+/* ──────────────────────────────────────────────────────────
+ * Force-dark scope — landing page always renders dark mode
+ * regardless of the user's selected theme. Re-declares all
+ * dark-theme CSS variables so descendants resolve correctly
+ * even when <html> has class="light".
+ * ────────────────────────────────────────────────────────── */
+.force-dark {
+  --background: 240 6% 9%;
+  --foreground: 220 14% 89%;
+  --card: 240 5% 12%;
+  --card-foreground: 220 14% 89%;
+  --popover: 240 5% 11%;
+  --popover-foreground: 220 14% 89%;
+  --primary: 215 55% 55%;
+  --primary-foreground: 240 6% 9%;
+  --secondary: 258 28% 58%;
+  --secondary-foreground: 220 14% 89%;
+  --muted: 240 5% 16%;
+  --muted-foreground: 220 10% 55%;
+  --accent: 215 30% 18%;
+  --accent-foreground: 215 55% 70%;
+  --destructive: 0 55% 55%;
+  --destructive-foreground: 220 14% 89%;
+  --border: 240 5% 18%;
+  --input: 240 5% 18%;
+  --ring: 215 55% 55%;
+  --surface-raised: 240 5% 14%;
+  --surface-sunken: 240 6% 7%;
+  color-scheme: dark;
+}
+
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   * {

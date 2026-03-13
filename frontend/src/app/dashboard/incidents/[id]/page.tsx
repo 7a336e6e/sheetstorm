@@ -12,7 +12,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
-import { useIncidentStore } from '@/lib/store'
+import { useIncidentStore, useAuthStore } from '@/lib/store'
 import api from '@/lib/api'
 import type { TimelineEvent, CompromisedHost, Task } from '@/types'
 import {

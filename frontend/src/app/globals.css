@@ -140,6 +140,39 @@
   }
 }
 
+/* Shader hero animations */
+@keyframes fade-in-down {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Section divider gradient: space→content→space */
+.section-glow-top {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    hsl(var(--primary) / 0.03) 40%,
+    hsl(var(--primary) / 0.06) 50%,
+    hsl(var(--primary) / 0.03) 60%,
+    transparent
+  );
+}
+
+/* Floating animation for decorative elements */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
 /* Attack graph edge flow animation */
 @keyframes edge-flow {
   0% {

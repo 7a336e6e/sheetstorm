@@ -35,8 +35,8 @@ export function CopyButton({ text, className }: CopyButtonProps) {
       onClick={handleCopy}
       className={cn(
         'absolute top-3 right-3 p-2 rounded-md',
-        'bg-background/60 backdrop-blur-sm border border-border/50',
-        'text-muted-foreground hover:text-foreground hover:bg-background/80',
+        'bg-black/60 backdrop-blur-sm border border-white/10',
+        'text-slate-400 hover:text-white hover:bg-white/10',
         'transition-all duration-200',
         copied && 'text-emerald-500 hover:text-emerald-500',
         className

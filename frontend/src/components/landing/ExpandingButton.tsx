@@ -23,12 +23,12 @@ const variantStyles: Record<ExpandingButtonVariant, string> = {
     'group-hover:from-indigo-600 group-hover:to-violet-600',
   ].join(' '),
   outline: [
-    'border border-border bg-background text-foreground',
-    'group-hover:bg-muted group-hover:border-border/80',
+    'border border-white/[0.12] bg-[hsl(240,6%,9%)] text-white',
+    'group-hover:bg-white/[0.08] group-hover:border-white/[0.16]',
   ].join(' '),
   ghost: [
-    'border border-border bg-background text-muted-foreground',
-    'group-hover:text-foreground group-hover:bg-muted',
+    'border border-white/[0.12] bg-[hsl(240,6%,9%)] text-slate-400',
+    'group-hover:text-white group-hover:bg-white/[0.08]',
   ].join(' '),
 }
 

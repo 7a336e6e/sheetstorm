@@ -103,7 +103,7 @@ export function IRPhaseAnimation() {
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
     >
-      <div className="rounded-xl border border-border bg-card p-4 lg:p-6 relative overflow-hidden">
+      <div className="rounded-xl border border-white/[0.08] bg-[hsl(240,5%,12%)] p-4 lg:p-6 relative overflow-hidden">
         {/* Subtle grid background — matches incidents page */}
         <div
           className="absolute inset-0 opacity-[0.03]"
@@ -237,7 +237,7 @@ function PhasePanel({
             {phase}
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
               {phaseInfo.name}
               {isCurrent && (
                 <span className="text-[10px] font-normal bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded-full">
@@ -250,12 +250,12 @@ function PhasePanel({
                 </span>
               )}
             </h3>
-            <p className="text-[11px] text-muted-foreground">{recs.subtitle}</p>
+            <p className="text-[11px] text-slate-400">{recs.subtitle}</p>
           </div>
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-muted-foreground hover:text-foreground transition-colors"
+          className="p-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 text-slate-400 hover:text-white transition-colors"
         >
           <ChevronUp className="h-4 w-4" />
         </button>
@@ -271,8 +271,8 @@ function PhasePanel({
               {i + 1}
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium text-foreground leading-snug">{step.action}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{step.detail}</p>
+              <p className="text-xs font-medium text-white leading-snug">{step.action}</p>
+              <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{step.detail}</p>
               {step.d3fend && (
                 <span className="inline-flex items-center gap-1 mt-1 text-[9px] text-cyan-400/70 font-mono">
                   <Shield className="h-2.5 w-2.5" />
@@ -284,7 +284,7 @@ function PhasePanel({
         ))}
       </div>
 
-      <div className="mt-3 pt-2 border-t border-black/5 dark:border-white/5 flex items-center gap-4 text-[10px] text-muted-foreground/50">
+      <div className="mt-3 pt-2 border-t border-black/5 dark:border-white/5 flex items-center gap-4 text-[10px] text-slate-500">
         <span className="flex items-center gap-1">
           <Shield className="h-3 w-3" /> MITRE D3FEND aligned
         </span>

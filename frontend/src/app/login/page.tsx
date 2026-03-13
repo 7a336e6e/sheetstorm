@@ -15,7 +15,8 @@ import { Input, PasswordInput } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
-import { Shield, ArrowRight, Loader2, CheckCircle2, KeyRound, Github, Check, X } from 'lucide-react'
+import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github, Check, X } from 'lucide-react'
+import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
 import { cn } from '@/lib/utils'
 
 function PasswordCheck({ met, label }: { met: boolean; label: string }) {
@@ -175,9 +176,7 @@ function LoginPageInner() {
         
         <div className="relative z-10 max-w-xl">
           <div className="flex items-center gap-3 mb-8">
-            <div className="p-3 bg-primary/10 rounded-xl border border-primary/20 backdrop-blur-sm shadow-[0_0_20px_-5px_rgba(6,182,212,0.3)]">
-              <Shield className="h-10 w-10 text-primary" />
-            </div>
+            <SheetStormLogo size={44} />
             <h1 className="text-4xl font-bold tracking-tight text-white">SheetStorm</h1>
           </div>
           
@@ -205,10 +204,7 @@ function LoginPageInner() {
           </div>
         </div>
         
-        {/* Footer info on brand side */}
-        <div className="absolute bottom-8 left-12 text-slate-500 text-sm">
-          &copy; 2026 SheetStorm Systems. All rights reserved.
-        </div>
+
       </div>
 
       {/* Right Side: Auth Forms */}
@@ -216,7 +212,7 @@ function LoginPageInner() {
         <div className="w-full max-w-[420px] space-y-6">
           {/* Mobile Logo */}
           <div className="md:hidden flex items-center gap-2 mb-8 justify-center">
-            <Shield className="h-8 w-8 text-primary" />
+            <SheetStormLogo size={32} />
             <span className="text-2xl font-bold">SheetStorm</span>
           </div>
 

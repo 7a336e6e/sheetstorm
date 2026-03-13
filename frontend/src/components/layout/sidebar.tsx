@@ -26,6 +26,7 @@ import {
   KeyRound,
   Search,
   BookOpen,
+  Building,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -44,6 +45,7 @@ const navigation = [
 
 const adminNavigation = [
   { name: 'Activity', href: '/dashboard/activity', icon: Activity },
+  { name: 'Organization', href: '/dashboard/admin/organization', icon: Building },
   { name: 'Users', href: '/dashboard/admin/users', icon: Users },
   { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
   { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },

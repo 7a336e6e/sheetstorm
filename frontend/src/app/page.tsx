@@ -5,155 +5,91 @@
 
 "use client"
 
+import { useRef, useState, useEffect } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { useTheme } from '@/components/providers/theme-provider'
 import {
-  Shield,
-  Activity,
-  FileText,
-  Users,
-  BarChart3,
-  Lock,
-  ArrowRight,
-  Zap,
-  Search,
-  BookOpen,
-  Github,
+  Github, ArrowRight, Linkedin, BookOpen as BookIcon,
+  GraduationCap, Users, Building2, Trophy, UserCheck, Heart,
 } from 'lucide-react'
+import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
+import { IRPhaseAnimation } from '@/components/landing/IRPhaseAnimation'
+import { ExpandingButton } from '@/components/landing/ExpandingButton'
+import { FeatureOrbit } from '@/components/landing/FeatureOrbit'
+import { FeatureShowcase } from '@/components/landing/FeatureShowcase'
+import { CopyButton } from '@/components/landing/CopyButton'
+import { StarryBackground } from '@/components/landing/StarryBackground'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
-const phases = [
-  { number: 1, name: 'Preparation' },
-  { number: 2, name: 'Identification' },
-  { number: 3, name: 'Containment' },
-  { number: 4, name: 'Eradication' },
-  { number: 5, name: 'Recovery' },
-  { number: 6, name: 'Lessons Learned' },
+// ─── Data ────────────────────────────────────────────────────────────────────
+
+const DFIR_AUDIENCES = [
+  { icon: GraduationCap, title: 'DFIR Training & Labs', desc: 'Hands-on IR lifecycle practice with a realistic platform — no vendor licenses needed.', color: 'text-blue-400', hex: '#60a5fa' },
+  { icon: Users, title: 'Small Security Teams', desc: 'Structured incident management without the overhead of enterprise SOAR tools.', color: 'text-emerald-400', hex: '#34d399' },
+  { icon: Building2, title: 'Enterprise SOCs', desc: 'Self-hosted, extensible IR platform with API and MCP integration points.', color: 'text-violet-400', hex: '#a78bfa' },
+  { icon: Trophy, title: 'CTF & Blue Team Exercises', desc: 'Collaborative incident tracking purpose-built for blue team competitions.', color: 'text-amber-400', hex: '#fbbf24' },
+  { icon: UserCheck, title: 'Solo Analysts', desc: 'Organize investigations with proper evidence handling and timeline tracking.', color: 'text-cyan-400', hex: '#22d3ee' },
+  { icon: Heart, title: 'Open Source Community', desc: 'MIT-licensed, fully self-hosted, and built to be extended by the community.', color: 'text-rose-400', hex: '#fb7185' },
 ]
 
-const features = [
-  {
-    icon: Activity,
-    title: 'Timeline Tracking',
-    description: 'Chronological event tracking with MITRE ATT&CK mapping and kill-chain phase tagging.',
-  },
-  {
-    icon: FileText,
-    title: 'Evidence Management',
-    description: 'Secure artifact storage with hash verification and complete chain of custody.',
-  },
-  {
-    icon: Users,
-    title: 'Real-time Collaboration',
-    description: 'WebSocket-powered live updates so your entire team sees changes as they happen.',
-  },
-  {
-    icon: BarChart3,
-    title: 'Attack Visualization',
-    description: 'Auto-generated interactive attack graphs with 11 node types and 12 edge types.',
-  },
-  {
-    icon: Lock,
-    title: 'RBAC Security',
-    description: '6 roles with 40+ granular permissions, MFA/TOTP, SSO, and full audit trail.',
-  },
-  {
-    icon: Zap,
-    title: 'AI-Powered Reports',
-    description: 'Generate executive summaries, IOC analysis, and trend reports via GPT-4 or Gemini.',
-  },
-  {
-    icon: Search,
-    title: 'Threat Intelligence',
-    description: 'CVE lookup, IP/domain/email reputation, ransomware victim search, and IOC defanging.',
-  },
-  {
-    icon: BookOpen,
-    title: 'Knowledge Base',
-    description: 'Built-in LOLBAS, Windows Event IDs, and MITRE D3FEND defensive countermeasures.',
-  },
-]
+const QUICK_START_CODE = `git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
+chmod +x start.sh && ./start.sh`
 
-interface ShowcaseItem {
-  title: string
-  description: string
-  image: string
-}
+// ─── Scroll Fade-In Helper ───────────────────────────────────────────────────────────────
 
-const showcaseItems: ShowcaseItem[] = [
-  {
-    title: 'Incident Phase Management',
-    description: 'Track incidents across all six IR lifecycle phases with structured data collection, team assignment, and severity classification.',
-    image: 'incident_phases',
-  },
-  {
-    title: 'Host & Account Tracking',
-    description: 'Document compromised hosts and accounts with detailed containment status, forensic notes, and MITRE ATT&CK technique mapping.',
-    image: 'host_tracking',
-  },
-  {
-    title: 'Timeline & Event Analysis',
-    description: 'Build chronological timelines with kill-chain phase tagging, evidence source tracking, and expandable event detail views.',
-    image: 'expanded_event_entry',
-  },
-  {
-    title: 'MITRE ATT&CK Coverage',
-    description: 'Visualize your detection coverage across MITRE ATT&CK tactics and techniques, identify gaps, and track adversary behavior patterns.',
-    image: 'mitre_att&ck_coverage',
-  },
-  {
-    title: 'Threat Intelligence Lookups',
-    description: 'Query CVEs with CISA KEV + CVSS scoring, check IP/domain/email reputation, and search ransomware victim databases — all from one interface.',
-    image: 'threat_intelligence',
-  },
-  {
-    title: 'Knowledge Base',
-    description: 'Reference LOLBAS binaries, 65+ Windows Event IDs, and MITRE D3FEND defensive countermeasures with a built-in suggestion engine.',
-    image: 'knowledge_base',
-  },
-  {
-    title: 'Evidence & Artifact Storage',
-    description: 'Upload and manage forensic artifacts with hash verification, chain of custody tracking, and optional S3 or Google Drive integration.',
-    image: 'artifact_storage',
-  },
-  {
-    title: 'Malware Tracking',
-    description: 'Catalog malware samples discovered during investigations with file hashes, classification, and links to external threat intelligence.',
-    image: 'malware_tracking',
-  },
-]
+function FadeIn({ children, className, delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
 
-function ThemedScreenshot({ image, alt }: { image: string; alt: string }) {
-  const { resolvedTheme } = useTheme()
-  const mode = resolvedTheme === 'light' ? 'light_mode' : 'dark_mode'
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   return (
-    <Image
-      src={`/screenshots/${mode}/${image}.png`}
-      alt={alt}
-      width={1200}
-      height={700}
-      className="rounded-lg border border-border shadow-lg w-full h-auto"
-      priority={image === 'incident_phases'}
-    />
+    <div
+      ref={ref}
+      className={cn(
+        'transition-all duration-700 ease-out',
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6',
+        className
+      )}
+      style={{ transitionDelay: `${delay}ms` }}
+    >
+      {children}
+    </div>
   )
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────────────
+
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border sticky top-0 z-50 bg-background/80 backdrop-blur-sm">
+    <div className="dark min-h-screen relative">
+      <StarryBackground />
+
+      <div className="relative z-10">
+      {/* ── Header ── */}
+      <header className="border-b border-white/[0.06] sticky top-0 z-50 bg-background/80 backdrop-blur-xl">
         <div className="container mx-auto px-4 py-4">
           <nav className="flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2">
-              <Shield className="h-7 w-7 text-foreground" />
+            <Link href="/" className="flex items-center gap-2.5">
+              <SheetStormLogo size={28} />
               <span className="text-xl font-semibold">SheetStorm</span>
             </Link>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <a
                 href="https://github.com/7a336e6e/sheetstorm"
                 target="_blank"
@@ -164,15 +100,8 @@ export default function LandingPage() {
                   <Github className="h-5 w-5" />
                 </Button>
               </a>
-              <ThemeToggle />
               <Link href="/login">
                 <Button variant="ghost">Sign In</Button>
-              </Link>
-              <Link href="/register">
-                <Button>
-                  Get Started
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
               </Link>
             </div>
           </nav>
@@ -180,55 +109,70 @@ export default function LandingPage() {
       </header>
 
       <main>
-        {/* Hero Section */}
-        <section className="py-20 lg:py-28">
-          <div className="container mx-auto px-4 text-center">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-sm mb-8">
-              <Shield className="h-4 w-4" />
-              <span>Free & Open Source — MIT Licensed</span>
-            </div>
+        {/* ── Hero ── */}
+        <section className="py-20 lg:py-28 relative">
+          {/* Subtle hero glow */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center_top,_rgba(99,102,241,0.1)_0%,_transparent_60%)] pointer-events-none" />
 
-            <h1 className="text-4xl lg:text-6xl font-bold mb-6 tracking-tight">
-              Incident Response
-              <br />
-              <span className="text-muted-foreground">Without the Spreadsheet</span>
-            </h1>
+          <div className="container mx-auto px-4 text-center relative">
+            <FadeIn>
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] text-sm mb-8">
+                <SheetStormLogo size={16} />
+                <span>Free & Open Source — MIT Licensed</span>
+              </div>
+            </FadeIn>
 
-            <p className="text-lg text-muted-foreground mb-10 max-w-2xl mx-auto">
-              A free, open-source platform for the DFIR community. Track incidents across the full
-              response lifecycle with real-time collaboration, evidence integrity, and AI-powered insights.
-            </p>
+            <FadeIn delay={100}>
+              <h1 className="text-4xl lg:text-6xl font-bold mb-6 tracking-tight">
+                Incident Response
+                <br />
+                <span className="bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500 bg-clip-text text-transparent">
+                  Without the Spreadsheet
+                </span>
+              </h1>
+            </FadeIn>
 
-            <div className="flex flex-col sm:flex-row justify-center gap-4 mb-16">
-              <Link href="/register">
-                <Button size="lg">
-                  Get Started
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-              <a
-                href="https://github.com/7a336e6e/sheetstorm"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button variant="outline" size="lg">
-                  <Github className="mr-2 h-4 w-4" />
-                  View on GitHub
-                </Button>
-              </a>
-            </div>
+            <FadeIn delay={200}>
+              <p className="text-lg text-muted-foreground mb-10 max-w-2xl mx-auto">
+                A free, open-source platform for the DFIR community. Track incidents across the full
+                response lifecycle with real-time collaboration, evidence integrity, and AI-powered insights.
+              </p>
+            </FadeIn>
 
-            {/* Hero Screenshot */}
-            <div className="max-w-5xl mx-auto">
-              <ThemedScreenshot image="incident_phases" alt="SheetStorm incident management dashboard" />
-            </div>
+            {/* Expanding buttons */}
+            <FadeIn delay={300}>
+              <div className="flex justify-center gap-4 mb-16">
+                <ExpandingButton
+                  icon={<ArrowRight className="h-5 w-5" />}
+                  label="Get Started"
+                  href="#quick-start"
+                  onClick={(e) => {
+                    e?.preventDefault()
+                    document.getElementById('quick-start')?.scrollIntoView({ behavior: 'smooth' })
+                  }}
+                  variant="primary"
+                />
+                <ExpandingButton
+                  icon={<Github className="h-5 w-5" />}
+                  label="View on GitHub"
+                  href="https://github.com/7a336e6e/sheetstorm"
+                  variant="outline"
+                  external
+                />
+              </div>
+            </FadeIn>
+
+            {/* Animated IR Phase Stepper (replaces hero screenshot) */}
+            <FadeIn delay={400}>
+              <IRPhaseAnimation />
+            </FadeIn>
           </div>
         </section>
 
-        {/* Who is this for */}
-        <section className="py-20 bg-muted/30">
+        {/* ── Who is this for ── */}
+        <section className="py-20 bg-gradient-to-b from-indigo-950/20 via-background/80 to-indigo-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
-            <div className="text-center mb-12">
+            <div className="text-center mb-14">
               <h2 className="text-3xl font-bold mb-4">Built for the DFIR Community</h2>
               <p className="text-muted-foreground max-w-2xl mx-auto">
                 Whether you&apos;re training, competing, or responding to real incidents — SheetStorm gives
@@ -236,117 +180,54 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
-              {[
-                { title: 'DFIR Training & Labs', desc: 'Hands-on IR lifecycle practice with a realistic platform — no vendor licenses needed.' },
-                { title: 'Small Security Teams', desc: 'Structured incident management without the overhead of enterprise SOAR tools.' },
-                { title: 'Enterprise SOCs', desc: 'Self-hosted, extensible IR platform with API and MCP integration points.' },
-                { title: 'CTF & Blue Team Exercises', desc: 'Collaborative incident tracking purpose-built for blue team competitions.' },
-                { title: 'Solo Analysts', desc: 'Organize investigations with proper evidence handling and timeline tracking.' },
-                { title: 'Open Source Community', desc: 'MIT-licensed, fully self-hosted, and built to be extended by the community.' },
-              ].map((item) => (
-                <Card key={item.title}>
-                  <CardContent className="pt-6">
-                    <h3 className="font-semibold mb-2">{item.title}</h3>
-                    <p className="text-sm text-muted-foreground">{item.desc}</p>
-                  </CardContent>
-                </Card>
-              ))}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto">
+              {DFIR_AUDIENCES.map((item, i) => {
+                const Icon = item.icon
+                return (
+                  <FadeIn key={item.title} delay={i * 80}>
+                    <div className="group relative h-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 transition-all duration-500 hover:border-white/[0.12] hover:bg-white/[0.04] hover:shadow-lg hover:shadow-black/20">
+                      {/* Top accent line */}
+                      <div
+                        className="absolute top-0 left-4 right-4 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+                        style={{ background: `linear-gradient(90deg, transparent, ${item.hex}40, transparent)` }}
+                      />
+                      <div
+                        className="mb-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-colors duration-300"
+                        style={{ backgroundColor: `${item.hex}12` }}
+                      >
+                        <Icon className={cn('h-4.5 w-4.5', item.color)} />
+                      </div>
+                      <h3 className="font-semibold mb-1.5 text-sm">{item.title}</h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
+                    </div>
+                  </FadeIn>
+                )
+              })}
             </div>
           </div>
         </section>
 
-        {/* Features Grid */}
-        <section className="py-20">
+        {/* ── Features Orbit (replaces features grid) ── */}
+        <FeatureOrbit />
+
+        {/* ── See It in Action — Live Mock Views ── */}
+        <section className="py-20 bg-gradient-to-b from-violet-950/20 via-background/80 to-violet-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
             <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold mb-4">
-                Everything You Need for Incident Response
-              </h2>
-              <p className="text-muted-foreground max-w-2xl mx-auto">
-                Purpose-built by security practitioners. Every feature designed to
-                accelerate your response workflow.
-              </p>
-            </div>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
-              {features.map((feature) => (
-                <Card key={feature.title}>
-                  <CardContent className="pt-6">
-                    <div className="p-2 rounded-md bg-muted w-fit mb-4">
-                      <feature.icon className="h-5 w-5" />
-                    </div>
-                    <h3 className="font-semibold mb-2">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground">{feature.description}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Screenshot Showcase */}
-        <section className="py-20 bg-muted/30">
-          <div className="container mx-auto px-4">
-            <div className="text-center mb-16">
               <h2 className="text-3xl font-bold mb-4">See It in Action</h2>
               <p className="text-muted-foreground max-w-2xl mx-auto">
                 A closer look at the tools and views that help responders stay organized, thorough, and fast.
               </p>
             </div>
 
-            <div className="max-w-5xl mx-auto space-y-24">
-              {showcaseItems.map((item, index) => (
-                <div
-                  key={item.image}
-                  className={`flex flex-col ${
-                    index % 2 === 0 ? 'lg:flex-row' : 'lg:flex-row-reverse'
-                  } gap-8 items-center`}
-                >
-                  <div className="lg:w-3/5">
-                    <ThemedScreenshot image={item.image} alt={item.title} />
-                  </div>
-                  <div className="lg:w-2/5">
-                    <h3 className="text-xl font-bold mb-3">{item.title}</h3>
-                    <p className="text-muted-foreground">{item.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <FadeIn>
+              <FeatureShowcase />
+            </FadeIn>
           </div>
         </section>
 
-        {/* IR Lifecycle Phases */}
-        <section className="py-20">
-          <div className="container mx-auto px-4">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold mb-4">
-                Full Incident Response Lifecycle
-              </h2>
-              <p className="text-muted-foreground max-w-2xl mx-auto">
-                Built-in support for all six phases of the incident response lifecycle,
-                following industry best practices.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap justify-center gap-3 max-w-4xl mx-auto">
-              {phases.map((phase) => (
-                <div
-                  key={phase.name}
-                  className="flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-background"
-                >
-                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-muted text-sm font-semibold">
-                    {phase.number}
-                  </span>
-                  <span className="font-medium">{phase.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Quick Start */}
-        <section className="py-20 bg-muted/30">
+        {/* ── Quick Start ── */}
+        <section id="quick-start" className="py-20 scroll-mt-20">
           <div className="container mx-auto px-4">
             <div className="max-w-3xl mx-auto">
               <div className="text-center mb-10">
@@ -358,10 +239,12 @@ export default function LandingPage() {
 
               <Card>
                 <CardContent className="py-6">
-                  <pre className="bg-muted rounded-lg p-4 overflow-x-auto text-sm font-mono">
-{`git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
-chmod +x start.sh && ./start.sh`}
-                  </pre>
+                  <div className="relative">
+                    <pre className="bg-muted rounded-lg p-4 pr-12 overflow-x-auto text-sm font-mono">
+{QUICK_START_CODE}
+                    </pre>
+                    <CopyButton text={QUICK_START_CODE} />
+                  </div>
                   <p className="text-sm text-muted-foreground mt-4">
                     The start script generates secrets, builds all Docker containers, runs database
                     migrations, and seeds an admin user automatically.
@@ -386,35 +269,40 @@ chmod +x start.sh && ./start.sh`}
           </div>
         </section>
 
-        {/* CTA Section */}
-        <section className="py-20">
+        {/* ── Community Section ── */}
+        <section className="py-20 bg-gradient-to-b from-blue-950/20 via-background/80 to-blue-950/20 backdrop-blur-sm border-t border-white/[0.03]">
           <div className="container mx-auto px-4">
-            <Card className="max-w-3xl mx-auto">
+            <Card className="max-w-3xl mx-auto bg-card/80 backdrop-blur-sm border-white/[0.06]">
               <CardContent className="py-12 text-center">
                 <h2 className="text-2xl lg:text-3xl font-bold mb-4">
-                  Ready to modernize your IR workflow?
+                  Join the Community
                 </h2>
                 <p className="text-muted-foreground mb-8 max-w-xl mx-auto">
-                  SheetStorm is free, open source, and self-hosted. Start using it today —
-                  no sign-ups, no vendor lock-in.
+                  SheetStorm is free, open source, and built by practitioners.
+                  Star the repo, contribute features, or just say hello.
                 </p>
-                <div className="flex flex-col sm:flex-row justify-center gap-4">
-                  <Link href="/register">
-                    <Button size="lg">
-                      Get Started
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <a
+                <div className="flex flex-wrap justify-center gap-4">
+                  <ExpandingButton
+                    icon={<Github className="h-5 w-5" />}
+                    label="Star on GitHub"
                     href="https://github.com/7a336e6e/sheetstorm"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Button variant="outline" size="lg">
-                      <Github className="mr-2 h-4 w-4" />
-                      Star on GitHub
-                    </Button>
-                  </a>
+                    variant="primary"
+                    external
+                  />
+                  <ExpandingButton
+                    icon={<BookIcon className="h-5 w-5" />}
+                    label="Documentation"
+                    href="https://github.com/7a336e6e/sheetstorm#readme"
+                    variant="outline"
+                    external
+                  />
+                  <ExpandingButton
+                    icon={<Linkedin className="h-5 w-5" />}
+                    label="LinkedIn"
+                    href="https://www.linkedin.com/in/cybergeorge/"
+                    variant="outline"
+                    external
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -422,12 +310,12 @@ chmod +x start.sh && ./start.sh`}
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-border py-8">
+      {/* ── Footer ── */}
+      <footer className="border-t border-white/[0.06] py-8 bg-background/80 backdrop-blur-sm">
         <div className="container mx-auto px-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
+            <div className="flex items-center gap-2.5">
+              <SheetStormLogo size={20} />
               <span className="font-semibold">SheetStorm</span>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -442,11 +330,20 @@ chmod +x start.sh && ./start.sh`}
               >
                 GitHub
               </a>
-              <Link href="#" className="hover:text-foreground transition-colors">MIT License</Link>
+              <a
+                href="https://www.linkedin.com/in/cybergeorge/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground transition-colors"
+              >
+                LinkedIn
+              </a>
+              <a href="https://github.com/7a336e6e/sheetstorm/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">MIT License</a>
             </div>
           </div>
         </div>
       </footer>
+      </div>
     </div>
   )
 }

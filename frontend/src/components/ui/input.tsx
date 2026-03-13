@@ -42,8 +42,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         type={type}
         className={cn(
           "flex h-10 w-full rounded-md border text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
-          variant === "default" && "border-input bg-background/50 px-3 py-2 hover:bg-background/80",
-          variant === "glass" && "glass-input px-3 py-2",
+          variant === "default" && "border-input bg-background px-3 py-2",
+          variant === "glass" && "border-input bg-background px-3 py-2",
           variant === "ghost" && "border-transparent bg-transparent shadow-none px-3 py-2",
           error && "border-destructive focus-visible:ring-destructive",
           className
@@ -76,7 +76,7 @@ const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
           type="search"
           ref={ref}
           className={cn(
-            "flex h-10 w-full rounded-md border border-input bg-background/50 pl-10 pr-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-background/80 transition-all duration-200",
+            "flex h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-150",
             className
           )}
           onKeyDown={handleKeyDown}
@@ -101,7 +101,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
           type={showPassword ? "text" : "password"}
           ref={ref}
           className={cn(
-            "flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 pr-10 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-background/80 transition-all duration-200",
+            "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-150",
             className
           )}
           {...props}
@@ -137,7 +137,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     return (
       <textarea
         className={cn(
-          "flex min-h-[80px] w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-background/80 transition-all duration-200",
+          "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-150",
           error && "border-destructive focus-visible:ring-destructive",
           className
         )}

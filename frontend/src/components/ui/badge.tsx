@@ -6,6 +6,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
+import { PHASE_INFO, tlpColors, type TLP } from "@/lib/design-tokens"
 
 const badgeVariants = cva(
   "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
@@ -13,39 +14,41 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          "border-border bg-secondary text-secondary-foreground",
+          "border-border bg-muted text-muted-foreground",
         outline:
           "border-border text-foreground",
-        // Severity variants - functional colors
+        // Severity variants — restrained, desaturated enterprise palette
         critical:
-          "border-red-200 bg-red-100 text-red-800 dark:border-red-800 dark:bg-red-900/50 dark:text-red-200",
+          "border-red-500/20 bg-red-500/10 text-red-700 dark:border-red-500/25 dark:bg-red-500/15 dark:text-red-400",
         high:
-          "border-orange-200 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-900/50 dark:text-orange-200",
+          "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/15 dark:text-amber-400",
         medium:
-          "border-yellow-200 bg-yellow-100 text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200",
+          "border-yellow-500/20 bg-yellow-500/10 text-yellow-700 dark:border-yellow-500/20 dark:bg-yellow-500/12 dark:text-yellow-400",
         low:
-          "border-green-200 bg-green-100 text-green-800 dark:border-green-800 dark:bg-green-900/50 dark:text-green-200",
-        // Status variants
+          "border-teal-500/20 bg-teal-500/10 text-teal-700 dark:border-teal-500/25 dark:bg-teal-500/15 dark:text-teal-400",
+        // Status variants — matching design token system
         open:
-          "border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-800 dark:bg-blue-900/50 dark:text-blue-200",
+          "border-primary/20 bg-primary/10 text-primary",
+        investigating:
+          "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:border-blue-500/25 dark:bg-blue-500/15 dark:text-blue-400",
         contained:
-          "border-purple-200 bg-purple-100 text-purple-800 dark:border-purple-800 dark:bg-purple-900/50 dark:text-purple-200",
+          "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400",
         eradicated:
-          "border-indigo-200 bg-indigo-100 text-indigo-800 dark:border-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200",
+          "border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-400",
         recovered:
-          "border-green-200 bg-green-100 text-green-800 dark:border-green-800 dark:bg-green-900/50 dark:text-green-200",
+          "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         closed:
-          "border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200",
+          "border-border bg-muted text-muted-foreground",
         // Utility variants
         destructive:
-          "border-red-200 bg-red-100 text-red-800 dark:border-red-800 dark:bg-red-900/50 dark:text-red-200",
+          "border-red-500/20 bg-red-500/10 text-red-700 dark:bg-red-500/15 dark:text-red-400",
         success:
-          "border-green-200 bg-green-100 text-green-800 dark:border-green-800 dark:bg-green-900/50 dark:text-green-200",
+          "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400",
         warning:
-          "border-yellow-200 bg-yellow-100 text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-200",
+          "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400",
         info:
-          "border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-800 dark:bg-blue-900/50 dark:text-blue-200",
-        // Glass variant for backward compatibility (styled same as outline)
+          "border-primary/20 bg-primary/10 text-primary",
+        // Glass alias — restrained solid style
         glass:
           "border-border bg-muted/50 text-foreground",
       },
@@ -81,7 +84,7 @@ function SeverityBadge({ severity, children, ...props }: SeverityBadgeProps) {
 
 // Status Badge
 interface StatusBadgeProps extends Omit<BadgeProps, 'variant'> {
-  status: 'open' | 'contained' | 'eradicated' | 'recovered' | 'closed'
+  status: 'open' | 'investigating' | 'contained' | 'eradicated' | 'recovered' | 'closed'
 }
 
 function StatusBadge({ status, children, ...props }: StatusBadgeProps) {
@@ -92,18 +95,9 @@ function StatusBadge({ status, children, ...props }: StatusBadgeProps) {
   )
 }
 
-// Phase Badge - for IR lifecycle phases
+// Phase Badge - for IR lifecycle phases (uses canonical PHASE_INFO)
 interface PhaseBadgeProps extends Omit<BadgeProps, 'variant'> {
   phase: number
-}
-
-const phaseLabels: Record<number, string> = {
-  1: 'Preparation',
-  2: 'Identification',
-  3: 'Containment',
-  4: 'Eradication',
-  5: 'Recovery',
-  6: 'Lessons Learned',
 }
 
 const phaseVariants: Record<number, BadgeProps['variant']> = {
@@ -112,13 +106,14 @@ const phaseVariants: Record<number, BadgeProps['variant']> = {
   3: 'warning',
   4: 'high',
   5: 'success',
-  6: 'contained',
+  6: 'default',
 }
 
 function PhaseBadge({ phase, ...props }: PhaseBadgeProps) {
+  const info = PHASE_INFO[phase as keyof typeof PHASE_INFO]
   return (
     <Badge variant={phaseVariants[phase] || 'default'} {...props}>
-      {phase}: {phaseLabels[phase] || 'Unknown'}
+      {phase}: {info?.name || 'Unknown'}
     </Badge>
   )
 }
@@ -145,4 +140,40 @@ function RoleBadge({ role, ...props }: RoleBadgeProps) {
   )
 }
 
-export { Badge, SeverityBadge, StatusBadge, PhaseBadge, RoleBadge, badgeVariants }
+// TLP Badge
+interface TLPBadgeProps extends Omit<BadgeProps, 'variant'> {
+  tlp: string
+}
+
+const tlpVariantMap: Record<string, BadgeProps['variant']> = {
+  red: 'critical',
+  amber: 'warning',
+  amber_strict: 'high',
+  green: 'success',
+  white: 'default',
+  clear: 'default',
+}
+
+const tlpLabels: Record<string, string> = {
+  white: 'TLP:WHITE',
+  clear: 'TLP:CLEAR',
+  green: 'TLP:GREEN',
+  amber: 'TLP:AMBER',
+  amber_strict: 'TLP:AMBER+STRICT',
+  red: 'TLP:RED',
+}
+
+function TLPBadge({ tlp, ...props }: TLPBadgeProps) {
+  const normalised = tlp?.toLowerCase().replace('+', '_') || 'amber'
+  return (
+    <Badge
+      variant={tlpVariantMap[normalised] || 'warning'}
+      className="font-mono text-[10px]"
+      {...props}
+    >
+      {tlpLabels[normalised] || `TLP:${tlp?.toUpperCase()}`}
+    </Badge>
+  )
+}
+
+export { Badge, SeverityBadge, StatusBadge, PhaseBadge, TLPBadge, RoleBadge, badgeVariants }

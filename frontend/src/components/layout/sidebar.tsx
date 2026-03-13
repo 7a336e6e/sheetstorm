@@ -124,7 +124,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                 className={cn(
                   'group flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors',
                   isActive
-                    ? 'bg-secondary text-foreground'
+                    ? 'bg-accent text-accent-foreground font-semibold'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
@@ -157,7 +157,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                     className={cn(
                       'group flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors',
                       isActive
-                        ? 'bg-secondary text-foreground'
+                        ? 'bg-accent text-accent-foreground font-semibold'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
                   >

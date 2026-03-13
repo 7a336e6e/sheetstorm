@@ -3,78 +3,115 @@
 @tailwind utilities;
 
 @layer base {
-  /* Light theme (default) */
+  /* ──────────────────────────────────────────────────────────
+   * SheetStorm Design System — Premium Enterprise Palette
+   * All neutrals are tinted (blue-hue) per design constraints.
+   * NO pure #000000 or #FFFFFF. NO neon. NO glassmorphism.
+   * ────────────────────────────────────────────────────────── */
+
+  /* Light theme */
   :root {
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* Backgrounds: warm off-white with blue tint */
+    --background: 220 20% 97%;
+    --foreground: 220 16% 14%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    /* Cards: clean warm white */
+    --card: 220 20% 100%;
+    --card-foreground: 220 16% 14%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    /* Popovers */
+    --popover: 220 20% 100%;
+    --popover-foreground: 220 16% 14%;
 
-    /* Primary: Electric Cyan */
-    --primary: 189 94% 43%;
-    --primary-foreground: 0 0% 100%;
+    /* Primary: Steel Blue — calm, trustworthy, enterprise */
+    --primary: 215 55% 48%;
+    --primary-foreground: 220 20% 98%;
 
-    /* Secondary: Electric Purple */
-    --secondary: 258 90% 66%;
-    --secondary-foreground: 0 0% 100%;
+    /* Secondary: Muted Violet — refined accent */
+    --secondary: 258 28% 52%;
+    --secondary-foreground: 220 20% 98%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    /* Muted: tinted neutral */
+    --muted: 220 16% 93%;
+    --muted-foreground: 220 10% 46%;
 
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
+    /* Accent: subtle steel for hover states */
+    --accent: 215 30% 92%;
+    --accent-foreground: 215 55% 38%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
-
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 189 94% 43%;
-
-    --radius: 0.5rem;
-  }
-
-  /* Dark theme */
-  .dark {
-    /* Backgrounds: Deep Navy (#0f172a) */
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-
-    /* Cards: Slightly lighter navy */
-    --card: 222 47% 13%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222 47% 11%;
-    --popover-foreground: 210 40% 98%;
-
-    /* Primary: Electric Cyan (#06b6d4) */
-    --primary: 189 94% 43%;
-    --primary-foreground: 222 47% 11%;
-
-    /* Secondary: Electric Purple (#8b5cf6) */
-    --secondary: 258 90% 66%;
-    --secondary-foreground: 210 40% 98%;
-
-    /* Muted: Slate 800 */
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-
-    /* Accent: Cyan for hover states */
-    --accent: 189 94% 43%;
-    --accent-foreground: 222 47% 11%;
-
-    /* Destructive: Red 500 */
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
+    /* Destructive: soft red, not harsh */
+    --destructive: 0 60% 52%;
+    --destructive-foreground: 220 20% 98%;
 
     /* Borders & Inputs */
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 189 94% 43%;
+    --border: 220 14% 88%;
+    --input: 220 14% 88%;
+    --ring: 215 55% 48%;
+
+    /* Radius */
+    --radius: 0.5rem;
+
+    /* Surface variants */
+    --surface-raised: 220 20% 99%;
+    --surface-sunken: 220 16% 94%;
+
+    /* Severity levels */
+    --severity-critical: 0 60% 52%;
+    --severity-high: 38 70% 50%;
+    --severity-medium: 48 65% 50%;
+    --severity-low: 170 45% 42%;
+    --severity-info: 215 55% 48%;
+  }
+
+  /* Dark theme — deep charcoal, NOT navy */
+  .dark {
+    /* Backgrounds: deep charcoal with subtle blue warmth */
+    --background: 240 6% 9%;
+    --foreground: 220 14% 89%;
+
+    /* Cards: graphite — slightly raised from background */
+    --card: 240 5% 12%;
+    --card-foreground: 220 14% 89%;
+
+    /* Popovers */
+    --popover: 240 5% 11%;
+    --popover-foreground: 220 14% 89%;
+
+    /* Primary: Steel Blue */
+    --primary: 215 55% 55%;
+    --primary-foreground: 240 6% 9%;
+
+    /* Secondary: Muted Violet */
+    --secondary: 258 28% 58%;
+    --secondary-foreground: 220 14% 89%;
+
+    /* Muted: tinted dark neutral */
+    --muted: 240 5% 16%;
+    --muted-foreground: 220 10% 55%;
+
+    /* Accent: steel for hover */
+    --accent: 215 30% 18%;
+    --accent-foreground: 215 55% 70%;
+
+    /* Destructive: soft red */
+    --destructive: 0 55% 55%;
+    --destructive-foreground: 220 14% 89%;
+
+    /* Borders & Inputs */
+    --border: 240 5% 18%;
+    --input: 240 5% 18%;
+    --ring: 215 55% 55%;
+
+    /* Surface variants */
+    --surface-raised: 240 5% 14%;
+    --surface-sunken: 240 6% 7%;
+
+    /* Severity levels */
+    --severity-critical: 0 55% 55%;
+    --severity-high: 38 65% 55%;
+    --severity-medium: 48 55% 55%;
+    --severity-low: 170 40% 50%;
+    --severity-info: 215 55% 55%;
   }
 }
 
@@ -84,68 +121,94 @@
   }
 
   body {
-    @apply bg-background text-foreground selection:bg-primary/20 selection:text-primary;
+    @apply bg-background text-foreground selection:bg-primary/20 selection:text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Typography - Tech Look */
+  /* Typography hierarchy */
   h1, h2, h3, h4, h5, h6 {
-    @apply tracking-tight font-semibold;
+    @apply tracking-tight font-semibold font-heading;
   }
+
+  h1 { @apply text-3xl lg:text-4xl; }
+  h2 { @apply text-2xl lg:text-3xl; }
+  h3 { @apply text-xl lg:text-2xl; }
+  h4 { @apply text-lg; }
 }
 
+/* ──────────────────────────────────────────────────────────
+ * Premium Panel System (replaces glassmorphism)
+ * Subtle, solid, enterprise-grade depth without blur effects
+ * ────────────────────────────────────────────────────────── */
+
 @layer components {
-  /* Glassmorphism System */
-
-  /* Base Glass */
-  .glass {
-    @apply bg-black/5 dark:bg-white/5 backdrop-blur-md border border-black/10 dark:border-white/10 shadow-lg;
+  /* Base panel — primary container */
+  .panel {
+    @apply bg-card border border-border rounded-lg shadow-sm;
   }
 
-  /* Heavy Glass (for modals/sidebars) */
-  .glass-heavy {
-    @apply bg-white/80 dark:bg-[#0f172a]/80 backdrop-blur-xl border-r border-black/5 dark:border-white/5;
+  /* Elevated panel — modals, sidebars, popovers */
+  .panel-elevated {
+    @apply bg-card border border-border rounded-lg shadow-md;
   }
 
-  /* Hover Glass (for interactive cards) */
-  .glass-hover {
-    @apply hover:bg-black/5 dark:hover:bg-white/10 hover:border-primary/50 transition-all duration-300;
+  /* Interactive panel — hover lift effect for clickable cards */
+  .panel-interactive {
+    @apply bg-card border border-border rounded-lg shadow-sm
+           transition-all duration-150 ease-out
+           hover:border-primary/30 hover:shadow-md;
   }
 
-  /* Input Glass */
+  /* Inset panel — sunken sections within cards */
+  .panel-inset {
+    @apply bg-muted/50 border border-border/50 rounded-md;
+  }
+
+  /* Legacy glass aliases — map to panel system for backward compat */
+  .glass { @apply panel; }
+  .glass-heavy { @apply panel-elevated; }
+  .glass-hover { @apply panel-interactive; }
+  .glass-panel { @apply panel; }
   .glass-input {
-    @apply bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10 focus:border-primary/50 focus:ring-primary/20 backdrop-blur-sm;
-  }
-
-  /* Panel Glass */
-  .glass-panel {
-    @apply bg-card/40 backdrop-blur-md border border-black/5 dark:border-white/5;
+    @apply bg-transparent border-input focus:border-primary/50 focus:ring-1 focus:ring-primary/20;
   }
 }
 
 @layer utilities {
+  /* Subtle text accent — single color, not garish gradient */
   .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary;
-  }
-  
-  .border-gradient {
-    @apply border-transparent bg-gradient-to-r from-primary to-secondary;
+    @apply text-primary font-medium;
   }
 
-  .glow-sm {
-    box-shadow: 0 0 10px -2px theme('colors.primary.DEFAULT');
+  /* Status indicator dot */
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
   }
-  
-  .glow-md {
-    box-shadow: 0 0 20px -4px theme('colors.primary.DEFAULT');
+
+  /* Focus ring utility */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  /* Monospace data display */
+  .font-data {
+    @apply font-mono text-sm tabular-nums;
   }
 }
 
 /* Attack graph edge flow animation */
 @keyframes edge-flow {
-  0% {
-    stroke-dashoffset: 16;
-  }
-  100% {
-    stroke-dashoffset: 0;
+  0% { stroke-dashoffset: 16; }
+  100% { stroke-dashoffset: 0; }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

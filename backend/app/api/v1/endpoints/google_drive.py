@@ -90,8 +90,6 @@ def google_drive_status():
         return jsonify({
             'configured': True,
             'connected': True,
-            'email': user_info.get('email', ''),
-            'display_name': user_info.get('display_name', ''),
             'root_folder_id': creds.get('root_folder_id', ''),
             'root_folder_name': creds.get('root_folder_name', ''),
         }), 200

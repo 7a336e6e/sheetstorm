@@ -15,19 +15,20 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_15px_-3px_rgba(6,182,212,0.6)] hover:shadow-[0_0_20px_-3px_rgba(6,182,212,0.8)] border border-transparent",
+          "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm",
         outline:
-          "border border-primary/20 bg-transparent hover:bg-primary/10 hover:text-primary hover:border-primary/50 transition-all duration-300",
+          "border border-border bg-transparent hover:bg-accent hover:text-accent-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
-          "hover:bg-primary/10 hover:text-primary",
+          "hover:bg-accent hover:text-accent-foreground",
         link:
           "text-primary underline-offset-4 hover:underline",
+        // Legacy alias — maps to outline
         glass:
-          "glass hover:bg-white/10 text-foreground hover:text-primary border-white/10 hover:border-primary/50 transition-all duration-300",
+          "border border-border bg-transparent hover:bg-accent hover:text-accent-foreground",
       },
       size: {
         default: "h-10 px-4 py-2",

@@ -5,6 +5,8 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// ─── Date formatters ─────────────────────────────────────────────────────
+
 export function formatDate(date: string | Date): string {
   return new Date(date).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -39,38 +41,7 @@ export function formatRelativeTime(date: string | Date): string {
   return formatDate(date)
 }
 
-export function getSeverityColor(severity: string): string {
-  switch (severity) {
-    case 'critical': return 'text-red-600 bg-red-100'
-    case 'high': return 'text-orange-600 bg-orange-100'
-    case 'medium': return 'text-yellow-600 bg-yellow-100'
-    case 'low': return 'text-green-600 bg-green-100'
-    default: return 'text-gray-600 bg-gray-100'
-  }
-}
-
-export function getStatusColor(status: string): string {
-  switch (status) {
-    case 'open': return 'text-blue-600 bg-blue-100'
-    case 'contained': return 'text-purple-600 bg-purple-100'
-    case 'eradicated': return 'text-indigo-600 bg-indigo-100'
-    case 'recovered': return 'text-green-600 bg-green-100'
-    case 'closed': return 'text-gray-600 bg-gray-100'
-    default: return 'text-gray-600 bg-gray-100'
-  }
-}
-
-export function getPhaseColor(phase: number): string {
-  const colors = [
-    'bg-slate-500',
-    'bg-blue-500',
-    'bg-purple-500',
-    'bg-orange-500',
-    'bg-green-500',
-    'bg-teal-500',
-  ]
-  return colors[phase - 1] || 'bg-gray-500'
-}
+// ─── Data formatters ─────────────────────────────────────────────────────
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
   if (bytes === 0) return '0 Bytes'
@@ -83,3 +54,9 @@ export function formatBytes(bytes: number, decimals: number = 2): string {
 
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
 }
+
+/**
+ * Color helpers have been consolidated in design-tokens.ts.
+ * Import from '@/lib/design-tokens' instead:
+ *   getSeverityClasses, getStatusClasses, getPhaseClasses
+ */

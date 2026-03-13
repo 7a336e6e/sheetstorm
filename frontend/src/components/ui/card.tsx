@@ -9,15 +9,19 @@ import { cn } from "@/lib/utils"
 import { cva, type VariantProps } from "class-variance-authority"
 
 const cardVariants = cva(
-  "rounded-lg text-card-foreground transition-all duration-300",
+  "rounded-lg text-card-foreground transition-all duration-150",
   {
     variants: {
       variant: {
-        default: "border border-border bg-card/50 backdrop-blur-sm shadow-sm",
-        glass: "glass",
-        hover: "border border-border bg-card/50 backdrop-blur-sm shadow-sm hover:border-primary/50 hover:bg-card/80 hover:shadow-[0_0_20px_-5px_rgba(6,182,212,0.3)]",
-        neon: "border border-primary/50 bg-card/80 shadow-[0_0_15px_rgba(6,182,212,0.1)]",
-        ghost: "border-none bg-transparent shadow-none"
+        default: "border border-border bg-card shadow-sm",
+        elevated: "border border-border bg-card shadow-md",
+        interactive: "border border-border bg-card shadow-sm hover:border-primary/30 hover:shadow-md",
+        inset: "bg-muted/50 border border-border/50",
+        ghost: "border-none bg-transparent shadow-none",
+        // Legacy aliases — map to panel system
+        glass: "border border-border bg-card shadow-sm",
+        hover: "border border-border bg-card shadow-sm hover:border-primary/30 hover:shadow-md",
+        neon: "border border-primary/20 bg-card shadow-sm",
       },
     },
     defaultVariants: {
@@ -125,7 +129,7 @@ const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
                 <div className="flex items-center gap-1 text-xs">
                   <span className={cn(
                     "font-medium",
-                    trend.positive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                    trend.positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
                   )}>
                     {trend.positive ? "+" : ""}{trend.value}%
                   </span>

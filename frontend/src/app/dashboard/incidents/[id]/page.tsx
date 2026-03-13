@@ -5,56 +5,18 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input, Textarea } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogBody,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SeverityBadge, StatusBadge, PhaseBadge, TLPBadge } from '@/components/ui/badge'
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  GlassTable,
-  TableEmpty,
-} from '@/components/ui/table'
-import { SkeletonTableRow, Skeleton } from '@/components/ui/skeleton'
-import { useIncidentStore, useAuthStore } from '@/lib/store'
-import { formatDateTime, formatRelativeTime } from '@/lib/utils'
+import { useIncidentStore } from '@/lib/store'
 import api from '@/lib/api'
-import { useToast } from '@/components/ui/use-toast'
-import type { TimelineEvent, CompromisedHost, Task, CompromisedAccount, MalwareTool, HostBasedIndicator, User as UserType } from '@/types'
+import type { TimelineEvent, CompromisedHost, Task } from '@/types'
 import {
   ArrowLeft,
-  Plus,
-  MoreHorizontal,
-  CheckCircle2,
-  Circle,
-  Clock,
-  Calendar,
-  User,
   Activity,
   Server,
   Network,
@@ -67,24 +29,14 @@ import {
   Upload,
   Zap,
   Edit2,
-  ChevronRight,
-  Link2,
-  X,
-  AlertTriangle,
   FileText,
   Download,
-  Loader2,
   MessageSquare,
-  Trash2,
-  MoreVertical,
-  Send,
-  Search,
+  Clock,
   Star,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react'
 
-// Import new Tab Components
+// ─── Tab Components ──────────────────────────────────────────────────────
 import { CompromisedAccountsTab } from '@/components/incidents/CompromisedAccountsTab'
 import { MalwareToolsTab } from '@/components/incidents/MalwareToolsTab'
 import { NetworkIOCsTab } from '@/components/incidents/NetworkIOCsTab'
@@ -93,274 +45,20 @@ import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
 import { EventsTable } from '@/components/incidents/EventsTable'
 import { IOCVisualTimeline, PinnedEventsTable } from '@/components/incidents/timeline/IOCVisualTimeline'
 import { HostsTab } from '@/components/incidents/HostsTab'
-
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
-import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
-import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
 import { IRPhaseTracker } from '@/components/incidents/IRPhaseTracker'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
 
-// --- Types & Constants ---
-const PHASE_INFO = [
-  { number: 1, name: 'Preparation', short: 'Prep', color: 'from-blue-500 to-cyan-500' },
-  { number: 2, name: 'Identification', short: 'Ident', color: 'from-cyan-500 to-teal-500' },
-  { number: 3, name: 'Containment', short: 'Cont', color: 'from-teal-500 to-green-500' },
-  { number: 4, name: 'Eradication', short: 'Erad', color: 'from-green-500 to-yellow-500' },
-  { number: 5, name: 'Recovery', short: 'Recov', color: 'from-yellow-500 to-orange-500' },
-  { number: 6, name: 'Lessons Learned', short: 'Review', color: 'from-orange-500 to-red-500' },
-]
+// ─── Extracted Detail Components ─────────────────────────────────────────
+import { IncidentDetailSkeleton } from '@/components/incidents/detail/IncidentDetailSkeleton'
+import { DescriptionBlock } from '@/components/incidents/detail/DescriptionBlock'
+import { OverviewTab } from '@/components/incidents/detail/OverviewTab'
+import { TasksTab } from '@/components/incidents/detail/TasksTab'
+import { EditIncidentModal, UpdateStatusModal, ReportModal } from '@/components/incidents/detail/IncidentModals'
 
-const STATUS_OPTIONS = [
-  { value: 'open', label: 'Open', color: 'bg-green-500', phase: 1, phaseName: 'Preparation' },
-  { value: 'investigating', label: 'Investigating', color: 'bg-blue-500', phase: 2, phaseName: 'Identification' },
-  { value: 'contained', label: 'Contained', color: 'bg-orange-500', phase: 3, phaseName: 'Containment' },
-  { value: 'eradicated', label: 'Eradicated', color: 'bg-yellow-500', phase: 4, phaseName: 'Eradication' },
-  { value: 'recovered', label: 'Recovered', color: 'bg-purple-500', phase: 5, phaseName: 'Recovery' },
-  { value: 'closed', label: 'Closed', color: 'bg-slate-500', phase: 6, phaseName: 'Lessons Learned' },
-]
+// ─── Main Page Component ─────────────────────────────────────────────────
 
-// --- Helper Components ---
-function StatCard({ title, value, icon, description }: any) {
-  return (
-    <div className="px-3 py-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-muted-foreground">{title}</span>
-        <div className="text-cyan-400">{icon}</div>
-      </div>
-      <div className="text-xl font-bold text-foreground">{value}</div>
-      {description && <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>}
-    </div>
-  )
-}
-
-function SkeletonStatCard() {
-  return (
-    <div className="rounded-lg border border-border bg-black/5 dark:bg-white/5 px-3 py-2.5 space-y-2">
-      <Skeleton className="h-3 w-1/3" />
-      <Skeleton className="h-6 w-1/2" />
-    </div>
-  )
-}
-
-function SkeletonPage() {
-  return (
-    <div className="space-y-6">
-      {/* Title + badges */}
-      <div className="space-y-3">
-        <Skeleton className="h-5 w-20" />
-        <Skeleton className="h-8 w-2/3" />
-        <div className="flex gap-2">
-          <Skeleton className="h-6 w-24 rounded-full" />
-          <Skeleton className="h-6 w-20 rounded-full" />
-          <Skeleton className="h-6 w-28 rounded-full" />
-        </div>
-      </div>
-      {/* Summary card */}
-      <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5 p-6 space-y-3">
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-        <Skeleton className="h-4 w-2/3" />
-      </div>
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[1, 2, 3, 4].map((i) => (
-          <SkeletonStatCard key={i} />
-        ))}
-      </div>
-      {/* Tab bar + table */}
-      <div className="space-y-4">
-        <div className="flex gap-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-9 w-24 rounded-md" />
-          ))}
-        </div>
-        <div className="rounded-xl border border-border bg-black/5 dark:bg-white/5">
-          <div className="p-4 space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex gap-4">
-                <Skeleton className="h-4 w-1/6" />
-                <Skeleton className="h-4 w-2/6" />
-                <Skeleton className="h-4 w-1/6" />
-                <Skeleton className="h-4 w-1/6" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SeverityBadge({ severity }: { severity: 'low' | 'medium' | 'high' | 'critical' }) {
-  const styles = {
-    critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-    high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-    medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-    low: 'bg-green-500/20 text-green-400 border-green-500/30',
-  }
-  return (
-    <Badge className={`${styles[severity]} border capitalize`}>
-      {severity} Severity
-    </Badge>
-  )
-}
-
-function StatusBadge({ status }: { status: 'open' | 'closed' | 'investigating' | 'contained' | 'eradicated' | 'recovered' }) {
-  const styles = {
-    open: 'bg-green-500/20 text-green-400 border-green-500/30',
-    closed: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-    investigating: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    contained: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-    eradicated: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-    recovered: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-  }
-  return (
-    <Badge className={`${styles[status]} border capitalize`}>
-      {status}
-    </Badge>
-  )
-}
-
-function PhaseBadge({ phase }: { phase: number }) {
-  const info = PHASE_INFO.find((p) => p.number === phase)
-  if (!info) return null
-  return (
-    <Badge variant="outline" className="bg-black/5 dark:bg-white/5">
-      Phase {phase}: {info.name}
-    </Badge>
-  )
-}
-
-function TLPBadge({ tlp }: { tlp: string }) {
-  const styles: Record<string, string> = {
-    white: 'bg-gray-200 text-gray-700 border-gray-400 dark:bg-gray-500/20 dark:text-gray-300 dark:border-gray-500/30',
-    green: 'bg-green-500/20 text-green-400 border-green-500/30',
-    amber: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-    amber_strict: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-    red: 'bg-red-500/20 text-red-400 border-red-500/30',
-  }
-  const labels: Record<string, string> = {
-    white: 'TLP:WHITE',
-    green: 'TLP:GREEN',
-    amber: 'TLP:AMBER',
-    amber_strict: 'TLP:AMBER+STRICT',
-    red: 'TLP:RED',
-  }
-  return (
-    <Badge className={`${styles[tlp] || styles.amber} border font-mono text-[10px]`}>
-      {labels[tlp] || `TLP:${tlp?.toUpperCase()}`}
-    </Badge>
-  )
-}
-
-// --- Collapsible Description Block ---
-const DESCRIPTION_COLLAPSE_THRESHOLD = 300 // characters
-
-function DescriptionBlock({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false)
-  const isLong = text.length > DESCRIPTION_COLLAPSE_THRESHOLD
-
-  return (
-    <div className="max-w-full">
-      <div
-        className={`text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words ${
-          !expanded && isLong ? 'line-clamp-4' : ''
-        }`}
-      >
-        {text}
-      </div>
-      {isLong && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="inline-flex items-center gap-1 mt-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
-        >
-          {expanded ? (
-            <>Show less <ChevronUp className="h-3 w-3" /></>
-          ) : (
-            <>Show more <ChevronDown className="h-3 w-3" /></>
-          )}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// --- Lead Responder Selector (inline in Details card) ---
-function LeadResponderSelector({
-  incidentId,
-  currentLead,
-  onUpdated,
-}: {
-  incidentId: string
-  currentLead?: { id: string; name: string } | null
-  onUpdated: () => void
-}) {
-  const { hasPermission } = useAuthStore()
-  const canEdit = hasPermission('incidents:update')
-  const [editing, setEditing] = useState(false)
-  const [users, setUsers] = useState<UserType[]>([])
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (editing && users.length === 0) {
-      api.get<{ items: UserType[] }>('/users?per_page=200').then((data) => setUsers(data.items)).catch(() => {})
-    }
-  }, [editing, users.length])
-
-  const handleChange = async (userId: string) => {
-    setSaving(true)
-    try {
-      await api.put(`/incidents/${incidentId}`, { lead_responder_id: userId })
-      onUpdated()
-      setEditing(false)
-    } catch {
-      // handled by api client
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (editing && canEdit) {
-    return (
-      <div className="space-y-2">
-        <Select onValueChange={handleChange} disabled={saving}>
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue placeholder={saving ? 'Saving...' : 'Select lead responder'} />
-          </SelectTrigger>
-          <SelectContent>
-            {users.map((u) => (
-              <SelectItem key={u.id} value={u.id}>
-                {u.name} <span className="text-muted-foreground ml-1 text-xs">{u.email}</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button variant="ghost" size="sm" className="text-xs h-6" onClick={() => setEditing(false)}>
-          Cancel
-        </Button>
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className={`flex items-center gap-2 ${canEdit ? 'cursor-pointer group' : ''}`}
-      onClick={() => canEdit && setEditing(true)}
-      title={canEdit ? 'Click to change lead responder' : undefined}
-    >
-      <div className="w-7 h-7 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-xs font-medium">
-        {currentLead?.name?.charAt(0) || '?'}
-      </div>
-      <span className="font-medium text-foreground">{currentLead?.name || 'Unassigned'}</span>
-      {canEdit && (
-        <Edit2 className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-      )}
-    </div>
-  )
-}
-
-// --- Main Page Component ---
 export default function IncidentDetailPage() {
   const params = useParams()
   const incidentId = params.id as string
@@ -372,53 +70,15 @@ export default function IncidentDetailPage() {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [hosts, setHosts] = useState<CompromisedHost[]>([])
 
-  // Modal States
+  // Modal visibility
   const [showEditModal, setShowEditModal] = useState(false)
   const [showStatusModal, setShowStatusModal] = useState(false)
-  const [showTaskModal, setShowTaskModal] = useState(false)
-  const [editingTask, setEditingTask] = useState<Task | null>(null)
-  const [showImportModal, setShowImportModal] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Report generation state
   const [showReportModal, setShowReportModal] = useState(false)
-  const [selectedReportType, setSelectedReportType] = useState('executive')
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [assignmentsKey, setAssignmentsKey] = useState(0)
-  const { toast } = useToast()
-
-  // Edit Forms
-  const [editForm, setEditForm] = useState({
-    title: '',
-    description: '',
-    severity: 'medium',
-    classification: '',
-    tlp: 'amber',
-  })
-
-  const [taskForm, setTaskForm] = useState({
-    title: '',
-    description: '',
-    priority: 'medium',
-    assignee_id: '',
-    due_date: '',
-    phase: '',
-    linked_entities: [] as { type: string; id: string; label: string }[],
-  })
-
-  // Entity data for task linking
-  const [taskEntityData, setTaskEntityData] = useState<{
-    accounts: CompromisedAccount[]
-    malware: MalwareTool[]
-    hostIndicators: HostBasedIndicator[]
-    users: UserType[]
-  }>({ accounts: [], malware: [], hostIndicators: [], users: [] })
-  const [linkEntityType, setLinkEntityType] = useState('')
 
   useEffect(() => {
-    if (incidentId) {
-      loadIncidentData()
-    }
+    if (incidentId) loadIncidentData()
   }, [incidentId])
 
   const loadIncidentData = async () => {
@@ -440,304 +100,19 @@ export default function IncidentDetailPage() {
     }
   }
 
-  // --- Handlers ---
-
-  const openEditModal = () => {
-    if (!currentIncident) return
-    setEditForm({
-      title: currentIncident.title,
-      description: currentIncident.description || '',
-      severity: currentIncident.severity,
-      classification: currentIncident.classification || '',
-      tlp: currentIncident.tlp || 'amber',
-    })
-    setShowEditModal(true)
-  }
-
-  const handleEditIncident = async () => {
-    if (!editForm.title) return
-    setIsSubmitting(true)
-    try {
-      // 1. Update general details
-      await api.put(`/incidents/${incidentId}`, {
-        title: editForm.title,
-        description: editForm.description,
-        severity: editForm.severity,
-        classification: editForm.classification,
-        tlp: editForm.tlp,
-      })
-
-      await fetchIncident(incidentId)
-      setShowEditModal(false)
-    } catch (error) {
-      console.error('Failed to update incident:', error)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleUpdateStatus = async (newStatus: string) => {
-    const statusOpt = STATUS_OPTIONS.find(s => s.value === newStatus)
-    if (!statusOpt) return
-    setIsSubmitting(true)
-    try {
-      await api.patch(`/incidents/${incidentId}/status`, { status: newStatus, phase: statusOpt.phase })
-      await fetchIncident(incidentId)
-      setShowStatusModal(false)
-      toast({ title: 'Status updated', description: `Moved to Phase ${statusOpt.phase}: ${statusOpt.phaseName}` })
-    } catch (error) {
-      console.error('Failed to update status:', error)
-      toast({ title: 'Error', description: 'Failed to update incident status.', variant: 'destructive' })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const loadTaskEntityData = async () => {
-    try {
-      const [accountsRes, malwareRes, hostIocsRes, usersRes] = await Promise.all([
-        api.get<{ items: CompromisedAccount[] }>(`/incidents/${incidentId}/accounts`),
-        api.get<{ items: MalwareTool[] }>(`/incidents/${incidentId}/malware`),
-        api.get<{ items: HostBasedIndicator[] }>(`/incidents/${incidentId}/host-iocs`),
-        api.get<{ items: UserType[] }>('/users').catch(() => ({ items: [] })),
-      ])
-      setTaskEntityData({
-        accounts: accountsRes.items || [],
-        malware: malwareRes.items || [],
-        hostIndicators: hostIocsRes.items || [],
-        users: usersRes.items || [],
-      })
-    } catch (error) {
-      console.error('Failed to load entity data for tasks:', error)
-    }
-  }
-
-  const handleOpenTaskModal = () => {
-    setEditingTask(null)
-    setTaskForm({
-      title: '',
-      description: '',
-      priority: 'medium',
-      assignee_id: '',
-      due_date: '',
-      phase: '',
-      linked_entities: [],
-    })
-    setLinkEntityType('')
-    loadTaskEntityData()
-    setShowTaskModal(true)
-  }
-
-  const addLinkedEntity = (type: string, id: string, label: string) => {
-    if (taskForm.linked_entities.some((e) => e.id === id)) return
-    setTaskForm({
-      ...taskForm,
-      linked_entities: [...taskForm.linked_entities, { type, id, label }],
-    })
-    setLinkEntityType('')
-  }
-
-  const removeLinkedEntity = (id: string) => {
-    setTaskForm({
-      ...taskForm,
-      linked_entities: taskForm.linked_entities.filter((e) => e.id !== id),
-    })
-  }
-
-  const handleAddTask = async () => {
-    if (!taskForm.title) return
-    setIsSubmitting(true)
-    try {
-      const payload = {
-        title: taskForm.title,
-        description: taskForm.description,
-        priority: taskForm.priority,
-        assignee_id: taskForm.assignee_id || null,
-        due_date: taskForm.due_date || null,
-        phase: taskForm.phase ? parseInt(taskForm.phase) : null,
-        extra_data: {
-          linked_entities: taskForm.linked_entities.length > 0 ? taskForm.linked_entities : undefined,
-        },
-      }
-      await api.post(`/incidents/${incidentId}/tasks`, payload)
-      const tasksRes = await api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`)
-      setTasks(tasksRes.items || [])
-      setShowTaskModal(false)
-    } catch (error) {
-      console.error('Failed to add task:', error)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleEditTask = async () => {
-    if (!editingTask || !taskForm.title) return
-    setIsSubmitting(true)
-    try {
-      const payload = {
-        title: taskForm.title,
-        description: taskForm.description,
-        priority: taskForm.priority,
-        assignee_id: taskForm.assignee_id || null,
-        due_date: taskForm.due_date || null,
-        phase: taskForm.phase ? parseInt(taskForm.phase) : null,
-        extra_data: {
-          linked_entities: taskForm.linked_entities.length > 0 ? taskForm.linked_entities : undefined,
-        },
-      }
-      await api.put(`/incidents/${incidentId}/tasks/${editingTask.id}`, payload)
-      const tasksRes = await api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`)
-      setTasks(tasksRes.items || [])
-      setShowTaskModal(false)
-      setEditingTask(null)
-    } catch (error) {
-      console.error('Failed to update task:', error)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleDeleteTask = async (taskId: string) => {
-    try {
-      await api.delete(`/incidents/${incidentId}/tasks/${taskId}`)
-      setTasks(tasks.filter(t => t.id !== taskId))
-    } catch (error) {
-      console.error('Failed to delete task:', error)
-    }
-  }
-
-  const handleToggleTaskStatus = async (task: Task) => {
-    const nextStatus = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed'
-    try {
-      await api.put(`/incidents/${incidentId}/tasks/${task.id}`, { status: nextStatus })
-      setTasks(tasks.map(t => t.id === task.id ? { ...t, status: nextStatus } : t))
-    } catch (error) {
-      console.error('Failed to toggle task status:', error)
-    }
-  }
-
-  const handleOpenEditTask = (task: Task) => {
-    setEditingTask(task)
-    setTaskForm({
-      title: task.title,
-      description: task.description || '',
-      priority: task.priority,
-      assignee_id: task.assignee?.id || '',
-      due_date: task.due_date || '',
-      phase: task.phase?.toString() || '',
-      linked_entities: task.extra_data?.linked_entities || [],
-    })
-    setLinkEntityType('')
-    loadTaskEntityData()
-    setShowTaskModal(true)
-  }
-
-  const [taskComments, setTaskComments] = useState<Record<string, any[]>>({})
-  const [expandedTaskComments, setExpandedTaskComments] = useState<string | null>(null)
-  const [newComment, setNewComment] = useState('')
-  const [isAddingComment, setIsAddingComment] = useState(false)
-
-  const handleToggleComments = async (taskId: string) => {
-    if (expandedTaskComments === taskId) {
-      setExpandedTaskComments(null)
-      return
-    }
-    setExpandedTaskComments(taskId)
-    if (!taskComments[taskId]) {
-      try {
-        const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
-        setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
-      } catch (error) {
-        console.error('Failed to load comments:', error)
-      }
-    }
-  }
-
-  const handleAddComment = async (taskId: string) => {
-    if (!newComment.trim()) return
-    setIsAddingComment(true)
-    try {
-      await api.post(`/incidents/${incidentId}/tasks/${taskId}/comments`, { content: newComment })
-      const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
-      setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
-      setNewComment('')
-    } catch (error) {
-      console.error('Failed to add comment:', error)
-    } finally {
-      setIsAddingComment(false)
-    }
-  }
-
-  const handleDeleteComment = async (taskId: string, commentId: string) => {
-    try {
-      await api.delete(`/incidents/${incidentId}/tasks/${taskId}/comments/${commentId}`)
-      setTaskComments(prev => ({
-        ...prev,
-        [taskId]: (prev[taskId] || []).filter(c => c.id !== commentId),
-      }))
-    } catch (error) {
-      console.error('Failed to delete comment:', error)
-    }
-  }
-
-  const REPORT_TYPE_OPTIONS = [
-    { id: 'executive', label: 'Executive Summary', description: 'High-level overview for stakeholders' },
-    { id: 'metrics', label: 'Incident Metrics', description: 'Statistical analysis and response metrics' },
-    { id: 'ioc', label: 'IOC Analysis', description: 'Indicators of compromise breakdown' },
-    { id: 'trends', label: 'Trend Report', description: 'Patterns and emerging threat analysis' },
-  ]
-
-  const handleGenerateReport = async () => {
-    setIsGeneratingReport(true)
-    const typeName = REPORT_TYPE_OPTIONS.find(r => r.id === selectedReportType)?.label || 'Report'
-    toast({ title: 'Generating Report', description: `AI is generating ${typeName}...` })
-    try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
-      const token = api.getToken()
-      const response = await fetch(`${API_URL}/incidents/${incidentId}/reports/generate-pdf`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ report_type: selectedReportType }),
-      })
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({ message: 'Generation failed' }))
-        throw new Error(errData.message || 'Report generation failed')
-      }
-      const pdfBlob = await response.blob()
-      const url = URL.createObjectURL(pdfBlob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `incident_${currentIncident?.incident_number ?? 'report'}_${selectedReportType}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      toast({ title: 'Report Generated', description: `${typeName} has been downloaded.` })
-      setShowReportModal(false)
-    } catch (err) {
-      toast({
-        title: 'Generation Failed',
-        description: err instanceof Error ? err.message : 'An error occurred while generating the report.',
-        variant: 'destructive',
-      })
-    } finally {
-      setIsGeneratingReport(false)
-    }
-  }
-
+  // ─── Loading / Not Found ───────────────────────────────────────────────
 
   if (isLoadingData && !currentIncident) {
-    return <div className="p-8"><SkeletonPage /></div>
+    return <div className="p-8"><IncidentDetailSkeleton /></div>
   }
 
-  if (!currentIncident) return <div>Incident not found</div>
+  if (!currentIncident) {
+    return <div className="p-8 text-muted-foreground">Incident not found</div>
+  }
 
   const incident = currentIncident
-  const completedTasks = tasks.filter((t) => t.status === 'completed').length
-  const taskProgress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : 0
+
+  // ─── Render ────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -775,7 +150,7 @@ export default function IncidentDetailPage() {
               <Button variant="outline" onClick={() => setShowImportModal(true)}>
                 <Upload className="mr-2 h-4 w-4" /> Import
               </Button>
-              <Button variant="outline" onClick={openEditModal}>
+              <Button variant="outline" onClick={() => setShowEditModal(true)}>
                 <Edit2 className="mr-2 h-4 w-4" /> Edit
               </Button>
               <Button onClick={() => setShowStatusModal(true)}>
@@ -785,11 +160,8 @@ export default function IncidentDetailPage() {
           </div>
         </div>
 
-        {/* Phase Progress — Interactive IR Phase Tracker */}
-        <IRPhaseTracker
-          currentPhase={incident.phase}
-          context="incident"
-        />
+        {/* Phase Progress */}
+        <IRPhaseTracker currentPhase={incident.phase} context="incident" />
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -829,205 +201,25 @@ export default function IncidentDetailPage() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Overview TabContent */}
+          {/* Overview */}
           <TabsContent value="overview">
-            {(() => {
-              const pendingTasks = tasks.filter(t => t.status === 'pending').length
-              const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length
-              const containmentGroups = hosts.reduce((acc, h) => {
-                const status = h.containment_status || 'active'
-                acc[status] = (acc[status] || 0) + 1
-                return acc
-              }, {} as Record<string, number>)
-              const containmentColors: Record<string, string> = {
-                active: 'text-red-400 bg-red-500/10 border-red-500/20',
-                monitoring: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
-                isolated: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-                reimaged: 'text-green-400 bg-green-500/10 border-green-500/20',
-                decommissioned: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
-              }
-              // Calculate incident duration
-              const createdDate = incident.created_at ? new Date(incident.created_at) : null
-              const now = new Date()
-              let durationStr = 'N/A'
-              if (createdDate) {
-                const diffMs = now.getTime() - createdDate.getTime()
-                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-                const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-                durationStr = diffDays > 0 ? `${diffDays}d ${diffHours}h` : `${diffHours}h`
-              }
-
-              return (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2 space-y-6">
-                    {/* Primary Stats */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      <StatCard title="Events" value={incident.counts?.timeline_events || 0} icon={<Clock className="h-4 w-4" />} />
-                      <StatCard title="Hosts" value={incident.counts?.compromised_hosts || 0} icon={<Server className="h-4 w-4" />} description={hosts.filter(h => h.containment_status === 'isolated').length > 0 ? `${hosts.filter(h => h.containment_status === 'isolated').length} isolated` : undefined} />
-                      <StatCard title="Network IOCs" value={incident.counts?.network_indicators || 0} icon={<Globe className="h-4 w-4" />} />
-                      <StatCard title="Host IOCs" value={incident.counts?.host_indicators || 0} icon={<Fingerprint className="h-4 w-4" />} />
-                    </div>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      <StatCard title="Tasks" value={tasks.length} description={`${taskProgress}% complete`} icon={<CheckSquare className="h-4 w-4" />} />
-                      <StatCard title="Accounts" value={incident.counts?.compromised_accounts || 0} icon={<Key className="h-4 w-4" />} />
-                      <StatCard title="Malware" value={incident.counts?.malware_tools || 0} icon={<Bug className="h-4 w-4" />} />
-                      <StatCard title="Artifacts" value={incident.counts?.artifacts || 0} icon={<FileText className="h-4 w-4" />} />
-                    </div>
-
-                    {/* Task Progress */}
-                    {tasks.length > 0 && (
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-lg">Task Progress</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-3 overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-cyan-500 to-green-500 rounded-full transition-all duration-500" style={{ width: `${taskProgress}%` }} />
-                          </div>
-                          <div className="grid grid-cols-3 gap-4 text-center">
-                            <div className="p-3 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10">
-                              <div className="text-xl font-bold text-muted-foreground">{pendingTasks}</div>
-                              <div className="text-xs text-muted-foreground">Pending</div>
-                            </div>
-                            <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-                              <div className="text-xl font-bold text-blue-400">{inProgressTasks}</div>
-                              <div className="text-xs text-muted-foreground">In Progress</div>
-                            </div>
-                            <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/20">
-                              <div className="text-xl font-bold text-green-400">{completedTasks}</div>
-                              <div className="text-xs text-muted-foreground">Completed</div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Host Containment Status */}
-                    {hosts.length > 0 && (
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-lg">Host Containment</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                            {Object.entries(containmentGroups).map(([status, count]) => (
-                              <div key={status} className={`p-3 rounded-lg border text-center ${containmentColors[status] || 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10'}`}>
-                                <div className="text-xl font-bold">{count}</div>
-                                <div className="text-xs capitalize">{status.replace('_', ' ')}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* MITRE ATT&CK Coverage */}
-                    {timeline.length > 0 && <MitreTTPAnalytics events={timeline} />}
-
-                    {/* Recent Activity */}
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between pb-2">
-                        <CardTitle className="text-lg">Recent Activity</CardTitle>
-                        <Button variant="ghost" size="sm" onClick={() => setActiveTab('events')}>View all <ChevronRight className="ml-1 h-4 w-4" /></Button>
-                      </CardHeader>
-                      <CardContent>
-                        {timeline.length === 0 ? (
-                          <div className="text-center py-8 text-muted-foreground">No recent activity</div>
-                        ) : (
-                          <div className="space-y-4">
-                            {timeline.slice(0, 5).map(event => (
-                              <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                <div className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{formatRelativeTime(event.timestamp)}</div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <p className="text-sm text-foreground truncate">{event.activity}</p>
-                                    {event.is_ioc && <Badge className="bg-red-500/20 text-red-400 border-red-500/30 border text-[10px] px-1.5 py-0">IOC</Badge>}
-                                  </div>
-                                  {event.hostname && <span className="text-xs text-muted-foreground flex items-center gap-1 mt-1"><Server className="h-3 w-3" />{event.hostname}</span>}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  <div className="space-y-6">
-                    {/* Details Card */}
-                    <Card>
-                      <CardHeader><CardTitle className="text-lg">Details</CardTitle></CardHeader>
-                      <CardContent className="space-y-4">
-                        <div>
-                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Classification</p>
-                          <p className="font-medium text-foreground">{incident.classification || 'Not classified'}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">TLP Level</p>
-                          <TLPBadge tlp={incident.tlp || 'amber'} />
-                        </div>
-                        {incident.owning_team && (
-                          <div>
-                            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Owning Team</p>
-                            <p className="font-medium text-foreground">{incident.owning_team.name}</p>
-                          </div>
-                        )}
-                        <div>
-                          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Lead Responder</p>
-                          <LeadResponderSelector
-                            incidentId={incidentId}
-                            currentLead={incident.lead_responder as any}
-                            onUpdated={() => { fetchIncident(incidentId); setAssignmentsKey(k => k + 1) }}
-                          />
-                        </div>
-                        {incident.teams && incident.teams.length > 0 && (
-                          <div>
-                            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Team Access</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {incident.teams.map(team => (
-                                <Badge key={team.id} variant="outline" className="text-xs">
-                                  {team.name}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    {/* Timing Card */}
-                    <Card>
-                      <CardHeader><CardTitle className="text-lg">Timing</CardTitle></CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="flex justify-between">
-                          <span className="text-xs text-muted-foreground">Created</span>
-                          <span className="text-xs font-medium text-foreground">{incident.created_at ? formatDateTime(incident.created_at) : 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-xs text-muted-foreground">Last Updated</span>
-                          <span className="text-xs font-medium text-foreground">{incident.updated_at ? formatRelativeTime(incident.updated_at) : 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-xs text-muted-foreground">Duration</span>
-                          <span className="text-xs font-bold text-cyan-400">{durationStr}</span>
-                        </div>
-                        {timeline.length > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-xs text-muted-foreground">First Event</span>
-                            <span className="text-xs font-medium text-foreground">{formatDateTime(timeline[timeline.length - 1]?.timestamp)}</span>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-
-                    <AssignmentsPanel incidentId={incidentId} refreshKey={assignmentsKey} />
-                  </div>
-                </div>
-              )
-            })()}
+            <OverviewTab
+              incident={incident as any}
+              incidentId={incidentId}
+              tasks={tasks}
+              hosts={hosts}
+              timeline={timeline}
+              assignmentsKey={assignmentsKey}
+              onViewEvents={() => setActiveTab('events')}
+              onIncidentUpdated={() => {
+                fetchIncident(incidentId)
+                setAssignmentsKey((k) => k + 1)
+              }}
+              onAssignmentsRefresh={() => setAssignmentsKey((k) => k + 1)}
+            />
           </TabsContent>
 
-          {/* Events Tab */}
+          {/* Events */}
           <TabsContent value="events">
             <div className="mb-4 flex items-center gap-2">
               <Button
@@ -1064,161 +256,22 @@ export default function IncidentDetailPage() {
             )}
           </TabsContent>
 
-          {/* Hosts Tab */}
+          {/* Hosts */}
           <TabsContent value="hosts">
             <HostsTab incidentId={incidentId} onHostsChange={setHosts} />
           </TabsContent>
 
-          {/* Tasks Tab */}
+          {/* Tasks */}
           <TabsContent value="tasks">
-            <Card>
-              <CardHeader className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Tasks</CardTitle>
-                  <CardDescription>Response checklist</CardDescription>
-                </div>
-                <Button onClick={handleOpenTaskModal}><Plus className="mr-2 h-4 w-4" /> Add Task</Button>
-              </CardHeader>
-              <CardContent>
-                {tasks.length === 0 ? (
-                  <TableEmpty
-                    title="No tasks yet"
-                    description="Create tasks to track response actions, assignments, and progress for this incident."
-                    icon={<CheckSquare className="w-8 h-8" />}
-                  />
-                ) : (
-                  <div className="space-y-3">
-                    {tasks.map(task => {
-                      const linkedEntities = task.extra_data?.linked_entities
-                      const priorityColors: Record<string, string> = {
-                        critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-                        high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-                        medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-                        low: 'bg-green-500/20 text-green-400 border-green-500/30',
-                      }
-                      const statusInfo: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-                        pending: { icon: <Circle className="w-5 h-5" />, color: 'text-muted-foreground', label: 'Pending' },
-                        in_progress: { icon: <Clock className="w-5 h-5" />, color: 'text-blue-400', label: 'In Progress' },
-                        completed: { icon: <CheckCircle2 className="w-5 h-5" />, color: 'text-green-400', label: 'Completed' },
-                      }
-                      const entityIcons: Record<string, React.ReactNode> = {
-                        host: <Server className="w-3 h-3" />,
-                        account: <Key className="w-3 h-3" />,
-                        malware: <Bug className="w-3 h-3" />,
-                        host_indicator: <Fingerprint className="w-3 h-3" />,
-                      }
-                      const st = statusInfo[task.status] || statusInfo.pending
-                      const isExpanded = expandedTaskComments === task.id
-                      const comments = taskComments[task.id] || []
-                      return (
-                        <div key={task.id} className="rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 p-4">
-                          <div className="flex gap-4">
-                            <button
-                              onClick={() => handleToggleTaskStatus(task)}
-                              className={`mt-0.5 ${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
-                              title={`Status: ${st.label} — Click to change`}
-                            >
-                              {st.icon}
-                            </button>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{task.title}</h4>
-                                <Badge className={`${priorityColors[task.priority] || ''} border text-[10px] px-1.5 py-0`}>
-                                  {task.priority}
-                                </Badge>
-                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${st.color}`}>
-                                  {st.label}
-                                </Badge>
-                              </div>
-                              {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                              <div className="flex items-center gap-3 mt-2 flex-wrap">
-                                {task.assignee && (
-                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                    <User className="w-3 h-3" /> {task.assignee.name}
-                                  </span>
-                                )}
-                                {task.due_date && (
-                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                    <Calendar className="w-3 h-3" /> {formatDateTime(task.due_date)}
-                                  </span>
-                                )}
-                              </div>
-                              {linkedEntities && linkedEntities.length > 0 && (
-                                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                                  <Link2 className="w-3 h-3 text-muted-foreground" />
-                                  {linkedEntities.map((entity) => (
-                                    <span key={entity.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                                      {entityIcons[entity.type] || null}
-                                      {entity.label}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex items-start gap-1 flex-shrink-0">
-                              <Button variant="ghost" size="sm" onClick={() => handleToggleComments(task.id)} title="Comments">
-                                <MessageSquare className="h-4 w-4" />
-                                {comments.length > 0 && <span className="ml-1 text-xs">{comments.length}</span>}
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => handleOpenEditTask(task)} title="Edit">
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => handleDeleteTask(task.id)} className="text-red-400 hover:text-red-300" title="Delete">
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                          {/* Expandable Comments */}
-                          {isExpanded && (
-                            <div className="mt-3 pt-3 border-t border-black/10 dark:border-white/10 ml-9">
-                              {comments.length === 0 ? (
-                                <p className="text-xs text-muted-foreground mb-2">No comments yet</p>
-                              ) : (
-                                <div className="space-y-2 mb-3">
-                                  {comments.map((comment: any) => (
-                                    <div key={comment.id} className="flex items-start gap-2 text-sm">
-                                      <div className="w-6 h-6 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 flex items-center justify-center text-white text-[10px] font-medium flex-shrink-0">
-                                        {comment.author?.name?.charAt(0) || '?'}
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-xs font-medium text-foreground">{comment.author?.name || 'Unknown'}</span>
-                                          <span className="text-[10px] text-muted-foreground">{formatRelativeTime(comment.created_at)}</span>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground mt-0.5">{comment.content}</p>
-                                      </div>
-                                      <Button variant="ghost" size="sm" onClick={() => handleDeleteComment(task.id, comment.id)} className="h-6 w-6 p-0 text-red-400 hover:text-red-300">
-                                        <X className="h-3 w-3" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  placeholder="Add a comment..."
-                                  value={newComment}
-                                  onChange={e => setNewComment(e.target.value)}
-                                  variant="glass"
-                                  className="text-xs h-8"
-                                  onKeyDown={e => { if (e.key === 'Enter') handleAddComment(task.id) }}
-                                />
-                                <Button size="sm" onClick={() => handleAddComment(task.id)} disabled={isAddingComment || !newComment.trim()} className="h-8">
-                                  <Send className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <TasksTab
+              incidentId={incidentId}
+              tasks={tasks}
+              hosts={hosts}
+              onTasksChange={setTasks}
+            />
           </TabsContent>
 
-          {/* Other Tabs */}
+          {/* Attack Graph */}
           <TabsContent value="graph">
             <Card>
               <CardHeader>
@@ -1254,284 +307,36 @@ export default function IncidentDetailPage() {
           <TabsContent value="notes">
             <CaseNotesTab incidentId={incidentId} />
           </TabsContent>
-
         </Tabs>
       </div>
 
-      {/* Edit Modal */}
-      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Edit Incident</DialogTitle></DialogHeader>
-          <DialogBody className="space-y-4">
-            <div className="space-y-2">
-              <Label>Title</Label>
-              <Input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>Severity</Label>
-              <Select value={editForm.severity} onValueChange={v => setEditForm({ ...editForm, severity: v })}>
-                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Classification</Label>
-              <Input value={editForm.classification} onChange={e => setEditForm({ ...editForm, classification: e.target.value })} variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>TLP Level</Label>
-              <Select value={editForm.tlp} onValueChange={v => setEditForm({ ...editForm, tlp: v })}>
-                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="white">TLP:WHITE — Unrestricted</SelectItem>
-                  <SelectItem value="green">TLP:GREEN — Community</SelectItem>
-                  <SelectItem value="amber">TLP:AMBER — Limited distribution</SelectItem>
-                  <SelectItem value="amber_strict">TLP:AMBER+STRICT — Restricted</SelectItem>
-                  <SelectItem value="red">TLP:RED — Named recipients only</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button>
-            <Button onClick={handleEditIncident} loading={isSubmitting}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Modals */}
+      <EditIncidentModal
+        open={showEditModal}
+        onOpenChange={setShowEditModal}
+        incident={incident as any}
+        incidentId={incidentId}
+        onUpdated={() => fetchIncident(incidentId)}
+      />
 
-      {/* Update Status Modal */}
-      <Dialog open={showStatusModal} onOpenChange={setShowStatusModal}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Update Status & Phase</DialogTitle></DialogHeader>
-          <DialogBody className="space-y-2">
-            {STATUS_OPTIONS.map(opt => (
-              <button key={opt.value} onClick={() => handleUpdateStatus(opt.value)}
-                disabled={isSubmitting}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${incident.status === opt.value ? 'bg-cyan-500/10 border-cyan-500/50' : 'border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5'} disabled:opacity-50`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold bg-gradient-to-r ${PHASE_INFO[opt.phase - 1].color}`}>
-                  {opt.phase}
-                </div>
-                <div className="flex flex-col items-start">
-                  <span className="font-medium text-foreground">{opt.label}</span>
-                  <span className="text-xs text-muted-foreground">{opt.phaseName}</span>
-                </div>
-                {incident.status === opt.value && <CheckCircle2 className="h-4 w-4 text-cyan-400 ml-auto" />}
-              </button>
-            ))}
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      <UpdateStatusModal
+        open={showStatusModal}
+        onOpenChange={setShowStatusModal}
+        currentStatus={incident.status}
+        incidentId={incidentId}
+        onUpdated={() => {
+          fetchIncident(incidentId)
+          setAssignmentsKey((k) => k + 1)
+        }}
+      />
 
-      {/* Add/Edit Task Modal */}
-      <Dialog open={showTaskModal} onOpenChange={(open) => { if (!open) { setShowTaskModal(false); setEditingTask(null) } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingTask ? 'Edit Task' : 'Add Task'}</DialogTitle>
-            <DialogDescription>{editingTask ? 'Update this response task' : 'Create a response task and link it to incident entities'}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-4 max-h-[60vh] overflow-y-auto">
-            <div className="space-y-2">
-              <Label>Title *</Label>
-              <Input value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Task title..." variant="glass" />
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Textarea value={taskForm.description} onChange={e => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Describe the task..." variant="glass" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Priority</Label>
-                <Select value={taskForm.priority} onValueChange={v => setTaskForm({ ...taskForm, priority: v })}>
-                  <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Phase</Label>
-                <Select value={taskForm.phase} onValueChange={v => setTaskForm({ ...taskForm, phase: v })}>
-                  <SelectTrigger variant="glass"><SelectValue placeholder="Select phase..." /></SelectTrigger>
-                  <SelectContent>
-                    {PHASE_INFO.map(p => <SelectItem key={p.number} value={String(p.number)}>{p.number}. {p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Assignee</Label>
-                <Select value={taskForm.assignee_id} onValueChange={v => setTaskForm({ ...taskForm, assignee_id: v })}>
-                  <SelectTrigger variant="glass"><SelectValue placeholder="Unassigned" /></SelectTrigger>
-                  <SelectContent>
-                    {taskEntityData.users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Due Date</Label>
-                <Input type="datetime-local" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })} variant="glass" />
-              </div>
-            </div>
+      <ReportModal
+        open={showReportModal}
+        onOpenChange={setShowReportModal}
+        incidentId={incidentId}
+        incidentNumber={incident.incident_number}
+      />
 
-            {/* Linked Entities */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <Link2 className="w-4 h-4" /> Linked Entities
-              </Label>
-              {taskForm.linked_entities.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {taskForm.linked_entities.map((entity) => {
-                    const iconMap: Record<string, React.ReactNode> = {
-                      host: <Server className="w-3 h-3" />,
-                      account: <Key className="w-3 h-3" />,
-                      malware: <Bug className="w-3 h-3" />,
-                      host_indicator: <Fingerprint className="w-3 h-3" />,
-                    }
-                    return (
-                      <span key={entity.id} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                        {iconMap[entity.type] || null}
-                        {entity.label}
-                        <button onClick={() => removeLinkedEntity(entity.id)} className="ml-1 hover:text-red-400">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                <Select value={linkEntityType} onValueChange={setLinkEntityType}>
-                  <SelectTrigger variant="glass"><SelectValue placeholder="Entity type..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="host">Host</SelectItem>
-                    <SelectItem value="account">Account</SelectItem>
-                    <SelectItem value="malware">Malware</SelectItem>
-                    <SelectItem value="host_indicator">Host Indicator</SelectItem>
-                  </SelectContent>
-                </Select>
-                {linkEntityType === 'host' && (
-                  <Select onValueChange={(v) => {
-                    const host = hosts.find(h => h.id === v)
-                    if (host) addLinkedEntity('host', host.id, host.hostname)
-                  }}>
-                    <SelectTrigger variant="glass"><SelectValue placeholder="Select host..." /></SelectTrigger>
-                    <SelectContent>
-                      {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname} ({h.ip_address})</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                {linkEntityType === 'account' && (
-                  <Select onValueChange={(v) => {
-                    const acc = taskEntityData.accounts.find(a => a.id === v)
-                    if (acc) addLinkedEntity('account', acc.id, `${acc.domain ? acc.domain + '\\' : ''}${acc.account_name}`)
-                  }}>
-                    <SelectTrigger variant="glass"><SelectValue placeholder="Select account..." /></SelectTrigger>
-                    <SelectContent>
-                      {taskEntityData.accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.domain ? `${a.domain}\\` : ''}{a.account_name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                {linkEntityType === 'malware' && (
-                  <Select onValueChange={(v) => {
-                    const mal = taskEntityData.malware.find(m => m.id === v)
-                    if (mal) addLinkedEntity('malware', mal.id, mal.file_name)
-                  }}>
-                    <SelectTrigger variant="glass"><SelectValue placeholder="Select malware..." /></SelectTrigger>
-                    <SelectContent>
-                      {taskEntityData.malware.map(m => <SelectItem key={m.id} value={m.id}>{m.file_name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                {linkEntityType === 'host_indicator' && (
-                  <Select onValueChange={(v) => {
-                    const ioc = taskEntityData.hostIndicators.find(i => i.id === v)
-                    if (ioc) addLinkedEntity('host_indicator', ioc.id, `${ioc.artifact_type}: ${ioc.artifact_value.slice(0, 40)}`)
-                  }}>
-                    <SelectTrigger variant="glass"><SelectValue placeholder="Select indicator..." /></SelectTrigger>
-                    <SelectContent>
-                      {taskEntityData.hostIndicators.map(i => <SelectItem key={i.id} value={i.id}>{i.artifact_type}: {i.artifact_value.slice(0, 50)}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                {!linkEntityType && <div />}
-              </div>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowTaskModal(false); setEditingTask(null) }}>Cancel</Button>
-            <Button onClick={editingTask ? handleEditTask : handleAddTask} loading={isSubmitting}>{editingTask ? 'Update Task' : 'Add Task'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Report Generation Modal */}
-      <Dialog open={showReportModal} onOpenChange={setShowReportModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Generate Report</DialogTitle>
-            <DialogDescription>
-              Select a report type to generate an AI-powered PDF report for this incident.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <div className="space-y-3">
-              {REPORT_TYPE_OPTIONS.map((type) => (
-                <label
-                  key={type.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedReportType === type.id
-                      ? 'border-cyan-500/50 bg-cyan-500/10'
-                      : 'border-black/10 dark:border-white/10 hover:border-black/10 dark:hover:border-white/20 hover:bg-black/5 dark:hover:bg-white/5'
-                    }`}
-                >
-                  <input
-                    type="radio"
-                    name="reportType"
-                    value={type.id}
-                    checked={selectedReportType === type.id}
-                    onChange={(e) => setSelectedReportType(e.target.value)}
-                    className="mt-1 accent-cyan-500"
-                  />
-                  <div>
-                    <p className="font-medium text-sm">{type.label}</p>
-                    <p className="text-xs text-muted-foreground">{type.description}</p>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowReportModal(false)} disabled={isGeneratingReport}>
-              Cancel
-            </Button>
-            <Button onClick={handleGenerateReport} disabled={isGeneratingReport}>
-              {isGeneratingReport ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...
-                </>
-              ) : (
-                <>
-                  <Download className="mr-2 h-4 w-4" /> Generate PDF
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Import Wizard Modal */}
       <ImportWizardModal
         isOpen={showImportModal}
         onOpenChange={setShowImportModal}
@@ -1542,7 +347,7 @@ export default function IncidentDetailPage() {
   )
 }
 
-// ─── Pinned Timeline Tab (fetches data & renders PinnedEventsTable) ──────────
+// ─── Pinned Timeline Tab ─────────────────────────────────────────────────
 
 function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
   const [events, setEvents] = useState<TimelineEvent[]>([])
@@ -1556,7 +361,7 @@ function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
         const res = await api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`)
         if (!cancelled) {
           const pinned = (res.items || [])
-            .filter(e => e.is_key_event)
+            .filter((e) => e.is_key_event)
             .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
           setEvents(pinned)
         }
@@ -1581,11 +386,11 @@ function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
 
   if (events.length === 0) {
     return (
-      <div className="py-16 text-center border border-dashed border-black/10 dark:border-white/10 rounded-lg">
+      <div className="py-16 text-center border border-dashed border-border rounded-lg">
         <Star className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
         <p className="text-sm font-medium text-foreground">No Pinned Events</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Pin events from the Table tab using the ★ icon to build your table timeline.
+          Pin events from the Table tab using the &#9733; icon to build your table timeline.
         </p>
       </div>
     )

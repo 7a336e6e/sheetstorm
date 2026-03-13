@@ -285,12 +285,19 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
                     <HardDrive className={`h-5 w-5 ${driveStatus.connected ? 'text-green-400' : 'text-muted-foreground'}`} />
                   </div>
                   <div>
-                    <p className="text-sm font-medium">Google Drive</p>
-                    <p className="text-xs text-muted-foreground">
-                      {driveStatus.connected
-                        ? `Connected as ${driveStatus.email}`
-                        : driveStatus.message || 'Not connected'}
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      Google Drive
+                      {driveStatus.connected && (
+                        <span className="text-[10px] font-medium bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
+                          Connected
+                        </span>
+                      )}
                     </p>
+                    {!driveStatus.connected && (
+                      <p className="text-xs text-muted-foreground">
+                        {driveStatus.message || 'Not connected'}
+                      </p>
+                    )}
                   </div>
                 </div>
                 {driveStatus.connected && (

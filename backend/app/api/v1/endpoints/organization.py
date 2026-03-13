@@ -29,7 +29,7 @@ def get_organization():
 
 @api_bp.route('/organization', methods=['PUT'])
 @jwt_required()
-@require_permission('organization:update')  # Ensure this permission exists or use admin role check
+@require_permission('organizations:manage')
 @audit_log('admin_action', 'update', 'organization')
 def update_organization():
     """Update organization settings."""

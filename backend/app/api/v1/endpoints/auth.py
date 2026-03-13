@@ -33,10 +33,27 @@ def validate_email(email: str) -> bool:
     return bool(re.match(pattern, email))
 
 
+def _is_registration_enabled() -> bool:
+    """Check if registration is enabled in the default organization settings."""
+    org = Organization.query.filter_by(slug='default').first()
+    if not org or not org.settings:
+        return True  # Default: registration is enabled
+    return org.settings.get('registration_enabled', True)
+
+
+@api_bp.route('/auth/registration-status', methods=['GET'])
+def registration_status():
+    """Public endpoint to check whether registration is enabled."""
+    return jsonify({'registration_enabled': _is_registration_enabled()}), 200
+
+
 @api_bp.route('/auth/register', methods=['POST'])
 @limiter.limit("3 per hour")
 def register():
     """Register a new user account."""
+    if not _is_registration_enabled():
+        return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
+
     try:
         from app.schemas.auth import UserRegister
         data = UserRegister(**request.get_json())
@@ -291,6 +308,10 @@ def supabase_auth():
         user = User.query.filter_by(email=email).first()
 
         if not user:
+            # Check if registration is enabled before creating new user
+            if not _is_registration_enabled():
+                return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
+
             # Get or create default organization
             org = Organization.query.filter_by(slug='default').first()
             if not org:
@@ -524,6 +545,10 @@ def github_auth_callback():
             elif user.auth_provider == 'github' and user.auth_provider_id != github_id:
                 return jsonify({'error': 'conflict', 'message': 'Email is associated with a different GitHub account'}), 409
         else:
+            # Check if registration is enabled before creating new user
+            if not _is_registration_enabled():
+                return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
+
             # Create new user
             org = Organization.query.filter_by(slug='default').first()
             if not org:

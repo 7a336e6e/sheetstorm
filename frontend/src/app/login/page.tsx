@@ -5,7 +5,7 @@
 
 "use client"
 
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuthStore } from '@/lib/store'
@@ -37,9 +37,20 @@ function PasswordCheck({ met, label }: { met: boolean; label: string }) {
 function LoginPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const initialTab = searchParams.get('tab') === 'register' ? 'register' : 'login'
   const { login, register } = useAuthStore()
   const { toast } = useToast()
+
+  // Registration enabled status
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/v1/auth/registration-status')
+      .then(res => res.json())
+      .then(data => setRegistrationEnabled(data.registration_enabled !== false))
+      .catch(() => setRegistrationEnabled(true))
+  }, [])
+
+  const initialTab = searchParams.get('tab') === 'register' && registrationEnabled ? 'register' : 'login'
 
   // Login state
   const [isLoading, setIsLoading] = useState(false)
@@ -217,10 +228,16 @@ function LoginPageInner() {
           </div>
 
           <Tabs defaultValue={initialTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="login">Sign In</TabsTrigger>
-              <TabsTrigger value="register">Create Account</TabsTrigger>
-            </TabsList>
+            {registrationEnabled ? (
+              <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsTrigger value="login">Sign In</TabsTrigger>
+                <TabsTrigger value="register">Create Account</TabsTrigger>
+              </TabsList>
+            ) : (
+              <TabsList className="grid w-full grid-cols-1 mb-6">
+                <TabsTrigger value="login">Sign In</TabsTrigger>
+              </TabsList>
+            )}
 
             {/* ─── Login Tab ─── */}
             <TabsContent value="login">
@@ -341,6 +358,7 @@ function LoginPageInner() {
             </TabsContent>
 
             {/* ─── Register Tab ─── */}
+            {registrationEnabled && (
             <TabsContent value="register">
               <div className="space-y-6">
                 <div className="space-y-2">
@@ -442,6 +460,7 @@ function LoginPageInner() {
                 </p>
               </div>
             </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>

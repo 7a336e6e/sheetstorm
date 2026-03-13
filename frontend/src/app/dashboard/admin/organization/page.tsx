@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, GlassTable, TableEmpty,
 } from '@/components/ui/table'
@@ -14,7 +15,7 @@ import api from '@/lib/api'
 import { formatDateTime } from '@/lib/utils'
 import type { User } from '@/types'
 import {
-  Building, Users, Settings, Save, Loader2, Shield,
+  Building, Users, Settings, Save, Loader2, Shield, UserPlus,
 } from 'lucide-react'
 
 interface Organization {
@@ -23,6 +24,7 @@ interface Organization {
   settings: {
     timezone?: string
     mfa_required?: boolean
+    registration_enabled?: boolean
   }
   member_count?: number
   created_at: string
@@ -35,6 +37,7 @@ export default function OrganizationPage() {
   const [org, setOrg] = useState<Organization | null>(null)
   const [members, setMembers] = useState<User[]>([])
   const [orgName, setOrgName] = useState('')
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
 
   useEffect(() => {
     loadData()
@@ -49,6 +52,7 @@ export default function OrganizationPage() {
       if (orgRes) {
         setOrg(orgRes)
         setOrgName(orgRes.name)
+        setRegistrationEnabled(orgRes.settings?.registration_enabled !== false)
       }
       setMembers(membersRes.items || [])
     } catch {
@@ -62,7 +66,10 @@ export default function OrganizationPage() {
     if (!orgName.trim()) return
     setSaving(true)
     try {
-      await api.put('/organization', { name: orgName })
+      await api.put('/organization', {
+        name: orgName,
+        settings: { registration_enabled: registrationEnabled },
+      })
       toast({ title: 'Saved', description: 'Organization settings updated' })
       loadData()
     } catch {
@@ -115,6 +122,38 @@ export default function OrganizationPage() {
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
             Save Changes
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Registration Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <UserPlus className="h-5 w-5" />
+            Registration
+          </CardTitle>
+          <CardDescription>Control whether new users can create accounts</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 max-w-lg">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="registration-toggle">Allow new registrations</Label>
+              <p className="text-xs text-muted-foreground">
+                When disabled, no new accounts can be created via local sign-up, GitHub OAuth, or Supabase SSO.
+                Existing users can still sign in.
+              </p>
+            </div>
+            <Switch
+              id="registration-toggle"
+              checked={registrationEnabled}
+              onCheckedChange={setRegistrationEnabled}
+            />
+          </div>
+          {!registrationEnabled && (
+            <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs text-yellow-600 dark:text-yellow-400">
+              Registration is disabled. New users will not be able to create accounts until you re-enable this setting and save.
+            </div>
+          )}
         </CardContent>
       </Card>
 

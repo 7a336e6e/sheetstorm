@@ -26,107 +26,103 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 ---
 
-## Features
+<br />
 
-### Incident Lifecycle Management
+<table>
+<tr>
+<td width="50%">
 
-- Create and manage incidents through all six NIST IR phases
-- Assign severity, classification, and responsible teams
-- Track incident status with phase-aware progression
-- Full audit trail on every entity change
+### 🔍 Investigate
+- Track compromised hosts, accounts, and IOCs
+- Map MITRE ATT&CK tactics & techniques
+- Import evidence from Excel/CSV spreadsheets
+- Chain of custody for forensic artifacts
 
-### Investigation & Tracking
+</td>
+<td width="50%">
 
-- **Compromised Hosts** — track affected systems with OS, IP, hostname, and containment status
-- **Compromised Accounts** — log impacted user accounts with compromise type and reset status
-- **Network IOCs** — IPs, domains, URLs, and email addresses with defang/refang support
-- **Host IOCs** — file hashes, registry keys, services, scheduled tasks, and processes
-- **Malware Samples** — catalogue malware with hashes, file paths, and persistence mechanisms
-- **Excel / CSV Import** — bulk-import existing investigation data
+### 🕸️ Visualize
+- Auto-generated attack graphs from incident data
+- 11 node types · 12 edge types · interactive layout
+- Real-time graph sync between team members
+- Export to PNG
 
-### MITRE ATT&CK Integration
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-- Map every finding to MITRE ATT&CK tactics and techniques
-- Full ATT&CK matrix browser built into the platform
-- Form-integrated tactic/technique picker for fast tagging
+### 🤖 Report
+- AI-powered reports (OpenAI GPT-4 / Google Gemini)
+- Executive, metrics, IOC analysis, and trend reports
+- PDF generation with styled HTML
+- Auto-save to Google Drive case folders
 
-### Timeline & Evidence
+</td>
+<td width="50%">
 
-- **Event Timeline** — chronological record of attacker activity with kill-chain phase tagging
-- **Case Notes** — rich-text analyst notes tied to each incident
-- **Artifact Storage** — upload, hash-verify, and maintain chain-of-custody for evidence files
-- **Google Drive Integration** — optionally sync artifacts to a shared Drive folder per case
+### 🛡️ Secure
+- 6 RBAC roles with 40+ granular permissions
+- MFA/TOTP with backup codes
+- SSO configuration (SAML/OIDC)
+- Fernet-encrypted credential storage
+- Full audit trail
 
-### Threat Intelligence
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-- **IOC Enrichment** — IP reputation, domain reputation, and email reputation lookups
-- **CVE Lookup** — search vulnerabilities by CVE ID
-- **Ransomware Lookup** — check ransomware group profiles
-- **VirusTotal** — optional integration for file and IOC analysis
-- **Bulk Enrichment** — enrich multiple IOCs in a single operation
-- **Defang / Refang** — safely share IOCs in reports and chat
-- **STIX Export** — export incident IOCs as STIX 2.1 bundles
+### 🔎 Threat Intelligence
+- CVE lookup with CISA KEV + CVSS scoring
+- IP, domain, email reputation lookups
+- Ransomware victim search (ransomware.live)
+- IOC defanging/refanging for safe sharing
+- Auto-enrichment when integrations configured
 
-### Knowledge Bases
+</td>
+<td width="50%">
 
-- **MITRE ATT&CK** — full tactic and technique reference
-- **MITRE D3FEND** — defensive technique suggestions mapped to observed ATT&CK techniques
-- **LOLBAS** — Living Off The Land Binaries and Scripts reference
-- **Windows Event IDs** — searchable log source reference for Windows forensics
+### 📚 Knowledge Base
+- LOLBAS — living-off-the-land binaries & scripts
+- 65+ security-relevant Windows Event IDs
+- MITRE D3FEND defensive countermeasures
+- D3FEND ↔ ATT&CK suggestion engine
 
-### Attack Graph
+</td>
+</tr>
+<tr>
+<td colspan="2">
 
-- Visual node-and-edge graph of attack paths within an incident
-- Drag-and-drop graph editor with configurable node and edge types
-- Auto-generate graphs from existing incident data (hosts, IOCs, accounts, malware)
+### 🤖 MCP Server — AI Assistant Integration
+- **70+ tools** across 17 modules for full platform control via natural language
+- Claude, Cursor, and custom AI agents can query incidents, enrich IOCs, build attack graphs, and generate reports
+- SSE transport with OAuth 2.1 authentication and Redis-backed client persistence
+- 5 IR-focused prompt templates (incident analysis, timeline summary, MITRE mapping, lateral movement, executive summary)
+- 5 reference data resources (IR phases, severities, statuses, MITRE tactics & techniques)
 
-### AI-Powered Reports
-
-- Generate executive summaries, technical deep-dives, and lessons-learned reports using GPT-4o or Gemini
-- Export reports as styled PDF documents
-- Multiple report templates (executive, technical, post-incident)
-
-### Real-Time Collaboration
-
-- **WebSocket-driven** live updates across all incident views
-- **Incident Rooms** — join a case and see changes from other analysts instantly
-- **In-app Notifications** — real-time alerts on assignments, status changes, and comments
-- **Task Management** — create, assign, and track response tasks with priority and due dates
-- **Task Comments** — threaded discussion on each task
-
-### Access Control & Security
-
-- **Role-Based Access Control** — six default roles with 40+ granular permissions (`entity:action` format)
-- **Custom Roles** — create roles tailored to your organization
-- **Multi-Factor Authentication** — TOTP-based MFA with QR setup
-- **GitHub SSO** — authenticate via GitHub OAuth
-- **JWT Authentication** — short-lived access tokens with refresh rotation
-- **Redis-backed Token Blocklist** — instant session revocation
-- **Rate Limiting** — per-endpoint rate limits to prevent abuse
-- **Input Sanitization** — HTML/XSS stripping on all user input
-- **Multi-tenancy** — organization-scoped data isolation
-
-### MCP Server
-
-SheetStorm ships with a **Model Context Protocol (MCP) server** exposing 70+ tools, allowing AI assistants (Claude, Copilot, etc.) to interact with your incident data programmatically — create incidents, query IOCs, run enrichments, and more, all through natural language.
+</td>
+</tr>
+</table>
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/7a336e6e/sheetstorm.git
-cd sheetstorm
-cp .env.example .env   # edit secrets as needed
-./start.sh             # builds, migrates, seeds — all Docker
+git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
+chmod +x start.sh && ./start.sh
 ```
 
-| Service   | URL                          |
-|-----------|------------------------------|
-| Frontend  | `http://localhost:8080`      |
-| API       | `http://localhost:8080/api/v1` |
+That's it. The script generates secrets, builds 6 Docker containers, runs migrations, and seeds an admin user.
 
-**Default admin:** `admin@sheetstorm.local` / value of `ADMIN_PASSWORD` in `.env` (default `changeme`).
+| Service    | URL                              |
+|------------|----------------------------------|
+| Frontend   | http://127.0.0.1:3000            |
+| API        | http://127.0.0.1:5000/api/v1     |
+| MCP Server | http://127.0.0.1:8811/sse        |
+
+> **Default login:** `admin@sheetstorm.local` · password in `ADMIN_PASSWORD` from `.env`
 
 ### Requirements
 
@@ -135,7 +131,7 @@ cp .env.example .env   # edit secrets as needed
 
 ### Optional Integrations
 
-Configure via environment variables in `.env`:
+Configure via environment variables in `.env` or throught the GUI in the platform:
 
 | Integration | Purpose |
 |-------------|---------|

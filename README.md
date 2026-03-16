@@ -118,6 +118,7 @@ That's it. The script generates secrets, builds 6 Docker containers, runs migrat
 
 | Service    | URL                              |
 |------------|----------------------------------|
+| Proxy      | http://127.0.0.1:8080            |
 | Frontend   | http://127.0.0.1:3000            |
 | API        | http://127.0.0.1:5000/api/v1     |
 | MCP Server | http://127.0.0.1:8811/sse        |

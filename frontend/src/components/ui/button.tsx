@@ -59,7 +59,6 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         <Slot
           className={cn(buttonVariants({ variant, size, className }))}
           ref={ref}
-          disabled={disabled || loading}
           {...props}
         >
           {children}

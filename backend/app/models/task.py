@@ -41,7 +41,7 @@ class Task(BaseModel):
     def to_dict(self, include_comments=False):
         """Convert to dictionary."""
         data = super().to_dict()
-        data['assignee'] = self.assignee.to_dict() if self.assignee else None
+        data['assignee'] = self.assignee.to_summary() if self.assignee else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
 
         if include_comments:

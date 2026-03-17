@@ -53,3 +53,4 @@ data/
 tasks.md
 mcp-server/.venv/
 test_oauth_flow.py
+prompts/

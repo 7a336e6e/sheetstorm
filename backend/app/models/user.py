@@ -118,6 +118,15 @@ class User(BaseModel):
             for tm in self.team_memberships if tm.team
         ]
 
+    def to_summary(self):
+        """Lightweight representation for embedding in other resources."""
+        return {
+            'id': str(self.id),
+            'name': self.name,
+            'avatar_url': self.avatar_url,
+            'roles': self.role_names,
+        }
+
     def to_dict(self, include_permissions=False):
         """Convert to dictionary, excluding sensitive fields."""
         data = {

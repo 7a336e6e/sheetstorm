@@ -81,7 +81,7 @@ class Incident(BaseModel):
         data['tlp'] = self.tlp
         data['team_id'] = str(self.team_id) if self.team_id else None
         data['owning_team'] = {'id': str(self.owning_team.id), 'name': self.owning_team.name} if self.owning_team else None
-        data['lead_responder'] = self.lead_responder.to_dict() if self.lead_responder else None
+        data['lead_responder'] = self.lead_responder.to_summary() if self.lead_responder else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
         data['teams'] = [
             {'id': str(it.team_id), 'name': it.team.name if it.team else None}
@@ -124,7 +124,7 @@ class IncidentAssignment(BaseModel):
         return {
             'id': str(self.id),
             'incident_id': str(self.incident_id),
-            'user': self.user.to_dict() if self.user else None,
+            'user': self.user.to_summary() if self.user else None,
             'role': self.role,
             'assigned_by': str(self.assigned_by) if self.assigned_by else None,
             'assigned_at': self.assigned_at.isoformat() if self.assigned_at else None,

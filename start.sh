@@ -1,21 +1,46 @@
 #!/bin/bash
 set -e
 
+# ─── Parse arguments ─────────────────────────────────────────────────────────
+
+MODE="prod"  # default to production
+
+usage() {
+    echo "Usage: $0 [--dev | --prod]"
+    echo ""
+    echo "  --dev   Development mode  — skips cronjob setup, builds with no cache"
+    echo "  --prod  Production mode   — installs daily MITRE data update cronjob (default)"
+    exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dev)  MODE="dev";  shift ;;
+        --prod) MODE="prod"; shift ;;
+        -h|--help) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
+    esac
+done
+
 echo "==================================="
 echo "SheetStorm - Incident Response Platform"
+echo "Mode: ${MODE^^}"
 echo "==================================="
 
-# Ensure persistent data directories exist
+# ─── Ensure persistent data directories exist ────────────────────────────────
+
 mkdir -p data/postgres data/redis
 
-# Check for .env file
+# ─── Check for .env file ─────────────────────────────────────────────────────
+
 if [ ! -f .env ]; then
     echo "Creating .env from .env.example..."
     cp .env.example .env
     echo "WARNING: Please update .env with secure values before production use!"
 fi
 
-# Generate keys if not set
+# ─── Generate keys if not set ─────────────────────────────────────────────────
+
 source .env
 
 if [ -z "$SECRET_KEY" ] || [ "$SECRET_KEY" = "changeme_generate_32_char_random_string" ]; then
@@ -48,6 +73,8 @@ if [ -z "$FERNET_KEY" ] || [ "$FERNET_KEY" = "changeme_generate_fernet_key_base6
     fi
 fi
 
+# ─── Build & start containers ────────────────────────────────────────────────
+
 echo ""
 echo "Building containers..."
 docker compose build
@@ -68,16 +95,25 @@ echo ""
 echo "Seeding initial data..."
 docker compose exec -T backend python -c "from app.seed import seed_all; seed_all()" || echo "Seeding may have already run"
 
-echo ""
-echo "Setting up daily MITRE data update cronjob..."
-CRON_CMD="0 3 * * * cd $(pwd) && ./update_mitre_data.sh"
-# Remove any existing SheetStorm MITRE cron entries, then add the new one
-( crontab -l 2>/dev/null | grep -v 'update_mitre_data.sh' ; echo "$CRON_CMD" ) | crontab -
-echo "Cronjob installed: daily at 03:00 — updates ATT&CK and D3FEND data"
+# ─── Cronjob setup (prod only) ───────────────────────────────────────────────
+
+if [ "$MODE" = "prod" ]; then
+    echo ""
+    echo "Setting up daily MITRE data update cronjob..."
+    CRON_CMD="0 3 * * * cd $(pwd) && ./update_mitre_data.sh"
+    # Remove any existing SheetStorm MITRE cron entries, then add the new one
+    ( crontab -l 2>/dev/null | grep -v 'update_mitre_data.sh' ; echo "$CRON_CMD" ) | crontab -
+    echo "Cronjob installed: daily at 03:00 — updates ATT&CK and D3FEND data"
+else
+    echo ""
+    echo "Dev mode — skipping cronjob setup"
+fi
+
+# ─── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "==================================="
-echo "SheetStorm is running!"
+echo "SheetStorm is running! (${MODE^^})"
 echo "==================================="
 echo ""
 echo "App (via proxy): http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1'):8080"

@@ -6,6 +6,7 @@ API key is required.  The frontend can search/filter client-side.
 from flask import jsonify, request
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
+from app.middleware.rbac import require_permission
 
 from app.api.v1.endpoints.kb_data_lolbas import LOLBAS_DATA, LOLBAS_CATEGORIES
 from app.api.v1.endpoints.kb_data_events import WINDOWS_EVENT_IDS, EVENT_CATEGORIES, EVENT_SEVERITIES
@@ -18,6 +19,7 @@ from app.api.v1.endpoints.kb_data_d3fend import D3FEND_TECHNIQUES, D3FEND_TACTIC
 
 @api_bp.route('/knowledge-base/lolbas', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_lolbas():
     """Return LOLBAS reference data with optional search/filter."""
     search = request.args.get('search', '').lower()
@@ -39,6 +41,7 @@ def kb_lolbas():
 
 @api_bp.route('/knowledge-base/event-ids', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_event_ids():
     """Return Windows Event ID reference data with optional search/filter."""
     search = request.args.get('search', '').lower()
@@ -63,6 +66,7 @@ def kb_event_ids():
 
 @api_bp.route('/knowledge-base/mitre-attack', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_mitre_attack():
     """Return MITRE ATT&CK enterprise techniques with optional search/filter.
 
@@ -94,6 +98,7 @@ def kb_mitre_attack():
 
 @api_bp.route('/knowledge-base/mitre-attack/tactics', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_mitre_attack_tactics():
     """Return all 14 MITRE ATT&CK Enterprise tactics."""
     return jsonify({'items': MITRE_ATTACK_TACTICS, 'total': len(MITRE_ATTACK_TACTICS)}), 200
@@ -101,6 +106,7 @@ def kb_mitre_attack_tactics():
 
 @api_bp.route('/knowledge-base/mitre-attack/form-data', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_mitre_attack_form_data():
     """Return tactic→techniques mapping for Add Event form dropdowns.
 
@@ -140,6 +146,7 @@ def kb_mitre_attack_form_data():
 
 @api_bp.route('/knowledge-base/d3fend', methods=['GET'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_d3fend():
     """Return MITRE D3FEND technique reference data."""
     search = request.args.get('search', '').lower()
@@ -159,6 +166,7 @@ def kb_d3fend():
 
 @api_bp.route('/knowledge-base/d3fend/suggest', methods=['POST'])
 @jwt_required()
+@require_permission('incidents:read')
 def kb_d3fend_suggest():
     """Given a list of MITRE ATT&CK technique IDs, suggest D3FEND countermeasures.
 
@@ -191,3 +199,101 @@ def kb_d3fend_suggest():
         'total': len(suggestions),
         'input_techniques': techniques,
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# MITRE ATT&CK Auto-Suggest — keyword/regex pattern matching
+# ---------------------------------------------------------------------------
+
+from app.services.mitre_suggest_service import suggest as mitre_suggest, get_all_patterns, save_patterns, reload_patterns
+
+
+@api_bp.route('/mitre/suggest', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:read')
+def mitre_auto_suggest():
+    """Suggest MITRE techniques for a timeline-event activity description.
+
+    Body: { "activity": "...", "limit": 5 }
+    Returns: { "suggestions": [{ "technique", "tactic", "name", "score" }] }
+    """
+    data = request.get_json() or {}
+    activity = data.get('activity', '')
+    limit = min(int(data.get('limit', 5)), 20)
+
+    suggestions = mitre_suggest(activity, limit=limit)
+    return jsonify({'suggestions': suggestions}), 200
+
+
+# ---------------------------------------------------------------------------
+# MITRE Pattern Management (CRUD)
+# ---------------------------------------------------------------------------
+
+@api_bp.route('/mitre/patterns', methods=['GET'])
+@jwt_required()
+@require_permission('incidents:read')
+def list_mitre_patterns():
+    """Return all MITRE detection patterns."""
+    return jsonify({'patterns': get_all_patterns()}), 200
+
+
+@api_bp.route('/mitre/patterns', methods=['PUT'])
+@jwt_required()
+@require_permission('admin:manage')
+def update_mitre_patterns():
+    """Replace the full pattern list.
+
+    Body: { "patterns": [ ... ] }
+    Each pattern: { technique, tactic, name, keywords[], regex[]?, weight? }
+    """
+    data = request.get_json() or {}
+    patterns_list = data.get('patterns')
+    if patterns_list is None:
+        return jsonify({'error': 'bad_request', 'message': 'patterns list required'}), 400
+
+    for p in patterns_list:
+        if not p.get('technique') or not p.get('tactic') or not p.get('name'):
+            return jsonify({'error': 'bad_request', 'message': 'Each pattern needs technique, tactic, name'}), 400
+        if not isinstance(p.get('keywords', []), list):
+            return jsonify({'error': 'bad_request', 'message': 'keywords must be a list'}), 400
+
+    save_patterns(patterns_list)
+    return jsonify({'message': 'Patterns updated', 'count': len(patterns_list)}), 200
+
+
+@api_bp.route('/mitre/patterns', methods=['POST'])
+@jwt_required()
+def add_mitre_pattern():
+    """Add a single pattern to the list.
+
+    Body: { technique, tactic, name, keywords[], regex[]?, weight? }
+    """
+    data = request.get_json() or {}
+    if not data.get('technique') or not data.get('tactic') or not data.get('name'):
+        return jsonify({'error': 'bad_request', 'message': 'technique, tactic, name required'}), 400
+
+    current = get_all_patterns()
+    current.append({
+        'technique': data['technique'],
+        'tactic': data['tactic'],
+        'name': data['name'],
+        'keywords': data.get('keywords', []),
+        'regex': data.get('regex', []),
+        'weight': float(data.get('weight', 0.8)),
+    })
+    save_patterns(current)
+    return jsonify({'message': 'Pattern added', 'count': len(current)}), 201
+
+
+@api_bp.route('/mitre/patterns/<technique_id>', methods=['DELETE'])
+@jwt_required()
+def delete_mitre_pattern(technique_id):
+    """Remove pattern(s) matching the given technique ID."""
+    current = get_all_patterns()
+    filtered = [p for p in current if p['technique'] != technique_id]
+
+    if len(filtered) == len(current):
+        return jsonify({'error': 'not_found', 'message': f'No pattern for {technique_id}'}), 404
+
+    save_patterns(filtered)
+    return jsonify({'message': f'Pattern {technique_id} removed', 'count': len(filtered)}), 200

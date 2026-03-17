@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useMemo, memo } from 'react'
+import { useEffect, useState, useCallback, useMemo, memo, useRef } from 'react'
 import {
     ReactFlow,
     Background,
@@ -700,6 +700,23 @@ function AddEventDialog({
     const [allTechniques, setAllTechniques] = useState<{ id: string; name: string }[]>([])
     const [techSearch, setTechSearch] = useState('')
 
+    // Auto-suggest state
+    const [suggestions, setSuggestions] = useState<{ technique: string; tactic: string; name: string; score: number }[]>([])
+    const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Debounced auto-suggest when activity text changes
+    const fetchSuggestions = useCallback((activity: string) => {
+        if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+        if (!activity || activity.length < 10) { setSuggestions([]); return }
+        suggestTimerRef.current = setTimeout(() => {
+            api.post<{ suggestions: typeof suggestions }>('/mitre/suggest', { activity, limit: 3 })
+                .then(data => setSuggestions(data.suggestions || []))
+                .catch(() => {})
+        }, 400)
+    }, [])
+
+    useEffect(() => { return () => { if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current) } }, [])
+
     // Fetch form data once on open
     useEffect(() => {
         if (!open || tactics.length > 0) return
@@ -795,8 +812,28 @@ function AddEventDialog({
                         <Label>Activity *</Label>
                         <Textarea
                             value={form.activity}
-                            onChange={e => setForm({ ...form, activity: e.target.value })}
+                            onChange={e => { setForm({ ...form, activity: e.target.value }); fetchSuggestions(e.target.value) }}
                         />
+                        {suggestions.length > 0 && !form.mitre_technique && (
+                            <div className="flex flex-wrap gap-1.5">
+                                <span className="text-[10px] text-muted-foreground self-center">Suggested:</span>
+                                {suggestions.map(s => (
+                                    <button
+                                        key={s.technique}
+                                        type="button"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 cursor-pointer transition-colors"
+                                        onClick={() => {
+                                            handleTechniqueSelect(s.technique)
+                                            setSuggestions([])
+                                        }}
+                                    >
+                                        <span className="font-mono">{s.technique}</span>
+                                        <span className="text-muted-foreground">{s.name}</span>
+                                        <span className="text-blue-300/60">{Math.round(s.score * 100)}%</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <div className="space-y-2">
                         <Label>Source</Label>

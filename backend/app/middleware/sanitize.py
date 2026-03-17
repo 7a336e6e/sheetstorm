@@ -1,6 +1,7 @@
 """
 Input sanitization middleware.
 Strips potentially dangerous HTML/script content from all incoming JSON request bodies.
+Enforces maximum string length to prevent abuse.
 Defense-in-depth measure alongside frontend sanitization.
 """
 import re
@@ -17,11 +18,17 @@ DATA_SCRIPT_RE = re.compile(r'data\s*:\s*text/html', re.IGNORECASE)
 # Pattern for event handlers in attributes
 EVENT_HANDLER_RE = re.compile(r'\bon\w+\s*=', re.IGNORECASE)
 
+# Maximum string length for any single field (1MB)
+MAX_STRING_LENGTH = 1_000_000
+
 
 def sanitize_string(value: str) -> str:
     """Sanitize a single string value by removing dangerous HTML content."""
     if not value:
         return value
+    # Truncate excessively long strings
+    if len(value) > MAX_STRING_LENGTH:
+        value = value[:MAX_STRING_LENGTH]
     # Remove HTML tags
     cleaned = HTML_TAG_RE.sub('', value)
     # Remove javascript: protocol
@@ -33,14 +40,16 @@ def sanitize_string(value: str) -> str:
     return cleaned.strip()
 
 
-def sanitize_value(value):
+def sanitize_value(value, depth=0):
     """Recursively sanitize values in request data."""
+    if depth > 20:
+        return None  # Prevent excessively nested payloads
     if isinstance(value, str):
         return sanitize_string(value)
     elif isinstance(value, dict):
-        return {k: sanitize_value(v) for k, v in value.items()}
+        return {k: sanitize_value(v, depth + 1) for k, v in value.items()}
     elif isinstance(value, list):
-        return [sanitize_value(item) for item in value]
+        return [sanitize_value(item, depth + 1) for item in value[:10000]]
     return value
 
 

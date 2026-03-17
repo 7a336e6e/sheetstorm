@@ -334,6 +334,41 @@ def _get_drive_credentials(user):
         return None, None
 
 
+@api_bp.route('/storage/stats', methods=['GET'])
+@jwt_required()
+def storage_stats():
+    """Return aggregate storage statistics across all artifacts."""
+    from sqlalchemy import func
+
+    user = get_current_user()
+
+    # Total and per-storage-type aggregates
+    rows = (
+        db.session.query(
+            Artifact.storage_type,
+            func.count(Artifact.id).label('count'),
+            func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
+        )
+        .filter(Artifact.organization_id == user.organization_id)
+        .group_by(Artifact.storage_type)
+        .all()
+    )
+
+    breakdown = {}
+    total_size = 0
+    total_count = 0
+    for storage_type, count, size in rows:
+        breakdown[storage_type or 'local'] = {'count': count, 'size': int(size)}
+        total_size += int(size)
+        total_count += count
+
+    return jsonify({
+        'total_size': total_size,
+        'artifact_count': total_count,
+        'breakdown': breakdown,
+    }), 200
+
+
 def _get_drive_access_token(user):
     """Get a valid Google Drive access token for the user's org.
 

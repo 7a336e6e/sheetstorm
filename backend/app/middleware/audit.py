@@ -15,6 +15,37 @@ _SENSITIVE_KEYS = re.compile(
     re.IGNORECASE,
 )
 
+# Event types worth broadcasting to the activity feed
+_BROADCAST_EVENT_TYPES = {
+    'data_modification', 'data_access', 'admin_action', 'security_event',
+}
+
+
+def _broadcast_activity(log_entry):
+    """Emit a WebSocket event for the activity feed."""
+    if not log_entry or not log_entry.organization_id:
+        return
+    if log_entry.event_type not in _BROADCAST_EVENT_TYPES:
+        return
+    try:
+        from app import socketio
+        payload = {
+            'id': str(log_entry.id),
+            'event_type': log_entry.event_type,
+            'action': log_entry.action,
+            'resource_type': log_entry.resource_type,
+            'resource_id': str(log_entry.resource_id) if log_entry.resource_id else None,
+            'incident_id': str(log_entry.incident_id) if log_entry.incident_id else None,
+            'user_email': log_entry.user_email,
+            'user_id': str(log_entry.user_id) if log_entry.user_id else None,
+            'created_at': log_entry.created_at.isoformat() if log_entry.created_at else None,
+            'details': log_entry.details,
+        }
+        room = f'org_{log_entry.organization_id}'
+        socketio.emit('activity:new', payload, room=room)
+    except Exception:
+        logger.debug('Activity broadcast skipped', exc_info=True)
+
 
 def _parse_user_agent(ua_string: str) -> dict:
     """Extract browser, OS, and device type from a User-Agent string."""
@@ -196,9 +227,8 @@ def audit_log(event_type, action, resource_type=None):
                 )
                 db.session.add(log_entry)
                 db.session.commit()
+                _broadcast_activity(log_entry)
             except Exception:
-                # Don't fail the request if audit logging fails
-                db.session.rollback()
                 logger.exception('Audit logging error')
 
             return result
@@ -246,6 +276,7 @@ def log_audit_event(
         )
         db.session.add(log_entry)
         db.session.commit()
+        _broadcast_activity(log_entry)
         return log_entry
     except Exception:
         db.session.rollback()

@@ -48,6 +48,7 @@ docker-compose.override.yml
 
 # Persistent data (database, redis)
 data/
+!backend/app/data/
 
 # Agent related stuff
 tasks.md

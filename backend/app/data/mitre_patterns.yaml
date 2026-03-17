@@ -1,0 +1,474 @@
+# MITRE ATT&CK Auto-Suggest Detection Patterns
+# Each entry maps keyword/regex patterns to a technique ID + tactic.
+# The auto-suggest service scores activity descriptions against these patterns.
+#
+# Structure:
+#   - technique: T-ID (e.g. T1059)
+#     tactic: tactic-slug (e.g. execution)
+#     name: Human-readable technique name
+#     keywords: list of case-insensitive substrings
+#     regex: list of Python regex patterns (optional)
+#     weight: base confidence score 0.0-1.0 (default 0.8)
+
+patterns:
+
+  # ── Reconnaissance ──────────────────────────────────────────────
+  - technique: T1595
+    tactic: reconnaissance
+    name: Active Scanning
+    keywords: [port scan, nmap, masscan, network scan, vulnerability scan, service enumeration, host discovery]
+    weight: 0.85
+
+  - technique: T1592
+    tactic: reconnaissance
+    name: Gather Victim Host Information
+    keywords: [host enumeration, os fingerprint, banner grab, service detection]
+    weight: 0.75
+
+  - technique: T1589
+    tactic: reconnaissance
+    name: Gather Victim Identity Information
+    keywords: [credential harvest, email harvest, employee lookup, linkedin scraping, osint]
+    weight: 0.75
+
+  - technique: T1598
+    tactic: reconnaissance
+    name: Phishing for Information
+    keywords: [pretexting, social engineering recon, spear phishing recon, information gathering email]
+    weight: 0.75
+
+  # ── Initial Access ──────────────────────────────────────────────
+  - technique: T1189
+    tactic: initial-access
+    name: Drive-by Compromise
+    keywords: [drive-by, watering hole, malicious redirect, browser exploit, exploit kit]
+    weight: 0.85
+
+  - technique: T1190
+    tactic: initial-access
+    name: Exploit Public-Facing Application
+    keywords: [web exploit, sql injection, rce, remote code execution, cve exploit, web shell upload, application exploit]
+    regex: ['CVE-\d{4}-\d+']
+    weight: 0.90
+
+  - technique: T1133
+    tactic: initial-access
+    name: External Remote Services
+    keywords: [vpn compromise, rdp brute, remote desktop, citrix, external rdp, ssh brute force]
+    weight: 0.80
+
+  - technique: T1566
+    tactic: initial-access
+    name: Phishing
+    keywords: [phishing, spear phishing, malicious attachment, malicious link, phish email, lure document]
+    weight: 0.90
+
+  - technique: T1195
+    tactic: initial-access
+    name: Supply Chain Compromise
+    keywords: [supply chain, trojanized update, compromised software, software supply chain]
+    weight: 0.80
+
+  - technique: T1078
+    tactic: initial-access
+    name: Valid Accounts
+    keywords: [stolen credentials, compromised account, credential stuffing, valid account, account takeover, password reuse]
+    weight: 0.80
+
+  # ── Execution ───────────────────────────────────────────────────
+  - technique: T1059
+    tactic: execution
+    name: Command and Scripting Interpreter
+    keywords: [powershell, cmd.exe, bash, python script, vbscript, javascript, wscript, cscript, command line]
+    regex: ['powershell\s*-e', 'cmd\s*/c', 'bash\s*-c']
+    weight: 0.90
+
+  - technique: T1059.001
+    tactic: execution
+    name: "PowerShell"
+    keywords: [powershell, invoke-expression, invoke-command, iex, encoded command, -encodedcommand]
+    regex: ['powershell.*-enc', 'IEX\s*\(', 'Invoke-']
+    weight: 0.90
+
+  - technique: T1203
+    tactic: execution
+    name: Exploitation for Client Execution
+    keywords: [client exploit, office exploit, pdf exploit, browser exploit, macro execution]
+    weight: 0.80
+
+  - technique: T1204
+    tactic: execution
+    name: User Execution
+    keywords: [user clicked, opened attachment, macro enabled, user ran, double-clicked, executed file]
+    weight: 0.80
+
+  - technique: T1047
+    tactic: execution
+    name: Windows Management Instrumentation
+    keywords: [wmi, wmic, wbemtest, win32_process, wmiprvse]
+    regex: ['wmic\s+', 'Win32_Process']
+    weight: 0.85
+
+  - technique: T1053
+    tactic: execution
+    name: Scheduled Task/Job
+    keywords: [scheduled task, schtasks, crontab, cron job, at job, task scheduler]
+    regex: ['schtasks\s*/create', 'crontab\s*-']
+    weight: 0.85
+
+  # ── Persistence ─────────────────────────────────────────────────
+  - technique: T1547
+    tactic: persistence
+    name: Boot or Logon Autostart Execution
+    keywords: [autostart, run key, startup folder, registry run, boot persistence, logon script]
+    regex: ['HKLM\\\\.*\\\\Run', 'HKCU\\\\.*\\\\Run']
+    weight: 0.85
+
+  - technique: T1547.001
+    tactic: persistence
+    name: Registry Run Keys / Startup Folder
+    keywords: [registry run key, startup folder, autorun, run key persistence]
+    regex: ['CurrentVersion\\\\Run']
+    weight: 0.90
+
+  - technique: T1136
+    tactic: persistence
+    name: Create Account
+    keywords: [new account, account created, net user add, useradd, created user, rogue account]
+    regex: ['net\s+user\s+\S+\s+/add', 'useradd\s+']
+    weight: 0.85
+
+  - technique: T1543
+    tactic: persistence
+    name: Create or Modify System Process
+    keywords: [new service, service created, systemd service, sc create, service install]
+    regex: ['sc\s+create', 'New-Service', 'systemctl\s+enable']
+    weight: 0.85
+
+  - technique: T1505
+    tactic: persistence
+    name: Server Software Component
+    keywords: [web shell, backdoor, iis module, apache module, server implant]
+    weight: 0.85
+
+  - technique: T1098
+    tactic: persistence
+    name: Account Manipulation
+    keywords: [password reset, group membership, added to admin, permission change, account modification]
+    weight: 0.75
+
+  # ── Privilege Escalation ────────────────────────────────────────
+  - technique: T1068
+    tactic: privilege-escalation
+    name: Exploitation for Privilege Escalation
+    keywords: [privilege escalation, local exploit, kernel exploit, priv esc, elevation of privilege]
+    weight: 0.85
+
+  - technique: T1055
+    tactic: privilege-escalation
+    name: Process Injection
+    keywords: [process injection, dll injection, process hollowing, reflective injection, shellcode inject]
+    weight: 0.90
+
+  - technique: T1548
+    tactic: privilege-escalation
+    name: Abuse Elevation Control Mechanism
+    keywords: [uac bypass, sudo abuse, elevation bypass, setuid, suid]
+    weight: 0.85
+
+  - technique: T1134
+    tactic: privilege-escalation
+    name: Access Token Manipulation
+    keywords: [token manipulation, token impersonation, token theft, impersonate token, stolen token]
+    weight: 0.85
+
+  # ── Defense Evasion ─────────────────────────────────────────────
+  - technique: T1070
+    tactic: defense-evasion
+    name: Indicator Removal
+    keywords: [log cleared, event log, cleared logs, log deletion, indicator removal, timestomp, usnjrnl]
+    regex: ['wevtutil\s+cl', 'Clear-EventLog']
+    weight: 0.90
+
+  - technique: T1036
+    tactic: defense-evasion
+    name: Masquerading
+    keywords: [masquerading, renamed binary, fake process, process masquerade, disguised as]
+    weight: 0.80
+
+  - technique: T1027
+    tactic: defense-evasion
+    name: Obfuscated Files or Information
+    keywords: [obfuscated, encoded payload, base64 encoded, packed binary, encrypted payload, obfuscation]
+    regex: ['[A-Za-z0-9+/]{40,}={0,2}']
+    weight: 0.80
+
+  - technique: T1562
+    tactic: defense-evasion
+    name: Impair Defenses
+    keywords: [disabled antivirus, tamper protection, disabled edr, killed defender, firewall disabled, security disabled]
+    weight: 0.90
+
+  - technique: T1140
+    tactic: defense-evasion
+    name: Deobfuscate/Decode Files
+    keywords: [decoded, deobfuscated, decrypted payload, certutil decode, base64 decode]
+    regex: ['certutil.*-decode', 'base64\s*-d']
+    weight: 0.80
+
+  - technique: T1218
+    tactic: defense-evasion
+    name: System Binary Proxy Execution
+    keywords: [lolbin, mshta, rundll32, regsvr32, certutil, msbuild, cmstp, wmic proxy]
+    regex: ['mshta\s+', 'rundll32\s+', 'regsvr32\s+/s', 'certutil\s+-urlcache']
+    weight: 0.90
+
+  - technique: T1112
+    tactic: defense-evasion
+    name: Modify Registry
+    keywords: [registry modified, reg add, registry change, registry key, registry value]
+    regex: ['reg\s+add', 'Set-ItemProperty.*Registry']
+    weight: 0.80
+
+  # ── Credential Access ──────────────────────────────────────────
+  - technique: T1003
+    tactic: credential-access
+    name: OS Credential Dumping
+    keywords: [mimikatz, credential dump, lsass, hashdump, ntds.dit, sam dump, secretsdump, dcsync]
+    regex: ['mimikatz', 'sekurlsa', 'lsass\\.exe', 'ntds\\.dit']
+    weight: 0.95
+
+  - technique: T1110
+    tactic: credential-access
+    name: Brute Force
+    keywords: [brute force, password spray, credential spray, login attempts, failed logins, password guessing]
+    weight: 0.85
+
+  - technique: T1555
+    tactic: credential-access
+    name: Credentials from Password Stores
+    keywords: [password store, keychain, credential manager, browser passwords, saved passwords, vaultcmd]
+    weight: 0.80
+
+  - technique: T1558
+    tactic: credential-access
+    name: Steal or Forge Kerberos Tickets
+    keywords: [kerberoast, golden ticket, silver ticket, krbtgt, ticket forgery, as-rep roast]
+    weight: 0.90
+
+  - technique: T1552
+    tactic: credential-access
+    name: Unsecured Credentials
+    keywords: [plaintext password, credentials in file, password in script, hardcoded credentials, exposed credentials]
+    weight: 0.75
+
+  # ── Discovery ───────────────────────────────────────────────────
+  - technique: T1087
+    tactic: discovery
+    name: Account Discovery
+    keywords: [net user, whoami, account enumeration, user enumeration, domain users]
+    regex: ['net\s+user', 'net\s+localgroup', 'Get-ADUser']
+    weight: 0.80
+
+  - technique: T1082
+    tactic: discovery
+    name: System Information Discovery
+    keywords: [systeminfo, uname, hostname, os version, system enumeration, sysinfo]
+    regex: ['systeminfo', 'uname\s+-a']
+    weight: 0.75
+
+  - technique: T1083
+    tactic: discovery
+    name: File and Directory Discovery
+    keywords: [file enumeration, directory listing, dir /s, find files, tree, file search]
+    regex: ['dir\s+/s', 'find\s+/']
+    weight: 0.70
+
+  - technique: T1046
+    tactic: discovery
+    name: Network Service Discovery
+    keywords: [internal port scan, network scan, service scan, internal recon, lateral scan]
+    weight: 0.80
+
+  - technique: T1018
+    tactic: discovery
+    name: Remote System Discovery
+    keywords: [ping sweep, net view, host discovery, arp scan, nbtscan]
+    regex: ['net\s+view', 'ping\s+-c.*\d{1,3}\.\d{1,3}']
+    weight: 0.80
+
+  - technique: T1016
+    tactic: discovery
+    name: System Network Configuration Discovery
+    keywords: [ipconfig, ifconfig, route print, network config, arp -a, netstat]
+    regex: ['ipconfig', 'ifconfig', 'route\s+print', 'netstat\s+-']
+    weight: 0.75
+
+  - technique: T1049
+    tactic: discovery
+    name: System Network Connections Discovery
+    keywords: [netstat, network connections, established connections, active connections, listening ports]
+    regex: ['netstat\s+-an']
+    weight: 0.75
+
+  - technique: T1069
+    tactic: discovery
+    name: Permission Groups Discovery
+    keywords: [group enumeration, domain admins, local admins, net group, admin group]
+    regex: ['net\s+group', 'net\s+localgroup\s+admin']
+    weight: 0.80
+
+  # ── Lateral Movement ────────────────────────────────────────────
+  - technique: T1021
+    tactic: lateral-movement
+    name: Remote Services
+    keywords: [rdp lateral, ssh lateral, psexec, remote login, wmi remote, winrm, lateral rdp, remote execution]
+    regex: ['PsExec', 'Enter-PSSession', 'winrs\s+']
+    weight: 0.90
+
+  - technique: T1021.002
+    tactic: lateral-movement
+    name: SMB/Windows Admin Shares
+    keywords: [admin share, ipc$, c$, admin$, smb lateral, windows share, net use]
+    regex: ['\\\\\\\\.*\\\\(C|ADMIN|IPC)\\$', 'net\s+use\s+\\\\\\\\']
+    weight: 0.90
+
+  - technique: T1570
+    tactic: lateral-movement
+    name: Lateral Tool Transfer
+    keywords: [tool transfer, copied tool, lateral copy, file staged, binary copied to]
+    weight: 0.75
+
+  - technique: T1210
+    tactic: lateral-movement
+    name: Exploitation of Remote Services
+    keywords: [remote exploit, smb exploit, eternalblue, zerologon, remote service exploit]
+    weight: 0.85
+
+  # ── Collection ──────────────────────────────────────────────────
+  - technique: T1560
+    tactic: collection
+    name: Archive Collected Data
+    keywords: [archive, zip, rar, 7zip, compressed data, data archive, tar, gzip]
+    regex: ['7z\s+a\s+', 'rar\s+a\s+', 'tar\s+-czf']
+    weight: 0.75
+
+  - technique: T1005
+    tactic: collection
+    name: Data from Local System
+    keywords: [local data collection, file collection, document harvest, local file access, sensitive files]
+    weight: 0.70
+
+  - technique: T1074
+    tactic: collection
+    name: Data Staged
+    keywords: [data staged, staging directory, staging folder, collected to folder, staged for exfil]
+    weight: 0.75
+
+  - technique: T1114
+    tactic: collection
+    name: Email Collection
+    keywords: [email harvest, mailbox access, pst file, ost file, exchange harvest, email dump]
+    weight: 0.80
+
+  # ── Command and Control ────────────────────────────────────────
+  - technique: T1071
+    tactic: command-and-control
+    name: Application Layer Protocol
+    keywords: [http c2, https beacon, dns c2, c2 channel, command and control, c2 traffic]
+    weight: 0.85
+
+  - technique: T1105
+    tactic: command-and-control
+    name: Ingress Tool Transfer
+    keywords: [download tool, wget, curl download, bitsadmin, certutil download, tool download]
+    regex: ['wget\s+http', 'curl\s+-[oO]', 'bitsadmin.*transfer', 'certutil.*-urlcache']
+    weight: 0.85
+
+  - technique: T1219
+    tactic: command-and-control
+    name: Remote Access Software
+    keywords: [teamviewer, anydesk, remote access tool, rat, cobalt strike, beacon, reverse shell]
+    weight: 0.90
+
+  - technique: T1572
+    tactic: command-and-control
+    name: Protocol Tunneling
+    keywords: [tunnel, ssh tunnel, dns tunnel, icmp tunnel, ngrok, port forwarding, reverse proxy]
+    weight: 0.80
+
+  - technique: T1573
+    tactic: command-and-control
+    name: Encrypted Channel
+    keywords: [encrypted c2, ssl c2, tls c2, encrypted communication, encrypted tunnel]
+    weight: 0.75
+
+  # ── Exfiltration ────────────────────────────────────────────────
+  - technique: T1041
+    tactic: exfiltration
+    name: Exfiltration Over C2 Channel
+    keywords: [data exfiltration, exfil c2, exfiltrated, data theft over c2, c2 exfil]
+    weight: 0.85
+
+  - technique: T1048
+    tactic: exfiltration
+    name: Exfiltration Over Alternative Protocol
+    keywords: [dns exfil, ftp exfil, icmp exfil, exfil over dns, exfil over ftp]
+    weight: 0.85
+
+  - technique: T1567
+    tactic: exfiltration
+    name: Exfiltration Over Web Service
+    keywords: [cloud upload, dropbox exfil, google drive exfil, mega upload, cloud exfiltration, pastebin]
+    weight: 0.85
+
+  - technique: T1029
+    tactic: exfiltration
+    name: Scheduled Transfer
+    keywords: [scheduled exfil, timed transfer, periodic upload, batch exfil]
+    weight: 0.75
+
+  # ── Impact ──────────────────────────────────────────────────────
+  - technique: T1486
+    tactic: impact
+    name: Data Encrypted for Impact
+    keywords: [ransomware, encrypted files, ransom note, file encryption, crypto locker, data encrypted]
+    weight: 0.95
+
+  - technique: T1485
+    tactic: impact
+    name: Data Destruction
+    keywords: [data destruction, file deletion, wiped, destroyed data, mass deletion, shred]
+    weight: 0.90
+
+  - technique: T1490
+    tactic: impact
+    name: Inhibit System Recovery
+    keywords: [deleted shadow copies, vssadmin delete, bcdedit, recovery disabled, backup deleted]
+    regex: ['vssadmin.*delete\s+shadows', 'bcdedit.*recoveryenabled.*no']
+    weight: 0.90
+
+  - technique: T1489
+    tactic: impact
+    name: Service Stop
+    keywords: [service stopped, killed process, terminated service, service disabled, net stop]
+    regex: ['net\s+stop\s+', 'sc\s+stop\s+', 'Stop-Service']
+    weight: 0.80
+
+  - technique: T1499
+    tactic: impact
+    name: Endpoint Denial of Service
+    keywords: [dos, denial of service, resource exhaustion, fork bomb, system crash]
+    weight: 0.80
+
+  - technique: T1531
+    tactic: impact
+    name: Account Access Removal
+    keywords: [account locked, password changed, account disabled, locked out, access removed]
+    weight: 0.75
+
+  - technique: T1561
+    tactic: impact
+    name: Disk Wipe
+    keywords: [disk wipe, mbr overwrite, wiper malware, boot record, disk destroy]
+    weight: 0.90

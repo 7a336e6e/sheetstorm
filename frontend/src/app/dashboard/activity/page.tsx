@@ -12,10 +12,11 @@ import {
     ChevronDown, ChevronRight, Globe, Monitor, Shield, Database,
     LogIn, LogOut, Settings, Eye, Filter, ChevronLeft, ChevronsLeft,
     ChevronsRight, Search, X, Smartphone, Laptop, Bot, Terminal,
-    MapPin, Gauge, Link2, FileText, Hash, ArrowRight, Server
+    MapPin, Gauge, Link2, FileText, Hash, ArrowRight, Server, Radio
 } from 'lucide-react'
 import { auditLogs } from '@/lib/api'
 import { AuditLog } from '@/types'
+import { useSocketEvent } from '@/hooks/use-socket'
 
 // ── Display helpers ────────────────────────────────────────────────
 
@@ -540,6 +541,7 @@ export default function ActivityPage() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [expandedId, setExpandedId] = useState<string | null>(null)
+    const [liveCount, setLiveCount] = useState(0)
 
     // Pagination
     const [page, setPage] = useState(1)
@@ -550,6 +552,19 @@ export default function ActivityPage() {
     const [filterEventType, setFilterEventType] = useState('')
     const [filterAction, setFilterAction] = useState('')
     const [showFilters, setShowFilters] = useState(false)
+
+    // Real-time activity via WebSocket
+    useSocketEvent<Partial<AuditLog>>('activity:new', useCallback((data) => {
+        if (page === 1 && !filterEventType && !filterAction) {
+            setActivities(prev => {
+                const exists = prev.some(a => a.id === data.id)
+                if (exists) return prev
+                return [data as AuditLog, ...prev].slice(0, PER_PAGE)
+            })
+            setTotal(prev => prev + 1)
+            setLiveCount(prev => prev + 1)
+        }
+    }, [page, filterEventType, filterAction]))
 
     const fetchData = useCallback(async () => {
         try {
@@ -569,6 +584,7 @@ export default function ActivityPage() {
             setTotalPages(logsResponse.pages)
             setTotal(logsResponse.total)
             setStats(statsResponse)
+            setLiveCount(0)
         } catch (err: any) {
             setError(err.message || 'Failed to load activity data')
         } finally {
@@ -617,9 +633,17 @@ export default function ActivityPage() {
     return (
         <div className="p-6 space-y-6">
             {/* Header */}
-            <div>
-                <h1 className="text-2xl font-semibold">Activity</h1>
-                <p className="text-sm text-muted-foreground mt-1">Track all system activity and audit logs</p>
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-semibold">Activity</h1>
+                    <p className="text-sm text-muted-foreground mt-1">Track all system activity and audit logs</p>
+                </div>
+                {liveCount > 0 && (
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400 px-2.5 py-1 rounded-full">
+                        <Radio className="h-3 w-3 animate-pulse" />
+                        {liveCount} new
+                    </div>
+                )}
             </div>
 
             {/* Stats */}

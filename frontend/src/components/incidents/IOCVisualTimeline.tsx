@@ -25,7 +25,7 @@ import { formatDateTime } from '@/lib/utils'
 import api from '@/lib/api'
 import type { TimelineEvent, CompromisedHost } from '@/types'
 import {
-    Clock, Server, ChevronDown, ChevronUp, Plus,
+    Clock, Server, ChevronDown, ChevronUp, Plus, Trash2,
     Tag, Eye, Star,
 } from 'lucide-react'
 
@@ -75,9 +75,9 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
         timestamp: '',
         activity: '',
         host_id: '',
-        mitre_tactic: '',
-        mitre_technique: '',
+        mitre_mappings: [] as { tactic: string; technique: string; name: string }[],
     })
+    const [mappingDraft, setMappingDraft] = useState({ tactic: '', technique: '' })
 
     // MITRE ATT&CK form data
     const [tactics, setTactics] = useState<{ id: string; name: string; slug: string }[]>([])
@@ -111,11 +111,11 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
 
     // Techniques available for the selected tactic (or all if none selected)
     const availableTechniques = useMemo(() => {
-        if (form.mitre_tactic && techByTactic[form.mitre_tactic]) {
-            return techByTactic[form.mitre_tactic]
+        if (mappingDraft.tactic && techByTactic[mappingDraft.tactic]) {
+            return techByTactic[mappingDraft.tactic]
         }
         return allTechniques
-    }, [form.mitre_tactic, techByTactic, allTechniques])
+    }, [mappingDraft.tactic, techByTactic, allTechniques])
 
     // Filtered techniques based on search input
     const filteredTechniques = useMemo(() => {
@@ -129,11 +129,10 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
     // Handle tactic change — clear technique if it doesn't belong
     const handleTacticChange = (slug: string) => {
         const techs = techByTactic[slug] || []
-        const currentTechInNewTactic = techs.some(t => t.id === form.mitre_technique)
-        setForm({
-            ...form,
-            mitre_tactic: slug,
-            mitre_technique: currentTechInNewTactic ? form.mitre_technique : '',
+        const currentTechInNewTactic = techs.some(t => t.id === mappingDraft.technique)
+        setMappingDraft({
+            tactic: slug,
+            technique: currentTechInNewTactic ? mappingDraft.technique : '',
         })
         setTechSearch('')
     }
@@ -141,10 +140,9 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
     // Handle technique selection — auto-select tactic
     const handleTechniqueSelect = (techId: string) => {
         const tacticSlug = techToTactic[techId]
-        setForm({
-            ...form,
-            mitre_technique: techId,
-            mitre_tactic: tacticSlug || form.mitre_tactic,
+        setMappingDraft({
+            technique: techId,
+            tactic: tacticSlug || mappingDraft.tactic,
         })
         setTechSearch('')
     }
@@ -153,10 +151,27 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
     const handleTechniqueInput = (value: string) => {
         const upper = value.toUpperCase().trim()
         setTechSearch(value)
+        setMappingDraft(prev => ({
+            technique: upper,
+            tactic: techToTactic[upper] || prev.tactic,
+        }))
+    }
+
+    const handleAddMapping = () => {
+        if (!mappingDraft.tactic && !mappingDraft.technique) return
+        const techName = allTechniques.find(t => t.id === mappingDraft.technique)?.name || ''
         setForm(prev => ({
             ...prev,
-            mitre_technique: upper,
-            mitre_tactic: techToTactic[upper] || prev.mitre_tactic,
+            mitre_mappings: [...prev.mitre_mappings, { tactic: mappingDraft.tactic, technique: mappingDraft.technique, name: techName }],
+        }))
+        setMappingDraft({ tactic: '', technique: '' })
+        setTechSearch('')
+    }
+
+    const handleRemoveMapping = (idx: number) => {
+        setForm(prev => ({
+            ...prev,
+            mitre_mappings: prev.mitre_mappings.filter((_, i) => i !== idx),
         }))
     }
 
@@ -198,11 +213,12 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                 timestamp: form.timestamp,
                 activity: form.activity,
                 host_id: form.host_id || null,
-                mitre_tactic: form.mitre_tactic || null,
-                mitre_technique: form.mitre_technique || null,
+                mitre_mappings: form.mitre_mappings.length > 0 ? form.mitre_mappings : undefined,
             })
             setShowAddModal(false)
-            setForm({ timestamp: '', activity: '', host_id: '', mitre_tactic: '', mitre_technique: '' })
+            setForm({ timestamp: '', activity: '', host_id: '', mitre_mappings: [] })
+            setMappingDraft({ tactic: '', technique: '' })
+            setTechSearch('')
             loadData()
         } catch (error) {
             console.error('Failed to add event:', error)
@@ -302,17 +318,14 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                                 </span>
                                             )}
 
-                                            {event.mitre_tactic && (
-                                                <Badge variant="outline" className={`shrink-0 text-[10px] px-1.5 py-0 border-black/10 dark:border-white/10 ${getTacticColor(event.mitre_tactic)}`}>
-                                                    {event.mitre_tactic}
-                                                </Badge>
-                                            )}
-
-                                            {event.mitre_technique && (
-                                                <span className="shrink-0 text-[10px] font-mono text-muted-foreground/70">
-                                                    {event.mitre_technique}
+                                            {(event.mitre_mappings?.length ? event.mitre_mappings : (event.mitre_tactic ? [{ tactic: event.mitre_tactic, technique: event.mitre_technique }] : [])).map((m, mi) => (
+                                                <span key={mi} className="shrink-0 flex items-center gap-1">
+                                                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border-black/10 dark:border-white/10 ${getTacticColor(m.tactic || '')}`}>
+                                                        {m.tactic}
+                                                    </Badge>
+                                                    {m.technique && <span className="text-[10px] font-mono text-muted-foreground/70">{m.technique}</span>}
                                                 </span>
-                                            )}
+                                            ))}
 
                                             {isOpen
                                                 ? <ChevronUp className="h-3 w-3 shrink-0 text-muted-foreground/50" />
@@ -328,12 +341,9 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                                 {event.host && (
                                                     <span><strong className="text-foreground/70">Host:</strong> {event.host.hostname} {event.host.ip_address && `(${event.host.ip_address})`}</span>
                                                 )}
-                                                {event.mitre_tactic && (
-                                                    <span><strong className="text-foreground/70">Tactic:</strong> {event.mitre_tactic}</span>
-                                                )}
-                                                {event.mitre_technique && (
-                                                    <span><strong className="text-foreground/70">Technique:</strong> {event.mitre_technique}</span>
-                                                )}
+                                                {(event.mitre_mappings?.length ? event.mitre_mappings : (event.mitre_tactic ? [{ tactic: event.mitre_tactic, technique: event.mitre_technique }] : [])).map((m, mi) => (
+                                                    <span key={mi}><strong className="text-foreground/70">{m.tactic}:</strong> {m.technique || '—'}</span>
+                                                ))}
                                                 {event.source && (
                                                     <span><strong className="text-foreground/70">Source:</strong> {event.source}</span>
                                                 )}
@@ -390,44 +400,68 @@ export function IOCVisualTimeline({ incidentId }: IOCVisualTimelineProps) {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>MITRE Tactic</Label>
-                                <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
-                                    <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
-                                    <SelectContent side="top">
-                                        {tactics.map(t => (
-                                            <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Technique ID</Label>
-                                <div className="relative">
-                                    <Input
-                                        value={techSearch || form.mitre_technique}
-                                        onChange={e => handleTechniqueInput(e.target.value)}
-                                        placeholder="Search T1059 or name..."
-                                        onFocus={() => setTechSearch(form.mitre_technique)}
-                                        onBlur={() => setTimeout(() => setTechSearch(''), 200)}
-                                    />
-                                    {techSearch && filteredTechniques.length > 0 && (
-                                        <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
-                                            {filteredTechniques.map(t => (
-                                                <button
-                                                    key={t.id}
-                                                    type="button"
-                                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
-                                                    onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
-                                                >
-                                                    <span className="font-mono text-muted-foreground">{t.id}</span>
-                                                    <span className="truncate">{t.name}</span>
-                                                </button>
-                                            ))}
+                        {/* MITRE ATT&CK Mappings */}
+                        <div className="space-y-3">
+                            <Label>MITRE ATT&CK Mappings</Label>
+                            <p className="text-xs text-muted-foreground">Leave empty for auto-suggest.</p>
+
+                            {form.mitre_mappings.length > 0 && (
+                                <div className="space-y-1.5">
+                                    {form.mitre_mappings.map((m, i) => (
+                                        <div key={i} className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                                            <Badge variant="outline" className={`text-[10px] ${getTacticColor(m.tactic)}`}>{m.tactic}</Badge>
+                                            <span className="text-xs font-mono text-muted-foreground">{m.technique}</span>
+                                            {m.name && <span className="text-xs text-muted-foreground truncate">— {m.name}</span>}
+                                            <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 w-6 p-0 text-destructive" onClick={() => handleRemoveMapping(i)}>
+                                                <Trash2 className="h-3 w-3" />
+                                            </Button>
                                         </div>
-                                    )}
+                                    ))}
                                 </div>
+                            )}
+
+                            <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Tactic</Label>
+                                    <Select value={mappingDraft.tactic} onValueChange={handleTacticChange}>
+                                        <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
+                                        <SelectContent side="top">
+                                            {tactics.map(t => (
+                                                <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Technique</Label>
+                                    <div className="relative">
+                                        <Input
+                                            value={techSearch || mappingDraft.technique}
+                                            onChange={e => handleTechniqueInput(e.target.value)}
+                                            placeholder="Search T1059 or name..."
+                                            onFocus={() => setTechSearch(mappingDraft.technique)}
+                                            onBlur={() => setTimeout(() => setTechSearch(''), 200)}
+                                        />
+                                        {techSearch && filteredTechniques.length > 0 && (
+                                            <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                                {filteredTechniques.map(t => (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                                                        onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
+                                                    >
+                                                        <span className="font-mono text-muted-foreground">{t.id}</span>
+                                                        <span className="truncate">{t.name}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <Button type="button" variant="outline" size="sm" className="h-9" onClick={handleAddMapping} disabled={!mappingDraft.tactic && !mappingDraft.technique}>
+                                    <Plus className="h-3.5 w-3.5" />
+                                </Button>
                             </div>
                         </div>
                     </DialogBody>

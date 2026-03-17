@@ -10,6 +10,21 @@ from sheetstorm_mcp.server import mcp, get_client
 from sheetstorm_mcp.client import SheetStormAPIError
 
 
+def _format_mitre_label(e: dict, prefix: str = "", existing_prefix: str = "") -> str:
+    """Build a MITRE label string from an event's mitre_mappings or legacy fields."""
+    mappings = e.get("mitre_mappings") or []
+    if mappings:
+        labels = []
+        for m in mappings:
+            labels.append(f"{m.get('tactic', '?')}/{m.get('technique', '?')}")
+        pfx = existing_prefix or prefix
+        return f" {pfx}[{', '.join(labels)}]" if labels else ""
+    if e.get("mitre_tactic"):
+        pfx = existing_prefix or prefix
+        return f" {pfx}[{e['mitre_tactic']}/{e.get('mitre_technique', '?')}]"
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Analyze Incident
 # ---------------------------------------------------------------------------
@@ -96,9 +111,7 @@ async def analyze_incident(incident_id: str) -> str:
     if timeline_items:
         parts.append(f"\n## Timeline ({len(timeline_items)} events)")
         for e in timeline_items[:50]:
-            mitre = ""
-            if e.get("mitre_tactic"):
-                mitre = f" [{e['mitre_tactic']}/{e.get('mitre_technique', '?')}]"
+            mitre = _format_mitre_label(e)
             parts.append(f"- [{e.get('timestamp', '?')}] {e.get('activity', '?')}{mitre}")
 
     # IOCs
@@ -178,9 +191,7 @@ async def generate_timeline_summary(incident_id: str) -> str:
     if events:
         parts.append(f"## Timeline ({len(events)} events)\n")
         for e in events:
-            mitre = ""
-            if e.get("mitre_tactic"):
-                mitre = f" | MITRE: {e['mitre_tactic']}/{e.get('mitre_technique', '?')}"
+            mitre = _format_mitre_label(e, prefix="| MITRE: ")
             parts.append(
                 f"- **{e.get('timestamp', '?')}** "
                 f"{e.get('activity', '?')}{mitre}"
@@ -239,9 +250,7 @@ async def suggest_mitre_mapping(incident_id: str) -> str:
     if events:
         parts.append("## Timeline Events")
         for e in events[:40]:
-            existing = ""
-            if e.get("mitre_tactic"):
-                existing = f" [EXISTING: {e['mitre_tactic']}/{e.get('mitre_technique', '?')}]"
+            existing = _format_mitre_label(e, existing_prefix="EXISTING: ")
             parts.append(f"- {e.get('activity', '?')}{existing}")
 
     for label, items in ioc_data.items():
@@ -507,7 +516,7 @@ async def full_ir_report(incident_id: str) -> str:
     if timeline:
         parts.append(f"\n## Timeline ({len(timeline)} events)")
         for e in timeline[:80]:
-            mitre = f" [{e.get('mitre_tactic', '')}/{e.get('mitre_technique', '')}]" if e.get('mitre_tactic') else ""
+            mitre = _format_mitre_label(e)
             src = f" (source: {e['source']})" if e.get('source') else ""
             host = f" @{e['hostname']}" if e.get('hostname') else ""
             parts.append(f"- [{e.get('timestamp', '?')}]{host} {e.get('activity', '?')}{mitre}{src}")

@@ -80,6 +80,13 @@ export interface Incident {
   }
 }
 
+export interface MitreMapping {
+  tactic: string
+  technique: string
+  name?: string
+  score?: number
+}
+
 export interface TimelineEvent {
   id: string
   incident_id: string
@@ -89,6 +96,7 @@ export interface TimelineEvent {
   host?: CompromisedHost
   activity: string
   source?: string
+  mitre_mappings?: MitreMapping[]
   mitre_tactic?: string
   mitre_technique?: string
   kill_chain_phase?: string
@@ -564,6 +572,7 @@ export interface D3FENDTechnique {
   mitre_attack_mappings: string[]
   examples: string[]
   matched_techniques?: string[]
+  source?: 'official' | 'platform-suggested'
 }
 
 export interface MITREAttackTechnique {

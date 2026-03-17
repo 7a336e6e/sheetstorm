@@ -14,7 +14,17 @@ def _format_event(e: dict) -> str:
     parts.append(f"  ID: {e.get('id', 'N/A')} | Phase: {e.get('phase', 'N/A')}")
     if e.get("source"):
         parts.append(f"  Source: {e['source']}")
-    if e.get("mitre_tactic"):
+    mappings = e.get("mitre_mappings") or []
+    if mappings:
+        for m in mappings:
+            tactic = m.get("tactic", "N/A")
+            technique = m.get("technique", "N/A")
+            name = m.get("name", "")
+            label = f"{tactic} / {technique}"
+            if name:
+                label += f" ({name})"
+            parts.append(f"  MITRE: {label}")
+    elif e.get("mitre_tactic"):
         parts.append(f"  MITRE: {e['mitre_tactic']} / {e.get('mitre_technique', 'N/A')}")
     if e.get("hostname"):
         parts.append(f"  Host: {e['hostname']}")
@@ -68,10 +78,17 @@ async def sheetstorm_create_timeline_event(
     host_id: Optional[str] = None,
     phase: Optional[int] = None,
     is_key_event: bool = False,
+    mitre_mappings: Optional[str] = None,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
 ) -> str:
     """Create a new timeline event for an incident.
+
+    MITRE ATT&CK mappings can be provided as a JSON array of objects with
+    tactic, technique, and optional name fields. Example:
+    [{"tactic": "execution", "technique": "T1059", "name": "Command and Scripting Interpreter"}]
+    Leave mitre_mappings empty to auto-suggest from the activity text.
+    Legacy mitre_tactic/mitre_technique are still accepted for single mappings.
 
     Args:
         incident_id: UUID of the incident
@@ -81,9 +98,11 @@ async def sheetstorm_create_timeline_event(
         host_id: Optional associated host UUID
         phase: IR phase (1-6)
         is_key_event: Mark as key event
-        mitre_tactic: Optional MITRE ATT&CK tactic
-        mitre_technique: Optional MITRE ATT&CK technique
+        mitre_mappings: JSON array of MITRE mappings (each with tactic, technique, name)
+        mitre_tactic: Legacy single MITRE ATT&CK tactic
+        mitre_technique: Legacy single MITRE ATT&CK technique
     """
+    import json as _json
     client = get_client()
     try:
         payload: dict = {
@@ -98,9 +117,13 @@ async def sheetstorm_create_timeline_event(
             payload["phase"] = phase
         if is_key_event:
             payload["is_key_event"] = is_key_event
-        if mitre_tactic:
+        if mitre_mappings:
+            try:
+                payload["mitre_mappings"] = _json.loads(mitre_mappings)
+            except _json.JSONDecodeError:
+                return "✗ Error: mitre_mappings must be a valid JSON array."
+        elif mitre_tactic or mitre_technique:
             payload["mitre_tactic"] = mitre_tactic
-        if mitre_technique:
             payload["mitre_technique"] = mitre_technique
 
         event = await client.post(f"/incidents/{incident_id}/timeline", json=payload)
@@ -118,10 +141,13 @@ async def sheetstorm_update_timeline_event(
     source: Optional[str] = None,
     phase: Optional[int] = None,
     is_key_event: Optional[bool] = None,
+    mitre_mappings: Optional[str] = None,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
 ) -> str:
     """Update an existing timeline event.
+
+    MITRE ATT&CK mappings can be provided as a JSON array. See create_timeline_event for format.
 
     Args:
         incident_id: UUID of the incident
@@ -131,9 +157,11 @@ async def sheetstorm_update_timeline_event(
         source: New source
         phase: New IR phase (1-6)
         is_key_event: Mark/unmark as key event
-        mitre_tactic: New MITRE tactic
-        mitre_technique: New MITRE technique
+        mitre_mappings: JSON array of MITRE mappings (each with tactic, technique, name)
+        mitre_tactic: Legacy single MITRE tactic
+        mitre_technique: Legacy single MITRE technique
     """
+    import json as _json
     client = get_client()
     try:
         payload: dict = {}
@@ -143,11 +171,20 @@ async def sheetstorm_update_timeline_event(
             ("source", source),
             ("phase", phase),
             ("is_key_event", is_key_event),
-            ("mitre_tactic", mitre_tactic),
-            ("mitre_technique", mitre_technique),
         ]:
             if value is not None:
                 payload[field] = value
+
+        if mitre_mappings:
+            try:
+                payload["mitre_mappings"] = _json.loads(mitre_mappings)
+            except _json.JSONDecodeError:
+                return "✗ Error: mitre_mappings must be a valid JSON array."
+        elif mitre_tactic is not None or mitre_technique is not None:
+            if mitre_tactic is not None:
+                payload["mitre_tactic"] = mitre_tactic
+            if mitre_technique is not None:
+                payload["mitre_technique"] = mitre_technique
 
         if not payload:
             return "No fields to update."

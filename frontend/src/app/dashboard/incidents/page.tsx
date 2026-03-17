@@ -24,14 +24,16 @@ import {
   TableEmpty,
 } from '@/components/ui/table'
 import { SkeletonTableRow } from '@/components/ui/skeleton'
-import { useIncidentStore } from '@/lib/store'
+import { useIncidentStore, useAuthStore } from '@/lib/store'
 import { formatRelativeTime } from '@/lib/utils'
-import { Plus, Search, Filter, AlertTriangle, ArrowRight, X, Shield, Trash2 } from 'lucide-react'
+import { Plus, Search, Filter, AlertTriangle, ArrowRight, X, Shield, Archive } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
 export default function IncidentsPage() {
-  const { incidents, fetchIncidents, isLoading, deleteIncident } = useIncidentStore()
+  const { incidents, fetchIncidents, isLoading, archiveIncident } = useIncidentStore()
+  const { hasRole } = useAuthStore()
+  const isAdmin = hasRole('Administrator') || hasRole('Manager')
   const [search, setSearch] = useState('')
   const [severityFilter, setSeverityFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -42,28 +44,28 @@ export default function IncidentsPage() {
     fetchIncidents()
   }, [fetchIncidents])
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
+  const handleArchive = async (e: React.MouseEvent, id: string) => {
     e.preventDefault()
     e.stopPropagation()
 
     const confirmed = await confirm({
-      title: 'Delete Incident',
-      description: 'Are you sure you want to delete this incident? This action cannot be undone.',
-      confirmLabel: 'Delete',
+      title: 'Archive Incident',
+      description: 'Are you sure you want to archive this incident? It can be restored later by an administrator.',
+      confirmLabel: 'Archive',
       variant: 'destructive',
     })
     if (!confirmed) return
 
     try {
-      await deleteIncident(id)
+      await archiveIncident(id)
       toast({
-        title: "Incident Deleted",
-        description: "The incident has been permanently deleted.",
+        title: "Incident Archived",
+        description: "The incident has been moved to the archive.",
       })
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to delete incident",
+        description: "Failed to archive incident",
         variant: "destructive"
       })
     }
@@ -318,14 +320,17 @@ export default function IncidentsPage() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={(e) => handleDelete(e, incident.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => handleArchive(e, incident.id)}
+                        title="Archive incident"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

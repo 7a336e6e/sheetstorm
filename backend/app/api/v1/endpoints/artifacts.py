@@ -8,7 +8,7 @@ from flask_jwt_extended import jwt_required
 from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
 from app import db
-from app.models import Artifact, Integration
+from app.models import Artifact, Incident, Integration
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
@@ -349,7 +349,8 @@ def storage_stats():
             func.count(Artifact.id).label('count'),
             func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
         )
-        .filter(Artifact.organization_id == user.organization_id)
+        .join(Incident, Artifact.incident_id == Incident.id)
+        .filter(Incident.organization_id == user.organization_id)
         .group_by(Artifact.storage_type)
         .all()
     )

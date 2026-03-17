@@ -63,7 +63,7 @@ export function MitrePatternManager() {
   const [loading, setLoading] = useState(true)
   const [patterns, setPatterns] = useState<Pattern[]>([])
   const [search, setSearch] = useState('')
-  const [filterTactic, setFilterTactic] = useState('')
+  const [filterTactic, setFilterTactic] = useState('__all__')
 
   // Modal
   const [showModal, setShowModal] = useState(false)
@@ -85,7 +85,7 @@ export function MitrePatternManager() {
 
   const filtered = useMemo(() => {
     let list = patterns
-    if (filterTactic) list = list.filter(p => p.tactic === filterTactic)
+    if (filterTactic && filterTactic !== '__all__') list = list.filter(p => p.tactic === filterTactic)
     if (search) {
       const q = search.toLowerCase()
       list = list.filter(p =>
@@ -197,7 +197,7 @@ export function MitrePatternManager() {
         <Select value={filterTactic} onValueChange={setFilterTactic}>
           <SelectTrigger className="w-[200px]"><SelectValue placeholder="All Tactics" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All Tactics</SelectItem>
+            <SelectItem value="__all__">All Tactics</SelectItem>
             {TACTICS.map(t => <SelectItem key={t} value={t}>{TACTIC_LABELS[t]}</SelectItem>)}
           </SelectContent>
         </Select>

@@ -110,13 +110,18 @@ class GraphAutomationService:
             event.incident_id, event.host_id, event.created_by
         )
 
-        if event.mitre_tactic == 'initial-access':
+        # Collect all tactics from mitre_mappings (multi-TTP) or fall back to legacy field
+        mappings = event.mitre_mappings or []
+        tactics = {m.get('tactic', '') for m in mappings} if mappings else {event.mitre_tactic or ''}
+        first_technique = (mappings[0].get('technique', '') if mappings else event.mitre_technique) or ''
+
+        if 'initial-access' in tactics:
             target_node.is_initial_access = True
 
-        if event.mitre_tactic == 'impact':
+        if 'impact' in tactics:
             target_node.is_objective = True
 
-        if event.mitre_tactic == 'lateral-movement' and event.source:
+        if 'lateral-movement' in tactics and event.source:
             source_host = CompromisedHost.query.filter_by(
                 incident_id=event.incident_id, hostname=event.source
             ).first()
@@ -141,9 +146,9 @@ class GraphAutomationService:
                         source_node_id=source_node.id,
                         target_node_id=target_node.id,
                         edge_type='lateral_movement',
-                        label=event.mitre_technique or 'Lateral Movement',
+                        label=first_technique or 'Lateral Movement',
                         mitre_tactic='lateral-movement',
-                        mitre_technique=event.mitre_technique,
+                        mitre_technique=first_technique,
                         timestamp=event.timestamp,
                         description=event.activity,
                         created_by=event.created_by

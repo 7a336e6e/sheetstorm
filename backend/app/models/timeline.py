@@ -16,6 +16,9 @@ class TimelineEvent(BaseModel):
     hostname = Column(String(255))  # Keep for backwards compatibility / display
     activity = Column(Text, nullable=False)
     source = Column(String(255))
+    # Multi-TTP support: array of {tactic, technique, name, score}
+    mitre_mappings = Column(JSONB, default=list, server_default='[]')
+    # Legacy single-value columns kept for backward compat / indexing
     mitre_tactic = Column(String(100))
     mitre_technique = Column(String(20))
     phase = Column(Integer)
@@ -338,4 +341,13 @@ class TimelineEvent(BaseModel):
         # Keep hostname for backwards compatibility
         if not data.get('hostname') and self.host:
             data['hostname'] = self.host.hostname
+        # Ensure mitre_mappings is always a list
+        data['mitre_mappings'] = self.mitre_mappings or []
+        # Backward compat: expose first mapping as flat fields
+        if data['mitre_mappings']:
+            data['mitre_tactic'] = data['mitre_mappings'][0].get('tactic', '')
+            data['mitre_technique'] = data['mitre_mappings'][0].get('technique', '')
+        else:
+            data['mitre_tactic'] = self.mitre_tactic or ''
+            data['mitre_technique'] = self.mitre_technique or ''
         return data

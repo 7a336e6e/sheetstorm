@@ -784,12 +784,17 @@ Lessons Learned: {incident.get('lessons_learned', 'N/A')}
 
         formatted = []
         for event in events[:100]:
+            # Format MITRE mappings (multi-TTP support)
+            mappings = event.get('mitre_mappings', [])
+            if mappings:
+                mitre_str = ', '.join(f"{m.get('tactic', 'N/A')}:{m.get('technique', 'N/A')}" for m in mappings)
+            else:
+                mitre_str = f"{event.get('mitre_tactic', 'N/A')}:{event.get('mitre_technique', 'N/A')}"
             formatted.append(
                 f"- [{event.get('timestamp', 'N/A')}] {event.get('hostname', 'N/A')}: "
                 f"{event.get('activity', 'N/A')} "
                 f"(Source: {event.get('source', 'N/A')}, "
-                f"MITRE Tactic: {event.get('mitre_tactic', 'N/A')}, "
-                f"Technique: {event.get('mitre_technique', 'N/A')}, "
+                f"MITRE: {mitre_str}, "
                 f"Key Event: {event.get('is_key_event', False)}, "
                 f"IOC: {event.get('is_ioc', False)})"
             )

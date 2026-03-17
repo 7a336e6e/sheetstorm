@@ -23,9 +23,9 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
-  KeyRound,
   Search,
   BookOpen,
+  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -44,10 +44,10 @@ const navigation = [
 
 const adminNavigation = [
   { name: 'Activity', href: '/dashboard/activity', icon: Activity },
+  { name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive },
   { name: 'Users', href: '/dashboard/admin/users', icon: Users },
   { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
   { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },
-  { name: 'Security', href: '/dashboard/admin/security', icon: KeyRound },
   { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings },
 ]
 

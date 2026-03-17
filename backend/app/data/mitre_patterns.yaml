@@ -193,8 +193,16 @@ patterns:
   - technique: T1036
     tactic: defense-evasion
     name: Masquerading
-    keywords: [masquerading, renamed binary, fake process, process masquerade, disguised as]
-    weight: 0.80
+    keywords: [masquerading, masquerade, renamed binary, renaming, fake process, process masquerade, disguised as, impersonat, posing as]
+    regex: ['rename.*\.exe', 'svchost|lsass|csrss|winlogon|explorer\.exe|taskhost', '\w+\.exe.*(renamed|disguised|masquerad)']
+    weight: 0.85
+
+  - technique: T1036.005
+    tactic: defense-evasion
+    name: "Masquerading: Match Legitimate Name or Location"
+    keywords: [renamed to svchost, renamed to lsass, renamed to csrss, legitimate name, legitimate process name, match legitimate, fake svchost, fake lsass]
+    regex: ['rename.*to\s+(svchost|lsass|csrss|explorer|winlogon|taskhost)', '(anydesk|teamviewer|putty|psexec).*renamed']
+    weight: 0.90
 
   - technique: T1027
     tactic: defense-evasion

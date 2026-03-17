@@ -22,9 +22,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODE_UPPER=$(echo "$MODE" | tr '[:lower:]' '[:upper:]')
 echo "==================================="
 echo "SheetStorm - Incident Response Platform"
-echo "Mode: ${MODE^^}"
+echo "Mode: ${MODE_UPPER}"
 echo "==================================="
 
 # ─── Ensure persistent data directories exist ────────────────────────────────
@@ -113,7 +114,7 @@ fi
 
 echo ""
 echo "==================================="
-echo "SheetStorm is running! (${MODE^^})"
+echo "SheetStorm is running! (${MODE_UPPER})"
 echo "==================================="
 echo ""
 echo "App (via proxy): http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1'):8080"

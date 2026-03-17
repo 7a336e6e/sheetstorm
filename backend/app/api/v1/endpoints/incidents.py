@@ -30,7 +30,7 @@ def list_incidents():
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 20, type=int), 100)
 
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_deleted=False)
+    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=False)
 
     # For Operators, only show directly assigned incidents
     if user.has_role('Operator') and not user.has_role('Viewer'):
@@ -347,24 +347,110 @@ def update_incident_status(incident_id):
     return jsonify(incident.to_dict()), 200
 
 
-@api_bp.route('/incidents/<uuid:incident_id>', methods=['DELETE'])
+@api_bp.route('/incidents/<uuid:incident_id>/archive', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:delete')
-@audit_log('data_modification', 'delete', 'incident')
-def delete_incident(incident_id):
-    """Soft-delete an incident."""
+@audit_log('data_modification', 'archive', 'incident')
+def archive_incident(incident_id):
+    """Archive an incident (soft-delete). Admin/Manager only."""
     user = get_current_user()
-    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_deleted=False).first()
+    if not user.has_role('Administrator') and not user.has_role('Manager'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators and managers can archive incidents'}), 403
+
+    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=False).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
 
-    incident.is_deleted = True
+    incident.is_archived = True
+    incident.archived_at = datetime.now(timezone.utc)
+    incident.archived_by = user.id
     incident.updated_at = datetime.now(timezone.utc)
-    incident.updated_by = user.id
     db.session.commit()
 
-    return jsonify({'message': 'Incident deleted successfully'}), 200
+    return jsonify({'message': 'Incident archived successfully'}), 200
+
+
+@api_bp.route('/incidents/archived', methods=['GET'])
+@jwt_required()
+@require_permission('incidents:read')
+def list_archived_incidents():
+    """List archived incidents. Admin only."""
+    user = get_current_user()
+    if not user.has_role('Administrator'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators can view archived incidents'}), 403
+
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)
+
+    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=True)
+
+    search = request.args.get('search')
+    if search:
+        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
+        query = query.filter(
+            db.or_(
+                Incident.title.ilike(f'%{search_escaped}%'),
+                Incident.description.ilike(f'%{search_escaped}%')
+            )
+        )
+
+    pagination = query.order_by(Incident.archived_at.desc().nullslast(), Incident.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        'items': [i.to_dict(include_counts=True) for i in pagination.items],
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': pagination.pages
+    }), 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/unarchive', methods=['POST'])
+@jwt_required()
+@require_permission('incidents:delete')
+@audit_log('data_modification', 'unarchive', 'incident')
+def unarchive_incident(incident_id):
+    """Restore an archived incident. Admin only."""
+    user = get_current_user()
+    if not user.has_role('Administrator'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators can restore archived incidents'}), 403
+
+    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
+
+    if not incident:
+        return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+
+    incident.is_archived = False
+    incident.archived_at = None
+    incident.archived_by = None
+    incident.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({'message': 'Incident restored successfully', 'incident': incident.to_dict()}), 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/permanent', methods=['DELETE'])
+@jwt_required()
+@require_permission('incidents:delete')
+@audit_log('data_modification', 'permanent_delete', 'incident')
+def permanent_delete_incident(incident_id):
+    """Permanently delete an archived incident. Admin only. This action is irreversible."""
+    user = get_current_user()
+    if not user.has_role('Administrator'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators can permanently delete incidents'}), 403
+
+    incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
+
+    if not incident:
+        return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+
+    db.session.delete(incident)
+    db.session.commit()
+
+    return jsonify({'message': 'Incident permanently deleted'}), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/assignments', methods=['GET'])

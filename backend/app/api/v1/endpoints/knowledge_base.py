@@ -184,14 +184,20 @@ def kb_d3fend_suggest():
         if '.' in tid:
             lookup_ids.add(tid.split('.')[0])
 
+    from app.api.v1.endpoints.kb_data_d3fend import MANUAL_OVERRIDE_ATTACK_IDS
+
     suggestions: dict = {}
     for d3 in D3FEND_TECHNIQUES:
         mappings = d3.get('mitre_attack_mappings', [])
         matched = [t for t in lookup_ids if t in mappings]
         if matched:
+            # Determine if ALL matched ATT&CK IDs are manual overrides
+            manual_ids = MANUAL_OVERRIDE_ATTACK_IDS.get(d3['id'], set())
+            has_official = any(t not in manual_ids for t in matched)
             suggestions[d3['id']] = {
                 **d3,
                 'matched_techniques': matched,
+                'source': 'official' if has_official else 'platform-suggested',
             }
 
     return jsonify({

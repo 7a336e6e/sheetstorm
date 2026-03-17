@@ -232,17 +232,22 @@ export interface Incident {
 
 interface IncidentState {
   incidents: Incident[]
+  archivedIncidents: Incident[]
   currentIncident: Incident | null
   isLoading: boolean
   fetchIncidents: (params?: Record<string, string>) => Promise<void>
   fetchIncident: (id: string) => Promise<void>
   createIncident: (data: Partial<Incident>) => Promise<Incident>
   updateIncident: (id: string, data: Partial<Incident>) => Promise<void>
-  deleteIncident: (id: string) => Promise<void>
+  archiveIncident: (id: string) => Promise<void>
+  fetchArchivedIncidents: (params?: Record<string, string>) => Promise<void>
+  unarchiveIncident: (id: string) => Promise<void>
+  permanentDeleteIncident: (id: string) => Promise<void>
 }
 
 export const useIncidentStore = create<IncidentState>((set, get) => ({
   incidents: [],
+  archivedIncidents: [],
   currentIncident: null,
   isLoading: false,
 
@@ -288,6 +293,40 @@ export const useIncidentStore = create<IncidentState>((set, get) => ({
     set((state) => ({
       incidents: state.incidents.filter((i) => i.id !== id),
       currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
+    }))
+  },
+
+  archiveIncident: async (id: string) => {
+    await api.post(`/incidents/${id}/archive`, {})
+    set((state) => ({
+      incidents: state.incidents.filter((i) => i.id !== id),
+      currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
+    }))
+  },
+
+  fetchArchivedIncidents: async (params?: Record<string, string>) => {
+    set({ isLoading: true })
+    try {
+      const query = params ? '?' + new URLSearchParams(params).toString() : ''
+      const response = await api.get<{ items: Incident[]; total: number }>(`/incidents/archived${query}`)
+      set({ archivedIncidents: response.items, isLoading: false })
+    } catch (error) {
+      set({ isLoading: false })
+      throw error
+    }
+  },
+
+  unarchiveIncident: async (id: string) => {
+    await api.post(`/incidents/${id}/unarchive`, {})
+    set((state) => ({
+      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
+    }))
+  },
+
+  permanentDeleteIncident: async (id: string) => {
+    await api.delete(`/incidents/${id}/permanent`)
+    set((state) => ({
+      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
     }))
   },
 }))

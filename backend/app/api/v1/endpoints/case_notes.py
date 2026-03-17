@@ -18,7 +18,7 @@ def list_case_notes(incident_id):
     per_page = min(request.args.get('per_page', 50, type=int), 100)
     category = request.args.get('category')
 
-    query = CaseNote.query.filter_by(incident_id=incident_id, is_deleted=False)
+    query = CaseNote.query.filter_by(incident_id=incident_id, is_archived=False)
 
     if category:
         query = query.filter(CaseNote.category == category)
@@ -78,7 +78,7 @@ def create_case_note(incident_id):
 @require_incident_access('incidents:read')
 def get_case_note(incident_id, note_id):
     """Get a single case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_archived=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
@@ -91,7 +91,7 @@ def get_case_note(incident_id, note_id):
 @audit_log('data_modification', 'update', 'case_note')
 def update_case_note(incident_id, note_id):
     """Update a case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_archived=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
@@ -129,11 +129,11 @@ def update_case_note(incident_id, note_id):
 @audit_log('data_modification', 'delete', 'case_note')
 def delete_case_note(incident_id, note_id):
     """Soft-delete a case note."""
-    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_deleted=False).first()
+    note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_archived=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404
 
-    note.is_deleted = True
+    note.is_archived = True
     note.updated_at = datetime.now(timezone.utc)
     note.updated_by = get_current_user().id
     db.session.commit()

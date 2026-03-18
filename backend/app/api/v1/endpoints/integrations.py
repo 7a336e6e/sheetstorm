@@ -289,6 +289,15 @@ def _test_google_ai(credentials):
         return False, f'Google AI test failed: {str(e)}'
 
 
+@api_bp.route('/integrations/ollama/models', methods=['GET'])
+@jwt_required()
+def list_ollama_models():
+    """Discover locally available Ollama models."""
+    from app.services.ai_service import ai_service
+    models = ai_service.list_ollama_models()
+    return jsonify({'models': models}), 200
+
+
 @api_bp.route('/integrations/types', methods=['GET'])
 @jwt_required()
 def list_integration_types():
@@ -297,58 +306,84 @@ def list_integration_types():
         'types': [
             # Storage
             {'id': 's3', 'name': 'S3 Storage', 'description': 'Amazon S3 or S3-compatible object storage for artifacts', 'category': 'storage',
-             'config_fields': ['bucket_name', 'region', 'endpoint_url'], 'credential_fields': ['access_key', 'secret_key']},
+             'config_fields': ['bucket_name', 'region', 'endpoint_url'], 'credential_fields': ['access_key', 'secret_key'],
+             'doc_url': 'https://docs.aws.amazon.com/s3/'},
             {'id': 'google_drive', 'name': 'Google Drive', 'description': 'Google Drive for case folder management and report storage (OAuth2)', 'category': 'storage',
-             'config_fields': ['client_id', 'redirect_uri'], 'credential_fields': ['client_secret']},
+             'config_fields': ['client_id', 'redirect_uri'], 'credential_fields': ['client_secret'],
+             'doc_url': 'https://developers.google.com/drive/api/guides/about-sdk'},
             # AI Providers
             {'id': 'openai', 'name': 'OpenAI', 'description': 'OpenAI GPT models for AI-powered report generation and analysis', 'category': 'ai',
-             'config_fields': ['model'], 'credential_fields': ['api_key']},
+             'config_fields': ['model'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://platform.openai.com/docs/api-reference'},
             {'id': 'google_ai', 'name': 'Google AI', 'description': 'Google Gemini models for AI-powered analysis', 'category': 'ai',
-             'config_fields': ['model'], 'credential_fields': ['api_key']},
+             'config_fields': ['model'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://ai.google.dev/docs'},
+            {'id': 'ollama', 'name': 'Ollama', 'description': 'Self-hosted open-source LLMs via Ollama for private AI analysis', 'category': 'ai',
+             'config_fields': ['base_url', 'model'], 'credential_fields': [],
+             'doc_url': 'https://ollama.com/docs'},
             # Notification
             {'id': 'slack', 'name': 'Slack', 'description': 'Send incident notifications and alerts to Slack channels', 'category': 'notification',
-             'config_fields': [], 'credential_fields': ['webhook_url']},
+             'config_fields': [], 'credential_fields': ['webhook_url'],
+             'doc_url': 'https://api.slack.com/messaging/webhooks'},
             {'id': 'email_smtp', 'name': 'Email (SMTP)', 'description': 'Send email notifications and alerts via SMTP', 'category': 'notification',
-             'config_fields': ['smtp_host', 'smtp_port', 'from_address'], 'credential_fields': ['smtp_user', 'smtp_password']},
+             'config_fields': ['smtp_host', 'smtp_port', 'from_address'], 'credential_fields': ['smtp_user', 'smtp_password'],
+             'doc_url': ''},
             {'id': 'webhook', 'name': 'Webhook', 'description': 'Send event notifications to custom webhook endpoints', 'category': 'notification',
-             'config_fields': ['url'], 'credential_fields': ['token']},
+             'config_fields': ['url'], 'credential_fields': ['token'],
+             'doc_url': ''},
             # Threat Intelligence
             {'id': 'misp', 'name': 'MISP', 'description': 'Share threat intelligence via MISP platform (IOC push/pull)', 'category': 'threat_intel',
-             'config_fields': ['api_url', 'verify_ssl'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url', 'verify_ssl'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://www.misp-project.org/documentation/'},
             {'id': 'virustotal', 'name': 'VirusTotal', 'description': 'Automated hash/URL/domain lookups via VirusTotal API', 'category': 'threat_intel',
-             'config_fields': [], 'credential_fields': ['api_key']},
+             'config_fields': [], 'credential_fields': ['api_key'],
+             'doc_url': 'https://docs.virustotal.com/reference/overview'},
             {'id': 'mitre_attack', 'name': 'MITRE ATT&CK', 'description': 'MITRE ATT&CK framework data feed for tactic/technique mapping', 'category': 'threat_intel',
-             'config_fields': ['api_url'], 'credential_fields': []},
+             'config_fields': ['api_url'], 'credential_fields': [],
+             'doc_url': 'https://attack.mitre.org/'},
             {'id': 'abuseipdb', 'name': 'AbuseIPDB', 'description': 'IP reputation lookups via AbuseIPDB API', 'category': 'threat_intel',
-             'config_fields': [], 'credential_fields': ['api_key']},
+             'config_fields': [], 'credential_fields': ['api_key'],
+             'doc_url': 'https://docs.abuseipdb.com/'},
             {'id': 'hibp', 'name': 'Have I Been Pwned', 'description': 'Email breach lookups via HIBP API', 'category': 'threat_intel',
-             'config_fields': [], 'credential_fields': ['api_key']},
+             'config_fields': [], 'credential_fields': ['api_key'],
+             'doc_url': 'https://haveibeenpwned.com/API/v3'},
             {'id': 'shodan', 'name': 'Shodan', 'description': 'Internet-wide scanning data for IP/host intelligence', 'category': 'threat_intel',
-             'config_fields': [], 'credential_fields': ['api_key']},
+             'config_fields': [], 'credential_fields': ['api_key'],
+             'doc_url': 'https://developer.shodan.io/api'},
             # IR Tools
             {'id': 'velociraptor', 'name': 'Velociraptor', 'description': 'Endpoint monitoring and forensic collection via Velociraptor', 'category': 'ir_tools',
-             'config_fields': ['api_url', 'verify_ssl'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url', 'verify_ssl'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://docs.velociraptor.app/'},
             {'id': 'thehive', 'name': 'TheHive', 'description': 'Security incident response platform for case management', 'category': 'ir_tools',
-             'config_fields': ['api_url'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://docs.strangebee.com/thehive/'},
             {'id': 'cortex', 'name': 'Cortex', 'description': 'Observable analysis and active response engine', 'category': 'ir_tools',
-             'config_fields': ['api_url'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://docs.strangebee.com/cortex/'},
             # Ticketing
             {'id': 'jira', 'name': 'Jira', 'description': 'Create and sync Jira tickets from incident tasks', 'category': 'ticketing',
-             'config_fields': ['api_url', 'project_key'], 'credential_fields': ['username', 'api_key']},
+             'config_fields': ['api_url', 'project_key'], 'credential_fields': ['username', 'api_key'],
+             'doc_url': 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/'},
             # SIEM
             {'id': 'splunk', 'name': 'Splunk', 'description': 'Query Splunk for log data and forward alerts', 'category': 'siem',
-             'config_fields': ['api_url', 'index'], 'credential_fields': ['token']},
+             'config_fields': ['api_url', 'index'], 'credential_fields': ['token'],
+             'doc_url': 'https://docs.splunk.com/Documentation/Splunk/latest/RESTREF/RESTprolog'},
             {'id': 'elastic', 'name': 'Elastic SIEM', 'description': 'Query Elasticsearch/Kibana for log data and alerts', 'category': 'siem',
-             'config_fields': ['api_url', 'index', 'verify_ssl'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url', 'index', 'verify_ssl'], 'credential_fields': ['api_key'],
+             'doc_url': 'https://www.elastic.co/guide/en/elasticsearch/reference/current/rest-apis.html'},
             {'id': 'siem', 'name': 'Generic SIEM', 'description': 'Generic SIEM integration via syslog or API', 'category': 'siem',
-             'config_fields': ['api_url'], 'credential_fields': ['api_key']},
+             'config_fields': ['api_url'], 'credential_fields': ['api_key'],
+             'doc_url': ''},
             # Authentication
             {'id': 'oauth_google', 'name': 'Google OAuth', 'description': 'Allow users to sign in with Google accounts', 'category': 'auth',
-             'config_fields': ['client_id'], 'credential_fields': ['client_secret']},
+             'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
+             'doc_url': 'https://developers.google.com/identity/protocols/oauth2'},
             {'id': 'oauth_github', 'name': 'GitHub OAuth', 'description': 'Allow users to sign in with GitHub accounts', 'category': 'auth',
-             'config_fields': ['client_id'], 'credential_fields': ['client_secret']},
+             'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
+             'doc_url': 'https://docs.github.com/en/apps/oauth-apps'},
             {'id': 'oauth_azure', 'name': 'Azure AD / Entra ID', 'description': 'Microsoft Entra ID (Azure AD) for enterprise SSO', 'category': 'auth',
-             'config_fields': ['client_id', 'tenant_id'], 'credential_fields': ['client_secret']},
+             'config_fields': ['client_id', 'tenant_id'], 'credential_fields': ['client_secret'],
+             'doc_url': 'https://learn.microsoft.com/en-us/entra/identity-platform/'},
         ],
         'categories': [
             {'id': 'storage', 'name': 'Storage', 'description': 'File and artifact storage'},

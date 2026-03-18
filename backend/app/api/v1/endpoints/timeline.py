@@ -37,7 +37,12 @@ def list_timeline_events(incident_id):
 
     mitre_tactic = request.args.get('mitre_tactic')
     if mitre_tactic:
-        query = query.filter(TimelineEvent.mitre_tactic == mitre_tactic)
+        # Search both legacy column and JSONB mappings
+        from sqlalchemy import or_, text
+        query = query.filter(or_(
+            TimelineEvent.mitre_tactic == mitre_tactic,
+            TimelineEvent.mitre_mappings.op('@>')('[{"tactic": "' + mitre_tactic + '"}]')
+        ))
 
     start_date = request.args.get('start_date')
     if start_date:
@@ -89,17 +94,41 @@ def create_timeline_event(incident_id):
     if not activity:
         return jsonify({'error': 'bad_request', 'message': 'activity is required'}), 400
 
-    # Validate MITRE tactic if provided
-    mitre_tactic = data.get('mitre_tactic')
-    if mitre_tactic and mitre_tactic not in TimelineEvent.MITRE_TACTICS:
-        return jsonify({'error': 'bad_request', 'message': 'Invalid MITRE tactic'}), 400
+    # Build mitre_mappings: accept new array format or legacy single fields
+    mitre_mappings = data.get('mitre_mappings')
+    if mitre_mappings is None:
+        # Legacy single-field input
+        mitre_tactic = data.get('mitre_tactic')
+        mitre_technique = data.get('mitre_technique')
+        if mitre_tactic or mitre_technique:
+            mitre_mappings = [{'tactic': mitre_tactic or '', 'technique': mitre_technique or '', 'name': ''}]
+        else:
+            mitre_mappings = []
 
-    # Validate MITRE technique if provided
-    mitre_technique = data.get('mitre_technique')
-    if mitre_technique and mitre_tactic:
-        valid_techniques = [t[0] for t in TimelineEvent.MITRE_TECHNIQUES.get(mitre_tactic, [])]
-        if mitre_technique not in valid_techniques:
-            return jsonify({'error': 'bad_request', 'message': 'Invalid MITRE technique for this tactic'}), 400
+    # Auto-suggest MITRE mappings if none provided
+    if not mitre_mappings and activity:
+        from app.services.mitre_suggest_service import suggest
+        suggestions = suggest(activity, limit=5, min_score=0.15)
+        if suggestions:
+            mitre_mappings = []
+            for s in suggestions:
+                tech = s['technique']
+                mitre_mappings.append({
+                    'tactic': s['tactic'],
+                    'technique': tech.split('.')[0] if '.' in tech else tech,
+                    'name': s.get('name', ''),
+                    'score': s.get('score', 0),
+                })
+
+    # Validate each mapping entry
+    for m in mitre_mappings:
+        tactic = m.get('tactic', '')
+        if tactic and tactic not in TimelineEvent.MITRE_TACTICS:
+            return jsonify({'error': 'bad_request', 'message': f'Invalid MITRE tactic: {tactic}'}), 400
+
+    # Set legacy fields from first mapping for backward compat / indexing
+    first_tactic = mitre_mappings[0]['tactic'] if mitre_mappings else None
+    first_technique = mitre_mappings[0]['technique'] if mitre_mappings else None
 
     # Validate host_id if provided
     host_id = data.get('host_id')
@@ -117,8 +146,9 @@ def create_timeline_event(incident_id):
         hostname=hostname,
         activity=activity,
         source=data.get('source'),
-        mitre_tactic=mitre_tactic,
-        mitre_technique=mitre_technique,
+        mitre_mappings=mitre_mappings,
+        mitre_tactic=first_tactic,
+        mitre_technique=first_technique,
         phase=data.get('phase'),
         is_key_event=data.get('is_key_event', False),
         is_ioc=data.get('is_ioc', False),
@@ -173,12 +203,49 @@ def update_timeline_event(incident_id, event_id):
         event.activity = data['activity']
     if 'source' in data:
         event.source = data['source']
-    if 'mitre_tactic' in data:
-        if data['mitre_tactic'] and data['mitre_tactic'] not in TimelineEvent.MITRE_TACTICS:
+
+    # Handle mitre_mappings: accept new array format or legacy single fields
+    if 'mitre_mappings' in data:
+        mappings = data['mitre_mappings'] or []
+        for m in mappings:
+            tactic = m.get('tactic', '')
+            if tactic and tactic not in TimelineEvent.MITRE_TACTICS:
+                return jsonify({'error': 'bad_request', 'message': f'Invalid MITRE tactic: {tactic}'}), 400
+        event.mitre_mappings = mappings
+        event.mitre_tactic = mappings[0]['tactic'] if mappings else None
+        event.mitre_technique = mappings[0]['technique'] if mappings else None
+    elif 'mitre_tactic' in data or 'mitre_technique' in data:
+        # Legacy single-field update
+        tactic = data.get('mitre_tactic', event.mitre_tactic)
+        technique = data.get('mitre_technique', event.mitre_technique)
+        if tactic and tactic not in TimelineEvent.MITRE_TACTICS:
             return jsonify({'error': 'bad_request', 'message': 'Invalid MITRE tactic'}), 400
-        event.mitre_tactic = data['mitre_tactic']
-    if 'mitre_technique' in data:
-        event.mitre_technique = data['mitre_technique']
+        event.mitre_tactic = tactic
+        event.mitre_technique = technique
+        if tactic or technique:
+            event.mitre_mappings = [{'tactic': tactic or '', 'technique': technique or '', 'name': ''}]
+        else:
+            event.mitre_mappings = []
+
+    # Auto-suggest MITRE mappings if activity changed and no mapping set
+    current_mappings = event.mitre_mappings or []
+    if not current_mappings and not event.mitre_tactic and not event.mitre_technique and event.activity:
+        from app.services.mitre_suggest_service import suggest
+        suggestions = suggest(event.activity, limit=5, min_score=0.15)
+        if suggestions:
+            new_mappings = []
+            for s in suggestions:
+                tech = s['technique']
+                new_mappings.append({
+                    'tactic': s['tactic'],
+                    'technique': tech.split('.')[0] if '.' in tech else tech,
+                    'name': s.get('name', ''),
+                    'score': s.get('score', 0),
+                })
+            event.mitre_mappings = new_mappings
+            event.mitre_tactic = new_mappings[0]['tactic']
+            event.mitre_technique = new_mappings[0]['technique']
+
     if 'phase' in data:
         event.phase = data['phase']
     if 'is_key_event' in data:

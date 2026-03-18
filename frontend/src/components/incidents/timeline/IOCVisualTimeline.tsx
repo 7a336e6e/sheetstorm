@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useMemo, memo } from 'react'
+import { useEffect, useState, useCallback, useMemo, memo, useRef } from 'react'
 import {
     ReactFlow,
     Background,
@@ -52,6 +52,7 @@ import {
     Plus,
     Server,
     Star,
+    Trash2,
     ZoomIn,
     ZoomOut,
 } from 'lucide-react'
@@ -136,6 +137,7 @@ function buildTimelineGraph(
                 hostIp: event.host?.ip_address,
                 mitreTactic: event.mitre_tactic,
                 mitreTechnique: event.mitre_technique,
+                mitreMappings: event.mitre_mappings,
                 killChainPhase: event.kill_chain_phase,
                 source: event.source,
                 isKeyEvent: event.is_key_event,
@@ -212,8 +214,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
         activity: '',
         source: '',
         host_id: '',
-        mitre_tactic: '',
-        mitre_technique: '',
+        mitre_mappings: [] as { tactic: string; technique: string; name: string }[],
     })
 
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -228,11 +229,20 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
     const loadData = async () => {
         setIsLoading(true)
         try {
-            const [eventsRes, hostsRes] = await Promise.all([
-                api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`),
-                api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
-            ])
-            const sorted = (eventsRes.items || []).sort(
+            const allEvents: TimelineEvent[] = []
+            let page = 1
+            let totalPages = 1
+            do {
+                const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
+                    `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
+                )
+                allEvents.push(...(res.items || []))
+                totalPages = res.pages || 1
+                page++
+            } while (page <= totalPages)
+
+            const hostsRes = await api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`)
+            const sorted = allEvents.sort(
                 (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
             )
             setAllEvents(sorted)
@@ -271,11 +281,10 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                 activity: form.activity,
                 source: form.source || null,
                 host_id: form.host_id || null,
-                mitre_tactic: form.mitre_tactic || null,
-                mitre_technique: form.mitre_technique || null,
+                mitre_mappings: form.mitre_mappings.length > 0 ? form.mitre_mappings : undefined,
             })
             setShowAddModal(false)
-            setForm({ timestamp: '', activity: '', source: '', host_id: '', mitre_tactic: '', mitre_technique: '' })
+            setForm({ timestamp: '', activity: '', source: '', host_id: '', mitre_mappings: [] })
             loadData()
         } catch (error) {
             console.error('Failed to add event:', error)
@@ -642,17 +651,14 @@ export function PinnedEventsTable({ events }: { events: TimelineEvent[] }) {
                                             </span>
                                         )}
 
-                                        {event.mitre_tactic && (
-                                            <Badge variant="outline" className={`shrink-0 text-[10px] px-1.5 py-0 border-white/10 ${tacticColor[event.mitre_tactic.toLowerCase()] || 'text-muted-foreground'}`}>
-                                                {event.mitre_tactic}
-                                            </Badge>
-                                        )}
-
-                                        {event.mitre_technique && (
-                                            <span className="shrink-0 text-[10px] font-mono text-muted-foreground/70">
-                                                {event.mitre_technique}
+                                        {(event.mitre_mappings?.length ? event.mitre_mappings : (event.mitre_tactic ? [{ tactic: event.mitre_tactic, technique: event.mitre_technique }] : [])).map((m, mi) => (
+                                            <span key={mi} className="shrink-0 flex items-center gap-1">
+                                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border-white/10 ${tacticColor[m.tactic?.toLowerCase()] || 'text-muted-foreground'}`}>
+                                                    {m.tactic}
+                                                </Badge>
+                                                {m.technique && <span className="text-[10px] font-mono text-muted-foreground/70">{m.technique}</span>}
                                             </span>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                             </li>
@@ -688,7 +694,7 @@ function AddEventDialog({
 }: {
     open: boolean
     onOpenChange: (o: boolean) => void
-    form: { timestamp: string; activity: string; source: string; host_id: string; mitre_tactic: string; mitre_technique: string }
+    form: { timestamp: string; activity: string; source: string; host_id: string; mitre_mappings: { tactic: string; technique: string; name: string }[] }
     setForm: (f: typeof form) => void
     hosts: CompromisedHost[]
     onSubmit: () => void
@@ -699,6 +705,24 @@ function AddEventDialog({
     const [techToTactic, setTechToTactic] = useState<Record<string, string>>({})
     const [allTechniques, setAllTechniques] = useState<{ id: string; name: string }[]>([])
     const [techSearch, setTechSearch] = useState('')
+    const [mappingDraft, setMappingDraft] = useState({ tactic: '', technique: '' })
+
+    // Auto-suggest state
+    const [suggestions, setSuggestions] = useState<{ technique: string; tactic: string; name: string; score: number }[]>([])
+    const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Debounced auto-suggest when activity text changes
+    const fetchSuggestions = useCallback((activity: string) => {
+        if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+        if (!activity || activity.length < 10) { setSuggestions([]); return }
+        suggestTimerRef.current = setTimeout(() => {
+            api.post<{ suggestions: typeof suggestions }>('/mitre/suggest', { activity, limit: 3 })
+                .then(data => setSuggestions(data.suggestions || []))
+                .catch(() => {})
+        }, 400)
+    }, [])
+
+    useEffect(() => { return () => { if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current) } }, [])
 
     // Fetch form data once on open
     useEffect(() => {
@@ -726,11 +750,11 @@ function AddEventDialog({
 
     // Techniques available for the selected tactic (or all if none selected)
     const availableTechniques = useMemo(() => {
-        if (form.mitre_tactic && techByTactic[form.mitre_tactic]) {
-            return techByTactic[form.mitre_tactic]
+        if (mappingDraft.tactic && techByTactic[mappingDraft.tactic]) {
+            return techByTactic[mappingDraft.tactic]
         }
         return allTechniques
-    }, [form.mitre_tactic, techByTactic, allTechniques])
+    }, [mappingDraft.tactic, techByTactic, allTechniques])
 
     // Filtered techniques based on search input
     const filteredTechniques = useMemo(() => {
@@ -744,11 +768,10 @@ function AddEventDialog({
     // Handle tactic change — clear technique if it doesn't belong to the new tactic
     const handleTacticChange = (slug: string) => {
         const techs = techByTactic[slug] || []
-        const currentTechInNewTactic = techs.some(t => t.id === form.mitre_technique)
-        setForm({
-            ...form,
-            mitre_tactic: slug,
-            mitre_technique: currentTechInNewTactic ? form.mitre_technique : '',
+        const currentTechInNewTactic = techs.some(t => t.id === mappingDraft.technique)
+        setMappingDraft({
+            tactic: slug,
+            technique: currentTechInNewTactic ? mappingDraft.technique : '',
         })
         setTechSearch('')
     }
@@ -756,10 +779,9 @@ function AddEventDialog({
     // Handle technique selection — auto-select tactic
     const handleTechniqueSelect = (techId: string) => {
         const tacticSlug = techToTactic[techId]
-        setForm({
-            ...form,
-            mitre_technique: techId,
-            mitre_tactic: tacticSlug || form.mitre_tactic,
+        setMappingDraft({
+            technique: techId,
+            tactic: tacticSlug || mappingDraft.tactic,
         })
         setTechSearch('')
     }
@@ -769,10 +791,27 @@ function AddEventDialog({
         const upper = value.toUpperCase().trim()
         setTechSearch(value)
         const resolvedTactic = techToTactic[upper]
+        setMappingDraft(prev => ({
+            technique: upper,
+            tactic: resolvedTactic || prev.tactic,
+        }))
+    }
+
+    const handleAddMapping = () => {
+        if (!mappingDraft.tactic && !mappingDraft.technique) return
+        const techName = allTechniques.find(t => t.id === mappingDraft.technique)?.name || ''
         setForm({
             ...form,
-            mitre_technique: upper,
-            mitre_tactic: resolvedTactic || form.mitre_tactic,
+            mitre_mappings: [...form.mitre_mappings, { tactic: mappingDraft.tactic, technique: mappingDraft.technique, name: techName }],
+        })
+        setMappingDraft({ tactic: '', technique: '' })
+        setTechSearch('')
+    }
+
+    const handleRemoveMapping = (idx: number) => {
+        setForm({
+            ...form,
+            mitre_mappings: form.mitre_mappings.filter((_, i) => i !== idx),
         })
     }
 
@@ -795,8 +834,31 @@ function AddEventDialog({
                         <Label>Activity *</Label>
                         <Textarea
                             value={form.activity}
-                            onChange={e => setForm({ ...form, activity: e.target.value })}
+                            onChange={e => { setForm({ ...form, activity: e.target.value }); fetchSuggestions(e.target.value) }}
                         />
+                        {suggestions.length > 0 && form.mitre_mappings.length === 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                                <span className="text-[10px] text-muted-foreground self-center">Suggested:</span>
+                                {suggestions.map(s => (
+                                    <button
+                                        key={s.technique}
+                                        type="button"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 cursor-pointer transition-colors"
+                                        onClick={() => {
+                                            setForm({
+                                                ...form,
+                                                mitre_mappings: [...form.mitre_mappings, { tactic: s.tactic, technique: s.technique, name: s.name }],
+                                            })
+                                            setSuggestions([])
+                                        }}
+                                    >
+                                        <span className="font-mono">{s.technique}</span>
+                                        <span className="text-muted-foreground">{s.name}</span>
+                                        <span className="text-blue-300/60">{Math.round(s.score * 100)}%</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <div className="space-y-2">
                         <Label>Source</Label>
@@ -819,44 +881,68 @@ function AddEventDialog({
                             </SelectContent>
                         </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label>MITRE Tactic</Label>
-                            <Select value={form.mitre_tactic} onValueChange={handleTacticChange}>
-                                <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
-                                <SelectContent side="top">
-                                    {tactics.map(t => (
-                                        <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Technique ID</Label>
-                            <div className="relative">
-                                <Input
-                                    value={techSearch || form.mitre_technique}
-                                    onChange={e => { handleTechniqueInput(e.target.value) }}
-                                    placeholder="Search T1059 or name..."
-                                    onFocus={() => setTechSearch(form.mitre_technique)}
-                                    onBlur={() => setTimeout(() => setTechSearch(''), 200)}
-                                />
-                                {techSearch && filteredTechniques.length > 0 && (
-                                    <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
-                                        {filteredTechniques.map(t => (
-                                            <button
-                                                key={t.id}
-                                                type="button"
-                                                className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
-                                                onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
-                                            >
-                                                <span className="font-mono text-muted-foreground">{t.id}</span>
-                                                <span className="truncate">{t.name}</span>
-                                            </button>
-                                        ))}
+                    {/* MITRE ATT&CK Mappings */}
+                    <div className="space-y-3">
+                        <Label>MITRE ATT&CK Mappings</Label>
+                        <p className="text-xs text-muted-foreground">Leave empty for auto-suggest.</p>
+
+                        {form.mitre_mappings.length > 0 && (
+                            <div className="space-y-1.5">
+                                {form.mitre_mappings.map((m, i) => (
+                                    <div key={i} className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                                        <Badge variant="outline" className={`text-[10px] ${tacticColor[m.tactic?.toLowerCase()] || 'text-muted-foreground'}`}>{m.tactic}</Badge>
+                                        <span className="text-xs font-mono text-muted-foreground">{m.technique}</span>
+                                        {m.name && <span className="text-xs text-muted-foreground truncate">— {m.name}</span>}
+                                        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 w-6 p-0 text-destructive" onClick={() => handleRemoveMapping(i)}>
+                                            <Trash2 className="h-3 w-3" />
+                                        </Button>
                                     </div>
-                                )}
+                                ))}
                             </div>
+                        )}
+
+                        <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                            <div className="space-y-1">
+                                <Label className="text-xs">Tactic</Label>
+                                <Select value={mappingDraft.tactic} onValueChange={handleTacticChange}>
+                                    <SelectTrigger><SelectValue placeholder="Select Tactic" /></SelectTrigger>
+                                    <SelectContent side="top">
+                                        {tactics.map(t => (
+                                            <SelectItem key={t.slug} value={t.slug}>{t.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs">Technique</Label>
+                                <div className="relative">
+                                    <Input
+                                        value={techSearch || mappingDraft.technique}
+                                        onChange={e => handleTechniqueInput(e.target.value)}
+                                        placeholder="Search T1059 or name..."
+                                        onFocus={() => setTechSearch(mappingDraft.technique)}
+                                        onBlur={() => setTimeout(() => setTechSearch(''), 200)}
+                                    />
+                                    {techSearch && filteredTechniques.length > 0 && (
+                                        <div className="absolute z-50 bottom-full mb-1 left-0 right-0 max-h-48 overflow-y-auto rounded-md border border-white/10 bg-background/95 backdrop-blur-sm shadow-lg">
+                                            {filteredTechniques.map(t => (
+                                                <button
+                                                    key={t.id}
+                                                    type="button"
+                                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 cursor-pointer flex items-center gap-2"
+                                                    onMouseDown={e => { e.preventDefault(); handleTechniqueSelect(t.id) }}
+                                                >
+                                                    <span className="font-mono text-muted-foreground">{t.id}</span>
+                                                    <span className="truncate">{t.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <Button type="button" variant="outline" size="sm" className="h-9" onClick={handleAddMapping} disabled={!mappingDraft.tactic && !mappingDraft.technique}>
+                                <Plus className="h-3.5 w-3.5" />
+                            </Button>
                         </div>
                     </div>
                 </DialogBody>

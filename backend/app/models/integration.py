@@ -28,7 +28,7 @@ class Integration(BaseModel):
         # Storage
         's3',
         # AI Providers
-        'openai', 'google_ai',
+        'openai', 'google_ai', 'ollama',
         # Communication
         'slack', 'email_smtp', 'webhook',
         # Authentication

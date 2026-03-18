@@ -149,6 +149,7 @@ CREATE TABLE timeline_events (
     hostname VARCHAR(255),
     activity TEXT NOT NULL,
     source VARCHAR(255),
+    mitre_mappings JSONB DEFAULT '[]',
     mitre_tactic VARCHAR(100),
     mitre_technique VARCHAR(20),
     phase INTEGER CHECK (phase BETWEEN 1 AND 6),
@@ -163,6 +164,7 @@ CREATE INDEX idx_timeline_incident ON timeline_events(incident_id);
 CREATE INDEX idx_timeline_timestamp ON timeline_events(timestamp);
 CREATE INDEX idx_timeline_hostname ON timeline_events(hostname);
 CREATE INDEX idx_timeline_mitre ON timeline_events(mitre_tactic, mitre_technique);
+CREATE INDEX idx_timeline_mitre_mappings ON timeline_events USING gin (mitre_mappings);
 
 -- =============================================================================
 -- COMPROMISED ASSETS

@@ -311,11 +311,11 @@ def download_report(incident_id, report_id):
 def delete_report(incident_id, report_id):
     """Soft-delete a report record."""
     incident = g.incident
-    report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_deleted=False).first()
+    report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_archived=False).first()
     if not report:
         return jsonify({'error': 'not_found', 'message': 'Report not found'}), 404
 
-    report.is_deleted = True
+    report.is_archived = True
     report.updated_at = datetime.now(timezone.utc)
     db.session.commit()
 
@@ -602,7 +602,13 @@ def _build_fallback_report_html(
     if 'timeline' in sections and timeline_events:
         html += '<h2>Timeline of Events</h2><table><thead><tr><th>Timestamp</th><th>Host</th><th>Activity</th><th>MITRE</th></tr></thead><tbody>'
         for event in timeline_events:
-            mitre = f'{event.mitre_tactic} — {event.mitre_technique}' if event.mitre_technique else ''
+            mappings = event.mitre_mappings or []
+            if mappings:
+                mitre = ', '.join(f"{m.get('tactic', '')} — {m.get('technique', '')}" for m in mappings if m.get('technique'))
+            elif event.mitre_technique:
+                mitre = f'{event.mitre_tactic} — {event.mitre_technique}'
+            else:
+                mitre = ''
             html += f'<tr><td>{event.timestamp}</td><td>{html_module.escape(event.hostname or "N/A")}</td><td>{html_module.escape(event.activity)}</td><td>{html_module.escape(mitre)}</td></tr>'
         html += '</tbody></table>'
 

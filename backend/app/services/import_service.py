@@ -160,14 +160,21 @@ class ImportService:
             if not row.get('activity') and not row.get('description'):
                 continue
                 
+            tactic = row.get('tactic') or row.get('mitre_tactic')
+            technique = row.get('technique_id') or row.get('technique') or row.get('mitre_technique')
+            mitre_mappings = []
+            if tactic or technique:
+                mitre_mappings = [{'tactic': tactic or '', 'technique': technique or '', 'name': ''}]
+
             event = TimelineEvent(
                 incident_id=incident_id,
                 timestamp=ImportService._parse_date(row.get('timestamp') or row.get('date') or row.get('time')),
                 activity=row.get('activity') or row.get('description'),
                 hostname=row.get('host') or row.get('hostname') or row.get('system'),
                 source=row.get('source'),
-                mitre_tactic=row.get('tactic') or row.get('mitre_tactic'),
-                mitre_technique=row.get('technique_id') or row.get('technique') or row.get('mitre_technique'),
+                mitre_mappings=mitre_mappings,
+                mitre_tactic=tactic,
+                mitre_technique=technique,
                 created_by=user_id
             )
             db.session.add(event)
@@ -325,14 +332,21 @@ class ImportService:
             if not item.get('activity'):
                 continue
             
+            tactic = item.get('mitre_tactic')
+            technique = item.get('mitre_technique')
+            mitre_mappings = item.get('mitre_mappings', [])
+            if not mitre_mappings and (tactic or technique):
+                mitre_mappings = [{'tactic': tactic or '', 'technique': technique or '', 'name': ''}]
+
             kwargs = {
                 'incident_id': incident_id,
                 'timestamp': ImportService._parse_date(item.get('timestamp')),
                 'activity': item.get('activity'),
                 'hostname': item.get('hostname'),
                 'source': item.get('source'),
-                'mitre_tactic': item.get('mitre_tactic'),
-                'mitre_technique': item.get('mitre_technique'),
+                'mitre_mappings': mitre_mappings,
+                'mitre_tactic': tactic,
+                'mitre_technique': technique,
                 'created_by': user_id
             }
             # Clean and create

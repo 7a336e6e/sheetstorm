@@ -178,6 +178,7 @@ def login():
 
 
 @api_bp.route('/auth/refresh', methods=['POST'])
+@limiter.limit("30 per hour")
 @jwt_required(refresh=True)
 def refresh():
     """Refresh access token."""
@@ -193,6 +194,7 @@ def refresh():
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
+@limiter.limit("30 per minute")
 @jwt_required()
 def logout():
     """Logout and revoke current token."""
@@ -214,6 +216,7 @@ def logout():
 
 
 @api_bp.route('/auth/me', methods=['GET'])
+@limiter.limit("60 per minute")
 @jwt_required()
 def get_current_user():
     """Get current authenticated user."""
@@ -266,6 +269,7 @@ def change_password():
 
 
 @api_bp.route('/auth/supabase', methods=['POST'])
+@limiter.limit("10 per minute")
 def supabase_auth():
     """Authenticate with Supabase JWT."""
     data = request.get_json()

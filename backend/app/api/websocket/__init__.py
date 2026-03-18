@@ -25,6 +25,9 @@ def register_handlers(socketio):
                 if user:
                     # Join user's personal room for notifications
                     join_room(f'user_{user_id}')
+                    # Join organization room for activity feed
+                    if user.organization_id:
+                        join_room(f'org_{user.organization_id}')
                     emit('connected', {
                         'user_id': str(user.id),
                         'name': user.name

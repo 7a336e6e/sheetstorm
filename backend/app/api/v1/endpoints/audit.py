@@ -121,3 +121,56 @@ def get_audit_stats():
         'by_day': {str(day): count for day, count in daily_counts},
         'total': sum(count for _, count in event_counts)
     }), 200
+
+
+@api_bp.route('/activity-feed', methods=['GET'])
+@jwt_required()
+def get_activity_feed():
+    """Get recent activity for the current user's organization.
+
+    Returns human-readable activity items (excludes raw auth/system noise).
+    Query params: limit (int, default 30, max 100), before (ISO datetime cursor).
+    """
+    user = get_current_user()
+    limit = min(request.args.get('limit', 30, type=int), 100)
+
+    # Only show user-facing event types
+    feed_event_types = ['data_modification', 'data_access', 'admin_action', 'security_event']
+
+    query = AuditLog.query.filter(
+        AuditLog.organization_id == user.organization_id,
+        AuditLog.event_type.in_(feed_event_types),
+    )
+
+    before = request.args.get('before')
+    if before:
+        try:
+            query = query.filter(AuditLog.created_at < parse_date(before))
+        except (ValueError, TypeError):
+            pass
+
+    incident_id = request.args.get('incident_id')
+    if incident_id:
+        query = query.filter(AuditLog.incident_id == incident_id)
+
+    logs = query.order_by(AuditLog.created_at.desc()).limit(limit).all()
+
+    items = []
+    for log in logs:
+        items.append({
+            'id': str(log.id),
+            'event_type': log.event_type,
+            'action': log.action,
+            'resource_type': log.resource_type,
+            'resource_id': str(log.resource_id) if log.resource_id else None,
+            'incident_id': str(log.incident_id) if log.incident_id else None,
+            'user_email': log.user_email,
+            'user_id': str(log.user_id) if log.user_id else None,
+            'created_at': log.created_at.isoformat() if log.created_at else None,
+            'details': log.details,
+        })
+
+    return jsonify({
+        'items': items,
+        'has_more': len(items) == limit,
+    }), 200

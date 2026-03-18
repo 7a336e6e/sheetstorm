@@ -8,7 +8,7 @@ from flask_jwt_extended import jwt_required
 from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
 from app import db
-from app.models import Artifact, Integration
+from app.models import Artifact, Incident, Integration
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
@@ -332,6 +332,77 @@ def _get_drive_credentials(user):
         return integration, creds
     except Exception:
         return None, None
+
+
+@api_bp.route('/storage/stats', methods=['GET'])
+@jwt_required()
+def storage_stats():
+    """Return aggregate storage statistics across all artifacts."""
+    import shutil
+    from sqlalchemy import func
+
+    user = get_current_user()
+
+    # Per-storage-type aggregates
+    rows = (
+        db.session.query(
+            Artifact.storage_type,
+            func.count(Artifact.id).label('count'),
+            func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
+        )
+        .join(Incident, Artifact.incident_id == Incident.id)
+        .filter(Incident.organization_id == user.organization_id)
+        .group_by(Artifact.storage_type)
+        .all()
+    )
+
+    by_storage_type = {}
+    total_size = 0
+    total_count = 0
+    for storage_type, count, size in rows:
+        by_storage_type[storage_type or 'local'] = {'count': count, 'size_bytes': int(size)}
+        total_size += int(size)
+        total_count += count
+
+    # Per-MIME-type aggregates
+    mime_rows = (
+        db.session.query(
+            Artifact.mime_type,
+            func.count(Artifact.id).label('count'),
+            func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
+        )
+        .join(Incident, Artifact.incident_id == Incident.id)
+        .filter(Incident.organization_id == user.organization_id)
+        .group_by(Artifact.mime_type)
+        .all()
+    )
+
+    by_mime_type = {}
+    for mime, count, size in mime_rows:
+        by_mime_type[mime or 'unknown'] = {'count': count, 'size_bytes': int(size)}
+
+    # Disk usage for local artifact storage
+    disk_usage = None
+    local_path = '/app/artifacts'
+    try:
+        usage = shutil.disk_usage(local_path)
+        disk_usage = {
+            'total_bytes': usage.total,
+            'used_bytes': usage.used,
+            'free_bytes': usage.free,
+            'usage_percent': round(usage.used / usage.total * 100, 1) if usage.total else 0,
+            'path': local_path,
+        }
+    except OSError:
+        pass
+
+    return jsonify({
+        'total_artifacts': total_count,
+        'total_size_bytes': total_size,
+        'by_storage_type': by_storage_type,
+        'by_mime_type': by_mime_type,
+        'disk_usage': disk_usage,
+    }), 200
 
 
 def _get_drive_access_token(user):

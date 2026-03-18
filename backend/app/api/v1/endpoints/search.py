@@ -26,7 +26,7 @@ def _user_incident_ids(user_id):
         r[0] for r in db.session.query(Incident.id)
         .filter(
             Incident.organization_id == user.organization_id,
-            Incident.is_deleted.is_(False),
+            Incident.is_archived.is_(False),
         ).all()
     ]
 
@@ -99,6 +99,7 @@ def search_across_incidents():
                 TimelineEvent.activity.ilike(search_term),
                 TimelineEvent.hostname.ilike(search_term),
                 TimelineEvent.mitre_tactic.ilike(search_term),
+                cast(TimelineEvent.mitre_mappings, String).ilike(search_term),
             )
         ).all()
         for r in rows:
@@ -500,7 +501,7 @@ def export_incident_stix(incident_id):
     incident = db.session.query(Incident).filter(
         Incident.id == incident_id,
         Incident.organization_id == user.organization_id,
-        Incident.is_deleted.is_(False),
+        Incident.is_archived.is_(False),
     ).first()
 
     if not incident:
@@ -631,23 +632,29 @@ def export_incident_stix(incident_id):
     # --- Attack Patterns (MITRE techniques from timeline) ---
     seen_techniques = set()
     for event in incident.timeline_events.all():
-        if event.mitre_technique and event.mitre_technique not in seen_techniques:
-            seen_techniques.add(event.mitre_technique)
-            ap_id = f"attack-pattern--{uuid_mod.uuid5(uuid_mod.NAMESPACE_URL, event.mitre_technique)}"
-            stix_objects.append({
-                'type': 'attack-pattern',
-                'spec_version': '2.1',
-                'id': ap_id,
-                'created': now,
-                'modified': now,
-                'name': f"{event.mitre_tactic}: {event.mitre_technique}" if event.mitre_tactic else event.mitre_technique,
-                'external_references': [{
-                    'source_name': 'mitre-attack',
-                    'external_id': event.mitre_technique,
-                    'url': f"https://attack.mitre.org/techniques/{event.mitre_technique.replace('.', '/')}",
-                }],
-            })
-            ref_ids.append(ap_id)
+        mappings = event.mitre_mappings or []
+        if not mappings and event.mitre_technique:
+            mappings = [{'tactic': event.mitre_tactic or '', 'technique': event.mitre_technique}]
+        for mapping in mappings:
+            tech = mapping.get('technique', '')
+            tactic = mapping.get('tactic', '')
+            if tech and tech not in seen_techniques:
+                seen_techniques.add(tech)
+                ap_id = f"attack-pattern--{uuid_mod.uuid5(uuid_mod.NAMESPACE_URL, tech)}"
+                stix_objects.append({
+                    'type': 'attack-pattern',
+                    'spec_version': '2.1',
+                    'id': ap_id,
+                    'created': now,
+                    'modified': now,
+                    'name': f"{tactic}: {tech}" if tactic else tech,
+                    'external_references': [{
+                        'source_name': 'mitre-attack',
+                        'external_id': tech,
+                        'url': f"https://attack.mitre.org/techniques/{tech.replace('.', '/')}",
+                    }],
+                })
+                ref_ids.append(ap_id)
 
     # Update report object_refs
     for obj in stix_objects:

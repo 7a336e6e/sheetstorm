@@ -228,3 +228,32 @@ D3FEND_TECHNIQUES = [
 
 D3FEND_TACTICS = sorted(set(t["tactic"] for t in D3FEND_TECHNIQUES))
 D3FEND_TECHNIQUE_IDS = {t["id"]: t for t in D3FEND_TECHNIQUES}
+
+# ATT&CK technique IDs that were manually added by the platform (not from MITRE's
+# official D3FEND mappings). Used at runtime to label countermeasures as
+# "official" vs "platform-suggested".
+MANUAL_OVERRIDE_ATTACK_IDS: dict[str, set[str]] = {
+    "D3-NTA":  {"T1046", "T1595", "T1595.001", "T1595.002"},
+    "D3-CAA":  {"T1046", "T1595", "T1595.001", "T1595.002"},
+    "D3-NTCD": {"T1046", "T1595", "T1595.001", "T1595.002"},
+    "D3-NTSA": {"T1046", "T1595", "T1595.001", "T1595.002"},
+    "D3-ISVA": {"T1595", "T1595.001", "T1595.002"},
+    "D3-PMAD": {"T1595", "T1595.001", "T1595.002"},
+    "D3-UBA":  {"T1069", "T1589", "T1589.001", "T1589.002"},
+    "D3-PSA":  {"T1069", "T1569", "T1489"},
+    "D3-SCA":  {"T1069", "T1569"},
+    "D3-RF":   {"T1485", "T1486", "T1490"},
+    "D3-RD":   {"T1485", "T1486"},
+    "D3-FIM":  {"T1485", "T1486"},
+    "D3-HBWP": {"T1485"},
+    "D3-FCA":  {"T1486"},
+    "D3-RC":   {"T1490"},
+    "D3-RS":   {"T1490"},
+    "D3-SFA":  {"T1490", "T1569", "T1489"},
+    "D3-SMRA": {"T1589"},
+    "D3-MA":   {"T1589"},
+    "D3-SRA":  {"T1589", "T1589.001", "T1589.002"},
+    "D3-OSM":  {"T1489"},
+    "D3-SDM":  {"T1489"},
+    "D3-PA":   {"T1489"},
+}

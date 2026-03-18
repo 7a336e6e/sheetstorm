@@ -18,7 +18,7 @@ class Report(BaseModel):
     ai_provider = Column(String(50))
     sections = Column(JSONB, default=list)
     generated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
-    is_deleted = Column(Boolean, default=False, server_default='false')
+    is_archived = Column(Boolean, default=False, server_default='false')
 
     # Relationships
     incident = relationship('Incident', back_populates='reports')

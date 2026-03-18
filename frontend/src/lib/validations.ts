@@ -89,6 +89,13 @@ export type TaskInput = z.infer<typeof taskSchema>
 
 // ── Timeline Event Schemas ────────────────────────────────────────
 
+export const mitreMappingSchema = z.object({
+  tactic: z.string().max(100).optional().or(z.literal('')),
+  technique: z.string().max(100).optional().or(z.literal('')),
+  name: z.string().max(255).optional().or(z.literal('')),
+  score: z.number().optional(),
+})
+
 export const timelineEventSchema = z.object({
   timestamp: z
     .string()
@@ -103,6 +110,7 @@ export const timelineEventSchema = z.object({
     .max(2000, 'Activity must be 2000 characters or fewer'),
   host_id: z.string().uuid().optional().or(z.literal('')),
   source: z.string().max(200).optional().or(z.literal('')),
+  mitre_mappings: z.array(mitreMappingSchema).optional().default([]),
   mitre_tactic: z.string().max(100).optional().or(z.literal('')),
   mitre_technique: z.string().max(100).optional().or(z.literal('')),
   is_key_event: z.boolean().default(false),

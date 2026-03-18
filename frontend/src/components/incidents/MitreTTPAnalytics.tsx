@@ -75,18 +75,28 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
     let totalMapped = 0
 
     for (const event of events) {
-      if (event.mitre_tactic) {
-        const tacticKey = event.mitre_tactic.toLowerCase()
-        if (!tacticsMap[tacticKey]) {
-          tacticsMap[tacticKey] = { count: 0, techniques: {}, events: [] }
-        }
-        tacticsMap[tacticKey].count++
-        tacticsMap[tacticKey].events.push(event)
-        totalMapped++
+      // Collect mappings: prefer mitre_mappings array, fall back to legacy fields
+      const mappings = event.mitre_mappings?.length
+        ? event.mitre_mappings
+        : event.mitre_tactic
+          ? [{ tactic: event.mitre_tactic, technique: event.mitre_technique || '', name: '' }]
+          : []
 
-        if (event.mitre_technique) {
-          const tech = event.mitre_technique.toUpperCase()
-          tacticsMap[tacticKey].techniques[tech] = (tacticsMap[tacticKey].techniques[tech] || 0) + 1
+      if (mappings.length > 0) {
+        totalMapped++
+        for (const m of mappings) {
+          if (!m.tactic) continue
+          const tacticKey = m.tactic.toLowerCase()
+          if (!tacticsMap[tacticKey]) {
+            tacticsMap[tacticKey] = { count: 0, techniques: {}, events: [] }
+          }
+          tacticsMap[tacticKey].count++
+          tacticsMap[tacticKey].events.push(event)
+
+          if (m.technique) {
+            const tech = m.technique.toUpperCase()
+            tacticsMap[tacticKey].techniques[tech] = (tacticsMap[tacticKey].techniques[tech] || 0) + 1
+          }
         }
       }
     }
@@ -244,11 +254,11 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
                                   )}
                                 </span>
                               )}
-                              {event.mitre_technique && (
-                                <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono border-black/10 dark:border-white/10">
-                                  {event.mitre_technique.toUpperCase()}
+                              {(event.mitre_mappings?.length ? event.mitre_mappings : (event.mitre_technique ? [{ technique: event.mitre_technique }] : [])).map((m, mi) => (
+                                m.technique && <Badge key={mi} variant="outline" className="text-[9px] px-1 py-0 font-mono border-black/10 dark:border-white/10">
+                                  {m.technique.toUpperCase()}
                                 </Badge>
-                              )}
+                              ))}
                               {event.is_ioc && (
                                 <Badge className="bg-red-500/20 text-red-400 border-red-500/30 border text-[9px] px-1 py-0">
                                   IOC

@@ -35,12 +35,15 @@ class Incident(BaseModel):
     lessons_learned = Column(Text)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
-    is_deleted = Column(Boolean, default=False, server_default='false')
+    is_archived = Column(Boolean, default=False, server_default='false')
+    archived_at = Column(DateTime(timezone=True))
+    archived_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
 
     # Relationships
     organization = relationship('Organization', back_populates='incidents')
     lead_responder = relationship('User', foreign_keys=[lead_responder_id])
     creator = relationship('User', foreign_keys=[created_by])
+    archiver = relationship('User', foreign_keys=[archived_by])
     owning_team = relationship('Team', foreign_keys=[team_id])
     assignments = relationship('IncidentAssignment', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     timeline_events = relationship('TimelineEvent', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')

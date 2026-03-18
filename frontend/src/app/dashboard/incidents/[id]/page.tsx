@@ -34,6 +34,7 @@ import {
   MessageSquare,
   Clock,
   Star,
+  Target,
 } from 'lucide-react'
 
 // ─── Tab Components ──────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ import { HostsTab } from '@/components/incidents/HostsTab'
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { IRPhaseTracker } from '@/components/incidents/IRPhaseTracker'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
+import { MitreNavigator } from '@/components/incidents/MitreNavigator'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
 
 // ─── Extracted Detail Components ─────────────────────────────────────────
@@ -88,17 +90,32 @@ export default function IncidentDetailPage() {
     if (incidentId) loadIncidentData()
   }, [incidentId])
 
+  const fetchAllTimelineEvents = async (incidentId: string): Promise<TimelineEvent[]> => {
+    const allEvents: TimelineEvent[] = []
+    let page = 1
+    let totalPages = 1
+    do {
+      const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
+        `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
+      )
+      allEvents.push(...(res.items || []))
+      totalPages = res.pages || 1
+      page++
+    } while (page <= totalPages)
+    return allEvents
+  }
+
   const loadIncidentData = async () => {
     setIsLoadingData(true)
     try {
       await fetchIncident(incidentId)
-      const [tasksRes, timelineRes, hostsRes] = await Promise.all([
+      const [tasksRes, allEvents, hostsRes] = await Promise.all([
         api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`),
-        api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`),
+        fetchAllTimelineEvents(incidentId),
         api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
       ])
       setTasks(tasksRes.items || [])
-      setTimeline(timelineRes.items || [])
+      setTimeline(allEvents)
       setHosts(hostsRes.items || [])
     } catch (error) {
       console.error('Failed to load incident data:', error)
@@ -193,6 +210,9 @@ export default function IncidentDetailPage() {
             </TabsTrigger>
             <TabsTrigger variant="underline" value="graph" className="gap-2">
               <Network className="h-4 w-4" /> Attack Graph
+            </TabsTrigger>
+            <TabsTrigger variant="underline" value="mitre-matrix" className="gap-2">
+              <Target className="h-4 w-4" /> MITRE Matrix
             </TabsTrigger>
             <TabsTrigger variant="underline" value="accounts" className="gap-2">
               <Key className="h-4 w-4" /> Accounts
@@ -299,6 +319,21 @@ export default function IncidentDetailPage() {
             </Card>
           </TabsContent>
 
+          {/* MITRE Matrix */}
+          <TabsContent value="mitre-matrix">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>MITRE ATT&CK Matrix</CardTitle>
+                  <CardDescription>Visualize technique coverage and attack chains from timeline events</CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <MitreNavigator events={timeline} incidentId={incidentId} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="accounts">
             <CompromisedAccountsTab incidentId={incidentId} />
           </TabsContent>
@@ -373,9 +408,19 @@ function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
     async function load() {
       setIsLoading(true)
       try {
-        const res = await api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`)
+        const allEvents: TimelineEvent[] = []
+        let page = 1
+        let totalPages = 1
+        do {
+          const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
+            `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
+          )
+          allEvents.push(...(res.items || []))
+          totalPages = res.pages || 1
+          page++
+        } while (page <= totalPages)
         if (!cancelled) {
-          const pinned = (res.items || [])
+          const pinned = allEvents
             .filter((e) => e.is_key_event)
             .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
           setEvents(pinned)

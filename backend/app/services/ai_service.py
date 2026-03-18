@@ -352,6 +352,7 @@ Provide prioritized recommendations with specific technical steps."""
         self._google_client = None
         self._resolved_openai_key = None
         self._resolved_google_key = None
+        self._ollama_base_url: Optional[str] = None
 
     def _get_key_from_integration(self, integration_type: str) -> Optional[str]:
         """Resolve an API key from the integrations table (DB-first).
@@ -397,6 +398,30 @@ Provide prioritized recommendations with specific technical steps."""
         """Resolve Google AI API key (DB integration first, then env)."""
         return self._resolve_api_key('google_ai', 'GOOGLE_AI_API_KEY')
 
+    def _resolve_ollama_url(self) -> Optional[str]:
+        """Resolve Ollama base URL from DB integration or env."""
+        try:
+            from app.models.integration import Integration
+            integration = (
+                Integration.query
+                .filter_by(type='ollama', is_enabled=True)
+                .first()
+            )
+            if integration and integration.config:
+                url = integration.config.get('base_url')
+                if url:
+                    return url.rstrip('/')
+        except Exception as e:
+            current_app.logger.debug(f"Could not load ollama URL from DB: {e}")
+        env_url = current_app.config.get('OLLAMA_BASE_URL')
+        return env_url.rstrip('/') if env_url else None
+
+    @property
+    def ollama_base_url(self) -> Optional[str]:
+        """Get Ollama base URL."""
+        self._ollama_base_url = self._resolve_ollama_url()
+        return self._ollama_base_url
+
     @property
     def openai_client(self):
         """Get or create OpenAI client."""
@@ -433,7 +458,9 @@ Provide prioritized recommendations with specific technical steps."""
             return bool(self.openai_api_key)
         elif provider == 'google':
             return bool(self.google_api_key)
-        return self.is_configured('openai') or self.is_configured('google')
+        elif provider == 'ollama':
+            return bool(self.ollama_base_url)
+        return self.is_configured('openai') or self.is_configured('google') or self.is_configured('ollama')
 
     def get_available_providers(self) -> list:
         """Get list of configured AI providers."""
@@ -442,7 +469,23 @@ Provide prioritized recommendations with specific technical steps."""
             providers.append('openai')
         if self.is_configured('google'):
             providers.append('google')
+        if self.is_configured('ollama'):
+            providers.append('ollama')
         return providers
+
+    def list_ollama_models(self) -> List[str]:
+        """Fetch available model tags from a running Ollama instance."""
+        import requests
+        base = self.ollama_base_url
+        if not base:
+            return []
+        try:
+            resp = requests.get(f"{base}/api/tags", timeout=10)
+            resp.raise_for_status()
+            return [m['name'] for m in resp.json().get('models', [])]
+        except Exception as e:
+            current_app.logger.warning(f"Ollama model list failed: {e}")
+            return []
 
     # ── Report generation (new AI-powered pipeline) ──────────────────
 
@@ -489,6 +532,8 @@ Provide prioritized recommendations with specific technical steps."""
             return self._generate_report_openai(system_prompt, user_prompt)
         elif provider == 'google':
             return self._generate_report_google(system_prompt, user_prompt)
+        elif provider == 'ollama':
+            return self._generate_ollama_sync(f"{system_prompt}\n\n{user_prompt}")
 
         return None
 
@@ -592,6 +637,8 @@ Provide prioritized recommendations with specific technical steps."""
             return await self._generate_openai(prompt)
         elif provider == 'google':
             return await self._generate_google(prompt)
+        elif provider == 'ollama':
+            return self._generate_ollama_sync(prompt)
 
         return None
 
@@ -635,8 +682,31 @@ Provide prioritized recommendations with specific technical steps."""
             return self._generate_openai_sync(prompt)
         elif provider == 'google':
             return self._generate_google_sync(prompt)
+        elif provider == 'ollama':
+            return self._generate_ollama_sync(prompt)
 
         return None
+
+    def _generate_ollama_sync(self, prompt: str, model: str = None) -> Optional[str]:
+        """Generate text using a local Ollama instance."""
+        import requests
+        base = self.ollama_base_url
+        if not base:
+            return None
+        if model is None:
+            models = self.list_ollama_models()
+            model = models[0] if models else 'llama3'
+        try:
+            resp = requests.post(
+                f"{base}/api/generate",
+                json={'model': model, 'prompt': prompt, 'stream': False},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json().get('response')
+        except Exception as e:
+            current_app.logger.error(f"Ollama generation error: {e}")
+            return None
 
     async def _generate_openai(self, prompt: str) -> Optional[str]:
         """Generate text using OpenAI."""
@@ -714,12 +784,17 @@ Lessons Learned: {incident.get('lessons_learned', 'N/A')}
 
         formatted = []
         for event in events[:100]:
+            # Format MITRE mappings (multi-TTP support)
+            mappings = event.get('mitre_mappings', [])
+            if mappings:
+                mitre_str = ', '.join(f"{m.get('tactic', 'N/A')}:{m.get('technique', 'N/A')}" for m in mappings)
+            else:
+                mitre_str = f"{event.get('mitre_tactic', 'N/A')}:{event.get('mitre_technique', 'N/A')}"
             formatted.append(
                 f"- [{event.get('timestamp', 'N/A')}] {event.get('hostname', 'N/A')}: "
                 f"{event.get('activity', 'N/A')} "
                 f"(Source: {event.get('source', 'N/A')}, "
-                f"MITRE Tactic: {event.get('mitre_tactic', 'N/A')}, "
-                f"Technique: {event.get('mitre_technique', 'N/A')}, "
+                f"MITRE: {mitre_str}, "
                 f"Key Event: {event.get('is_key_event', False)}, "
                 f"IOC: {event.get('is_ioc', False)})"
             )

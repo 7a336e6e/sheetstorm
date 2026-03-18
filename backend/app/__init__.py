@@ -123,7 +123,21 @@ def create_app(config_name=None):
     
     # Initialize Security Headers
     from flask_talisman import Talisman
-    Talisman(app, content_security_policy=None, force_https=False) # CSP handled by frontend or specific config
+    Talisman(
+        app,
+        content_security_policy={
+            'default-src': ["'self'"],
+            'script-src': ["'self'"],
+            'style-src': ["'self'", "'unsafe-inline'"],
+            'img-src': ["'self'", "data:", "https:"],
+            'connect-src': ["'self'"],
+        },
+        force_https=False,  # Handled by reverse proxy
+        strict_transport_security=True,
+        strict_transport_security_max_age=31536000,
+        session_cookie_secure=True,
+        session_cookie_http_only=True,
+    )
 
     # Initialize Input Sanitization Middleware
     from app.middleware.sanitize import init_sanitization

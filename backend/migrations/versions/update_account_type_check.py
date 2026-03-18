@@ -5,7 +5,7 @@ Revision ID: update_account_type_check
 from alembic import op
 
 revision = 'update_account_type_check'
-down_revision = None
+down_revision = 'rename_deleted_to_archived'
 branch_labels = None
 depends_on = None
 

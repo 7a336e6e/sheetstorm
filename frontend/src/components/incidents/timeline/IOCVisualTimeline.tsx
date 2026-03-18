@@ -724,23 +724,6 @@ function AddEventDialog({
 
     useEffect(() => { return () => { if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current) } }, [])
 
-    // Auto-suggest state
-    const [suggestions, setSuggestions] = useState<{ technique: string; tactic: string; name: string; score: number }[]>([])
-    const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-    // Debounced auto-suggest when activity text changes
-    const fetchSuggestions = useCallback((activity: string) => {
-        if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-        if (!activity || activity.length < 10) { setSuggestions([]); return }
-        suggestTimerRef.current = setTimeout(() => {
-            api.post<{ suggestions: typeof suggestions }>('/mitre/suggest', { activity, limit: 3 })
-                .then(data => setSuggestions(data.suggestions || []))
-                .catch(() => {})
-        }, 400)
-    }, [])
-
-    useEffect(() => { return () => { if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current) } }, [])
-
     // Fetch form data once on open
     useEffect(() => {
         if (!open || tactics.length > 0) return

@@ -338,11 +338,12 @@ def _get_drive_credentials(user):
 @jwt_required()
 def storage_stats():
     """Return aggregate storage statistics across all artifacts."""
+    import shutil
     from sqlalchemy import func
 
     user = get_current_user()
 
-    # Total and per-storage-type aggregates
+    # Per-storage-type aggregates
     rows = (
         db.session.query(
             Artifact.storage_type,
@@ -355,18 +356,52 @@ def storage_stats():
         .all()
     )
 
-    breakdown = {}
+    by_storage_type = {}
     total_size = 0
     total_count = 0
     for storage_type, count, size in rows:
-        breakdown[storage_type or 'local'] = {'count': count, 'size': int(size)}
+        by_storage_type[storage_type or 'local'] = {'count': count, 'size_bytes': int(size)}
         total_size += int(size)
         total_count += count
 
+    # Per-MIME-type aggregates
+    mime_rows = (
+        db.session.query(
+            Artifact.mime_type,
+            func.count(Artifact.id).label('count'),
+            func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
+        )
+        .join(Incident, Artifact.incident_id == Incident.id)
+        .filter(Incident.organization_id == user.organization_id)
+        .group_by(Artifact.mime_type)
+        .all()
+    )
+
+    by_mime_type = {}
+    for mime, count, size in mime_rows:
+        by_mime_type[mime or 'unknown'] = {'count': count, 'size_bytes': int(size)}
+
+    # Disk usage for local artifact storage
+    disk_usage = None
+    local_path = '/app/artifacts'
+    try:
+        usage = shutil.disk_usage(local_path)
+        disk_usage = {
+            'total_bytes': usage.total,
+            'used_bytes': usage.used,
+            'free_bytes': usage.free,
+            'usage_percent': round(usage.used / usage.total * 100, 1) if usage.total else 0,
+            'path': local_path,
+        }
+    except OSError:
+        pass
+
     return jsonify({
-        'total_size': total_size,
-        'artifact_count': total_count,
-        'breakdown': breakdown,
+        'total_artifacts': total_count,
+        'total_size_bytes': total_size,
+        'by_storage_type': by_storage_type,
+        'by_mime_type': by_mime_type,
+        'disk_usage': disk_usage,
     }), 200
 
 

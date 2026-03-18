@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Database, Loader2, Plus, Trash2, Zap, HardDrive, BarChart3 } from 'lucide-react'
+import { Database, Loader2, Plus, Trash2, Zap, HardDrive, BarChart3, Server } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -30,6 +30,13 @@ interface StorageStats {
   total_size_bytes: number
   by_storage_type: Record<string, { count: number; size_bytes: number }>
   by_mime_type: Record<string, { count: number; size_bytes: number }>
+  disk_usage?: {
+    total_bytes: number
+    used_bytes: number
+    free_bytes: number
+    usage_percent: number
+    path: string
+  }
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -131,45 +138,77 @@ export function StorageTab() {
 
       {/* Storage Analytics */}
       {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
-                <HardDrive className="h-5 w-5 text-green-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold">{formatBytes(stats.total_size_bytes)}</p>
-                <p className="text-xs text-muted-foreground">Total Storage Used</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                <Database className="h-5 w-5 text-blue-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold">{stats.total_artifacts}</p>
-                <p className="text-xs text-muted-foreground">Total Artifacts</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-                <BarChart3 className="h-5 w-5 text-purple-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-semibold">{Object.keys(stats.by_storage_type).length}</p>
-                <p className="text-xs text-muted-foreground">Storage Backends</p>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+                  <HardDrive className="h-5 w-5 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold">{formatBytes(stats.total_size_bytes ?? 0)}</p>
+                  <p className="text-xs text-muted-foreground">Artifact Storage Used</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                  <Database className="h-5 w-5 text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold">{stats.total_artifacts ?? 0}</p>
+                  <p className="text-xs text-muted-foreground">Total Artifacts</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                  <BarChart3 className="h-5 w-5 text-purple-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold">{Object.keys(stats.by_storage_type ?? {}).length}</p>
+                  <p className="text-xs text-muted-foreground">Storage Backends</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Disk Usage */}
+          {stats.disk_usage && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Server className="h-4 w-4" /> Disk Usage</CardTitle>
+                <CardDescription>Local artifact storage volume ({stats.disk_usage.path})</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {formatBytes(stats.disk_usage.used_bytes)} used of {formatBytes(stats.disk_usage.total_bytes)}
+                    </span>
+                    <span className="font-medium">{stats.disk_usage.usage_percent}%</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        stats.disk_usage.usage_percent > 90 ? 'bg-red-500' :
+                        stats.disk_usage.usage_percent > 75 ? 'bg-yellow-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${Math.min(stats.disk_usage.usage_percent, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">{formatBytes(stats.disk_usage.free_bytes)} free</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
       {/* Breakdown by storage type */}
-      {stats && Object.keys(stats.by_storage_type).length > 0 && (
+      {stats && Object.keys(stats.by_storage_type ?? {}).length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Storage Breakdown</CardTitle>

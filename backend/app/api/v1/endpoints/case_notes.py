@@ -128,7 +128,11 @@ def update_case_note(incident_id, note_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'delete', 'case_note')
 def delete_case_note(incident_id, note_id):
-    """Soft-delete a case note."""
+    """Soft-delete a case note. Only administrators can delete notes."""
+    user = get_current_user()
+    if not user.has_role('Administrator'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators can delete case notes'}), 403
+
     note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_archived=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404

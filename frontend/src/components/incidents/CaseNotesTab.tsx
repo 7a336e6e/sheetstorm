@@ -185,9 +185,12 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
     return CATEGORY_OPTIONS.find(c => c.value === category) || CATEGORY_OPTIONS[0]
   }
 
+  const isAdmin = user?.roles?.includes('Administrator') ?? false
+  const canWrite = user?.permissions?.includes('incidents:update') ?? false
+
   const canEdit = (note: CaseNote) => {
-    if (!user) return false
-    return note.author?.id === user.id || user.roles?.includes('admin')
+    if (!user || !canWrite) return false
+    return note.author?.id === user.id || isAdmin
   }
 
   if (isLoading) {
@@ -245,9 +248,11 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleOpenCreate}>
-                <Plus className="mr-2 h-4 w-4" /> Add Note
-              </Button>
+              {canWrite && (
+                <Button onClick={handleOpenCreate}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Note
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -260,7 +265,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                 title={search || categoryFilter !== 'all' ? 'No matching notes' : 'No case notes yet'}
                 description={search || categoryFilter !== 'all' ? 'Try adjusting your search or filter criteria.' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
                 icon={<StickyNote className="w-8 h-8" />}
-                action={!(search || categoryFilter !== 'all') && (
+                action={!(search || categoryFilter !== 'all') && canWrite && (
                   <Button size="sm" variant="outline" onClick={handleOpenCreate}>
                     <Plus className="mr-2 h-3.5 w-3.5" /> Add Note
                   </Button>
@@ -309,22 +314,28 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                           )}
                         </div>
                       </div>
-                      {canEdit(note) && (
+                      {(canEdit(note) || isAdmin) && (
                         <div className="flex items-center gap-1 flex-shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleTogglePin(note)}
-                            title={note.is_pinned ? 'Unpin' : 'Pin'}
-                          >
-                            {note.is_pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(note)}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(note)} className="text-red-400 hover:text-red-300">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {canEdit(note) && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleTogglePin(note)}
+                                title={note.is_pinned ? 'Unpin' : 'Pin'}
+                              >
+                                {note.is_pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(note)}>
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
+                          {isAdmin && (
+                            <Button variant="ghost" size="sm" onClick={() => handleDelete(note)} className="text-red-400 hover:text-red-300">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>

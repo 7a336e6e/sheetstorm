@@ -41,10 +41,13 @@ import {
   MessageSquare,
   Trash2,
   Send,
+  Search,
+  Filter,
 } from 'lucide-react'
 import { PHASE_INFO } from '@/lib/design-tokens'
 import { formatDateTime, formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
+import { useAuthStore } from '@/lib/store'
 import type { Task, CompromisedHost, CompromisedAccount, MalwareTool, HostBasedIndicator, User as UserType } from '@/types'
 
 // ─── Tasks Tab (self-contained) ──────────────────────────────────────────
@@ -57,6 +60,10 @@ interface TasksTabProps {
 }
 
 export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabProps) {
+  const { user } = useAuthStore()
+  const isAdmin = user?.roles?.includes('Administrator') ?? false
+  const canWrite = user?.permissions?.includes('tasks:update') ?? false
+
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
@@ -81,6 +88,12 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
     users: UserType[]
   }>({ accounts: [], malware: [], hostIndicators: [], users: [] })
   const [linkEntityType, setLinkEntityType] = useState('')
+
+  // Filters
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [priorityFilter, setPriorityFilter] = useState<string>('all')
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
 
   // Comments
   const [taskComments, setTaskComments] = useState<Record<string, any[]>>({})
@@ -275,28 +288,117 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
     host_indicator: <Fingerprint className="w-3 h-3" />,
   }
 
+  // ─── Filtering ─────────────────────────────────────────────
+
+  const uniqueAssignees = Array.from(
+    new Map(tasks.filter(t => t.assignee).map(t => [t.assignee!.id, t.assignee!])).values()
+  )
+
+  const hasActiveFilters = search || statusFilter !== 'all' || priorityFilter !== 'all' || assigneeFilter !== 'all'
+
+  const filteredTasks = tasks.filter(t => {
+    if (statusFilter !== 'all' && t.status !== statusFilter) return false
+    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false
+    if (assigneeFilter !== 'all') {
+      if (assigneeFilter === 'unassigned' && t.assignee) return false
+      if (assigneeFilter !== 'unassigned' && t.assignee?.id !== assigneeFilter) return false
+    }
+    if (search) {
+      const q = search.toLowerCase()
+      return t.title.toLowerCase().includes(q) || (t.description?.toLowerCase().includes(q) ?? false)
+    }
+    return true
+  })
+
   // ─── Render ────────────────────────────────────────────────
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex items-center justify-between">
-          <div>
-            <CardTitle>Tasks</CardTitle>
-            <CardDescription>Response checklist</CardDescription>
-          </div>
-          <Button onClick={handleOpenTaskModal}><Plus className="mr-2 h-4 w-4" /> Add Task</Button>
-        </CardHeader>
-        <CardContent>
-          {tasks.length === 0 ? (
-            <TableEmpty
-              title="No tasks yet"
-              description="Create tasks to track response actions, assignments, and progress for this incident."
-              icon={<CheckSquare className="w-8 h-8" />}
-            />
-          ) : (
-            <div className="space-y-3">
-              {tasks.map(task => {
+      <div className="space-y-4">
+        {/* Filters & Action */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col lg:flex-row gap-4 justify-between">
+              <div className="flex flex-col lg:flex-row gap-4 flex-1">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search tasks..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="pl-10"
+                    variant="glass"
+                  />
+                </div>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <Filter className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="blocked">Blocked</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <Filter className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Priorities</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="low">Low</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                  <SelectTrigger className="w-[160px]">
+                    <User className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="Assignee" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Assignees</SelectItem>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {uniqueAssignees.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {canWrite && (
+                <Button onClick={handleOpenTaskModal}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Task
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tasks List */}
+        {filteredTasks.length === 0 ? (
+          <Card>
+            <CardContent className="p-0">
+              <TableEmpty
+                title={hasActiveFilters ? 'No matching tasks' : 'No tasks yet'}
+                description={hasActiveFilters ? 'Try adjusting your search or filter criteria.' : 'Create tasks to track response actions, assignments, and progress for this incident.'}
+                icon={<CheckSquare className="w-8 h-8" />}
+                action={!hasActiveFilters && canWrite && (
+                  <Button size="sm" variant="outline" onClick={handleOpenTaskModal}>
+                    <Plus className="mr-2 h-3.5 w-3.5" /> Add Task
+                  </Button>
+                )}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {filteredTasks.map(task => {
                 const linkedEntities = task.extra_data?.linked_entities
                 const st = statusInfo[task.status] || statusInfo.pending
                 const isExpanded = expandedTaskComments === task.id
@@ -305,13 +407,19 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
                 return (
                   <div key={task.id} className="rounded-xl bg-muted/50 border border-border p-4">
                     <div className="flex gap-4">
-                      <button
-                        onClick={() => handleToggleTaskStatus(task)}
-                        className={`mt-0.5 ${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
-                        title={`Status: ${st.label} — Click to change`}
-                      >
-                        {st.icon}
-                      </button>
+                      {canWrite ? (
+                        <button
+                          onClick={() => handleToggleTaskStatus(task)}
+                          className={`mt-0.5 ${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
+                          title={`Status: ${st.label} — Click to change`}
+                        >
+                          {st.icon}
+                        </button>
+                      ) : (
+                        <span className={`mt-0.5 ${st.color}`} title={`Status: ${st.label}`}>
+                          {st.icon}
+                        </span>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
@@ -354,12 +462,16 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
                           <MessageSquare className="h-4 w-4" />
                           {comments.length > 0 && <span className="ml-1 text-xs">{comments.length}</span>}
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleOpenEditTask(task)} title="Edit">
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteTask(task.id)} className="text-destructive hover:text-destructive/80" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {canWrite && (
+                          <Button variant="ghost" size="sm" onClick={() => handleOpenEditTask(task)} title="Edit">
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {isAdmin && (
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteTask(task.id)} className="text-destructive hover:text-destructive/80" title="Delete">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
 
@@ -382,25 +494,29 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
                                   </div>
                                   <p className="text-xs text-muted-foreground mt-0.5">{comment.content}</p>
                                 </div>
-                                <Button variant="ghost" size="sm" onClick={() => handleDeleteComment(task.id, comment.id)} className="h-6 w-6 p-0 text-destructive hover:text-destructive/80">
-                                  <X className="h-3 w-3" />
-                                </Button>
+                                {isAdmin && (
+                                  <Button variant="ghost" size="sm" onClick={() => handleDeleteComment(task.id, comment.id)} className="h-6 w-6 p-0 text-destructive hover:text-destructive/80">
+                                    <X className="h-3 w-3" />
+                                  </Button>
+                                )}
                               </div>
                             ))}
                           </div>
                         )}
-                        <div className="flex items-center gap-2">
-                          <Input
-                            placeholder="Add a comment..."
-                            value={newComment}
-                            onChange={e => setNewComment(e.target.value)}
-                            className="text-xs h-8"
-                            onKeyDown={e => { if (e.key === 'Enter') handleAddComment(task.id) }}
-                          />
-                          <Button size="sm" onClick={() => handleAddComment(task.id)} disabled={isAddingComment || !newComment.trim()} className="h-8">
-                            <Send className="h-3 w-3" />
-                          </Button>
-                        </div>
+                        {canWrite && (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              placeholder="Add a comment..."
+                              value={newComment}
+                              onChange={e => setNewComment(e.target.value)}
+                              className="text-xs h-8"
+                              onKeyDown={e => { if (e.key === 'Enter') handleAddComment(task.id) }}
+                            />
+                            <Button size="sm" onClick={() => handleAddComment(task.id)} disabled={isAddingComment || !newComment.trim()} className="h-8">
+                              <Send className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -408,8 +524,7 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
               })}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
       {/* Add/Edit Task Modal */}
       <TaskFormModal

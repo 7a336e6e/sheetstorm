@@ -171,7 +171,11 @@ def update_task(incident_id, task_id):
 @require_incident_access('tasks:delete')
 @audit_log('data_modification', 'delete', 'task')
 def delete_task(incident_id, task_id):
-    """Delete a task."""
+    """Delete a task. Only administrators can delete tasks."""
+    user = get_current_user()
+    if not user.has_role('Administrator'):
+        return jsonify({'error': 'forbidden', 'message': 'Only administrators can delete tasks'}), 403
+
     incident = g.incident
 
     task = Task.query.filter_by(id=task_id, incident_id=incident.id).first()

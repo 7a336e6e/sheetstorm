@@ -16,6 +16,7 @@ out/
 build/
 dist/
 *.egg-info/
+frontend/tsconfig.tsbuildinfo
 
 # IDE
 .idea/
@@ -55,3 +56,30 @@ tasks.md
 mcp-server/.venv/
 test_oauth_flow.py
 prompts/
+.aigentic/
+.gemini/
+.mcp.json
+AGENTS.md
+CLAUDE.md
+ORCHESTRATOR.md
+GEMINI.md
+backend/tests/
+
+
+# ─── AIGentic Framework ──────────────────────────────────────────────────────
+# Task board state (ephemeral, per-session)
+.aigentic/board/active/
+.aigentic/board/review/
+.aigentic/board/done/
+.aigentic/board/failed/
+
+# Execution history (can be large)
+.aigentic/runs/
+
+# Framework log
+.aigentic/aigentic.log
+
+# Skills
+skills/
+agents/
+playbooks/

@@ -10,6 +10,7 @@ from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 import json
 from app.services.encryption_service import encryption_service
+from app.utils.url_validator import validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,10 @@ def misp_push_ioc():
 
     if not api_key or not api_url:
         return jsonify({'error': 'not_configured', 'message': 'MISP API URL or key missing'}), 400
+
+    is_valid_url, reason = validate_outbound_url(api_url)
+    if not is_valid_url:
+        return jsonify({'error': 'invalid_url', 'message': f'Outbound URL blocked: {reason}'}), 400
 
     headers = {
         'Authorization': api_key,

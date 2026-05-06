@@ -202,6 +202,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
 
     const [allEvents, setAllEvents] = useState<TimelineEvent[]>([])
     const [isLoading, setIsLoading] = useState(true)
+    const [loadError, setLoadError] = useState(false)
     const [filterMode, setFilterMode] = useState<'pinned' | 'all'>('pinned')
     const [orientation, setOrientation] = useState<Orientation>('horizontal')
     const [hosts, setHosts] = useState<CompromisedHost[]>([])
@@ -229,6 +230,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
     const loadData = async () => {
         setIsLoading(true)
         try {
+            setLoadError(false)
             const allEvents: TimelineEvent[] = []
             let page = 1
             let totalPages = 1
@@ -247,8 +249,13 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
             )
             setAllEvents(sorted)
             setHosts(hostsRes.items || [])
-        } catch (error) {
-            console.error('Failed to load timeline:', error)
+        } catch {
+            setLoadError(true)
+            toast({
+                title: 'Failed to load timeline',
+                description: 'Check your connection and try again.',
+                variant: 'destructive',
+            })
         } finally {
             setIsLoading(false)
         }
@@ -286,8 +293,12 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
             setShowAddModal(false)
             setForm({ timestamp: '', activity: '', source: '', host_id: '', mitre_mappings: [] })
             loadData()
-        } catch (error) {
-            console.error('Failed to add event:', error)
+        } catch {
+            toast({
+                title: 'Failed to add event',
+                description: 'Please try again.',
+                variant: 'destructive',
+            })
         } finally {
             setIsSubmitting(false)
         }
@@ -358,6 +369,22 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                 <Clock className="h-6 w-6 mx-auto mb-2 opacity-30" />
                 Loading timeline...
             </div>
+        )
+    }
+
+    if (loadError && !isLoading) {
+        return (
+            <Card className="border-destructive/30">
+                <CardContent className="py-8 text-center">
+                    <p className="text-sm font-medium text-foreground">Failed to load timeline</p>
+                    <p className="text-xs text-muted-foreground mt-1 mb-4">
+                        Check your connection and try again.
+                    </p>
+                    <Button onClick={loadData} variant="outline" size="sm">
+                        Retry
+                    </Button>
+                </CardContent>
+            </Card>
         )
     }
 

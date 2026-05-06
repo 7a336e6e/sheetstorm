@@ -1,4 +1,5 @@
 """Timeline event endpoints"""
+import re
 from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
@@ -36,12 +37,14 @@ def list_timeline_events(incident_id):
         query = query.filter(TimelineEvent.host_id == host_id)
 
     mitre_tactic = request.args.get('mitre_tactic')
+    if mitre_tactic and (len(mitre_tactic) > 64 or not re.fullmatch(r'[a-z0-9-]+', mitre_tactic)):
+        return jsonify({'error': 'bad_request', 'message': 'invalid mitre_tactic value'}), 400
     if mitre_tactic:
         # Search both legacy column and JSONB mappings
-        from sqlalchemy import or_, text
+        from sqlalchemy import or_
         query = query.filter(or_(
             TimelineEvent.mitre_tactic == mitre_tactic,
-            TimelineEvent.mitre_mappings.op('@>')('[{"tactic": "' + mitre_tactic + '"}]')
+            TimelineEvent.mitre_mappings.contains([{'tactic': mitre_tactic}])
         ))
 
     start_date = request.args.get('start_date')

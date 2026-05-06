@@ -229,6 +229,10 @@ def audit_log(event_type, action, resource_type=None):
                 db.session.commit()
                 _broadcast_activity(log_entry)
             except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
                 logger.exception('Audit logging error')
 
             return result

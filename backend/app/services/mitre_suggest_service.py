@@ -1,32 +1,56 @@
 """MITRE ATT&CK Auto-Suggest Service.
 
 Scores timeline-event activity descriptions against keyword / regex patterns
-loaded from ``app/data/mitre_patterns.yaml`` and returns ranked technique
+loaded from per-organization database rows and returns ranked technique
 suggestions.
 """
 
-import os
 import re
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-import yaml
-
-_PATTERNS: Optional[List[dict]] = None
-_PATTERNS_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'mitre_patterns.yaml')
+from app import db
+from app.models import MitrePattern
 
 
-def _load_patterns() -> List[dict]:
-    """Load and cache YAML detection patterns."""
-    global _PATTERNS
-    if _PATTERNS is not None:
-        return _PATTERNS
+def get_all_patterns(organization_id: str) -> List[Dict]:
+    """Return the raw pattern list (for management endpoints)."""
+    patterns = MitrePattern.query.filter_by(
+        organization_id=organization_id
+    ).order_by(MitrePattern.technique.asc()).all()
+    return [p.to_dict() for p in patterns]
 
-    with open(_PATTERNS_PATH, 'r') as f:
-        data = yaml.safe_load(f)
 
-    raw = data.get('patterns', []) if data else []
+def save_patterns(patterns_list: List[Dict], organization_id: str) -> None:
+    """Persist patterns list for one organization."""
+    db.session.query(MitrePattern).filter_by(
+        organization_id=organization_id
+    ).delete(synchronize_session=False)
+
+    patterns = []
+    for p in patterns_list:
+        patterns.append(MitrePattern(
+            organization_id=organization_id,
+            technique=p['technique'],
+            tactic=p['tactic'],
+            name=p['name'],
+            keywords=p.get('keywords', []) or [],
+            regex=p.get('regex', []) or [],
+        ))
+
+    if patterns:
+        db.session.add_all(patterns)
+    db.session.commit()
+
+
+def reload_patterns() -> None:
+    """No-op retained for legacy callers; database reads are always fresh."""
+    return None
+
+
+def _compile_patterns(patterns: List[Dict]) -> List[dict]:
+    """Compile regex patterns and normalize keywords for matching."""
     compiled: List[dict] = []
-    for p in raw:
+    for p in patterns:
         entry = {
             'technique': p['technique'],
             'tactic': p['tactic'],
@@ -41,28 +65,24 @@ def _load_patterns() -> List[dict]:
             except re.error:
                 pass  # skip invalid patterns
         compiled.append(entry)
-
-    _PATTERNS = compiled
-    return _PATTERNS
+    return compiled
 
 
-def reload_patterns() -> None:
-    """Force-reload patterns from disk (e.g. after CRUD edit)."""
-    global _PATTERNS
-    _PATTERNS = None
-    _load_patterns()
-
-
-def suggest(activity: str, limit: int = 5, min_score: float = 0.1) -> List[Dict]:
-    """Return ranked MITRE technique suggestions for *activity*.
+def suggest_mitre_techniques(
+    text: str,
+    organization_id: str,
+    limit: int = 5,
+    min_score: float = 0.1
+) -> List[Dict]:
+    """Return ranked MITRE technique suggestions for *text*.
 
     Each result has: technique, tactic, name, score (0-1).
     """
-    if not activity or not activity.strip():
+    if not text or not text.strip() or not organization_id:
         return []
 
-    patterns = _load_patterns()
-    text = activity.lower()
+    patterns = _compile_patterns(get_all_patterns(organization_id))
+    text = text.lower()
     results: Dict[str, dict] = {}
 
     for p in patterns:
@@ -100,44 +120,16 @@ def suggest(activity: str, limit: int = 5, min_score: float = 0.1) -> List[Dict]
     return ranked[:limit]
 
 
-def get_all_patterns() -> List[Dict]:
-    """Return the raw pattern list (for management endpoints)."""
-    patterns = _load_patterns()
-    result = []
-    for p in patterns:
-        result.append({
-            'technique': p['technique'],
-            'tactic': p['tactic'],
-            'name': p['name'],
-            'keywords': p['keywords'],
-            'regex': [rx.pattern for rx in p['regex']],
-            'weight': p['weight'],
-        })
-    return result
-
-
-def save_patterns(patterns_list: List[Dict]) -> None:
-    """Persist patterns list back to the YAML file."""
-    entries = []
-    for p in patterns_list:
-        entry: dict = {
-            'technique': p['technique'],
-            'tactic': p['tactic'],
-            'name': p['name'],
-            'keywords': p['keywords'],
-            'weight': p.get('weight', 0.8),
-        }
-        if p.get('regex'):
-            entry['regex'] = p['regex']
-        entries.append(entry)
-
-    with open(_PATTERNS_PATH, 'w') as f:
-        yaml.dump(
-            {'patterns': entries},
-            f,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-        )
-
-    reload_patterns()
+def suggest(
+    activity: str,
+    limit: int = 5,
+    min_score: float = 0.1,
+    organization_id: Optional[str] = None
+) -> List[Dict]:
+    """Backward-compatible wrapper around suggest_mitre_techniques."""
+    return suggest_mitre_techniques(
+        activity,
+        organization_id,
+        limit=limit,
+        min_score=min_score
+    )

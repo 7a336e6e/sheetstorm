@@ -15,6 +15,7 @@ from app.models.report import Report
 from app.models.team import Team, TeamMember
 from app.models.case_note import CaseNote
 from app.models.custom_field import CustomFieldOption
+from app.models.mitre_pattern import MitrePattern
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
@@ -33,4 +34,5 @@ __all__ = [
     'Team', 'TeamMember',
     'CaseNote',
     'CustomFieldOption',
+    'MitrePattern',
 ]

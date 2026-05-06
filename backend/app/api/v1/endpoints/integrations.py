@@ -2,11 +2,12 @@
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db
+from app import db, limiter
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 from app.services.encryption_service import encryption_service
+from app.utils.url_validator import validate_outbound_url
 
 
 @api_bp.route('/integrations', methods=['GET'])
@@ -207,6 +208,10 @@ def test_integration(integration_id):
         elif integration.type == 'elastic':
             success, message = _test_elastic(integration.config, credentials)
         elif integration.type == 'webhook':
+            url = integration.config.get('url') or (credentials.get('url') if credentials else '')
+            is_valid_url, reason = validate_outbound_url(url)
+            if not is_valid_url:
+                return jsonify({'error': 'invalid_url', 'message': f'Outbound URL blocked: {reason}'}), 400
             success, message = _test_webhook(integration.config, credentials)
         elif integration.type == 'google_drive':
             success, message = _test_google_drive(integration.config, credentials)
@@ -291,6 +296,8 @@ def _test_google_ai(credentials):
 
 @api_bp.route('/integrations/ollama/models', methods=['GET'])
 @jwt_required()
+@require_permission('integrations:read')
+@limiter.limit("10 per minute")
 def list_ollama_models():
     """Discover locally available Ollama models."""
     from app.services.ai_service import ai_service

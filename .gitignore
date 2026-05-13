@@ -83,3 +83,4 @@ backend/tests/
 skills/
 agents/
 playbooks/
+.plans/

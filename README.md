@@ -175,7 +175,7 @@ Configure via environment variables in `.env` or throught the GUI in the platfor
 | [WebSocket Events](assets/docs/websocket-events.md) | Real-time event reference |
 | [Configuration](assets/docs/configuration.md) | Environment variables and settings |
 | [Development](assets/docs/development.md) | Local dev setup, testing, contributing |
-| [Roadmap](ROADMAP.md) | Planned features and milestones |
+| [Roadmap](assets/docs/roadmap.md) | Planned features and milestones |
 | [MCP Server](assets/docs/mcp-server-roadmap.md) | MCP integration details |
 
 ---

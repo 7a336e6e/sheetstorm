@@ -24,6 +24,15 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 > SheetStorm doesn't aim to replace commercial SOAR platforms. It fills the gap between ad-hoc spreadsheets and heavyweight enterprise tools — giving every responder access to structured, collaborative IR for free.
 
+## What's New
+
+- MITRE ATT&CK suggestions now use an organization-scoped pattern model and ranked `/mitre/suggest` service.
+- Tasks tab redesign adds search, status, priority, and assignee filters.
+- Tasks are read-only for viewers, while task and comment deletion are administrator-only.
+- Case notes enforce viewer read-only behavior, with note deletion restricted to administrators.
+- Teams and organizational roles are backed by shipped migrations for `teams`, `team_members`, and user `organizational_role`.
+- Stability fixes include null-safe storage analytics, IOC timeline duplicate suggestion-state cleanup, and a linearized Alembic migration chain.
+
 ---
 
 <br />
@@ -34,7 +43,7 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 
 ### 🔍 Investigate
 - Track compromised hosts, accounts, and IOCs
-- Map MITRE ATT&CK tactics & techniques
+- Map and suggest MITRE ATT&CK tactics & techniques
 - Import evidence from Excel/CSV spreadsheets
 - Chain of custody for forensic artifacts
 
@@ -166,7 +175,7 @@ Configure via environment variables in `.env` or throught the GUI in the platfor
 | [WebSocket Events](assets/docs/websocket-events.md) | Real-time event reference |
 | [Configuration](assets/docs/configuration.md) | Environment variables and settings |
 | [Development](assets/docs/development.md) | Local dev setup, testing, contributing |
-| [Roadmap](assets/docs/roadmap.md) | Planned features and milestones |
+| [Roadmap](ROADMAP.md) | Planned features and milestones |
 | [MCP Server](assets/docs/mcp-server-roadmap.md) | MCP integration details |
 
 ---

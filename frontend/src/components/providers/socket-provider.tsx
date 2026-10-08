@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useRef, useState, ReactNode, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/store'
 
@@ -25,35 +25,21 @@ export function useSocketContext() {
 }
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const socketRef = useRef<Socket | null>(null)
+  const [socket, setSocket] = useState<Socket | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
   const { isAuthenticated } = useAuthStore()
 
-  const getToken = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('access_token')
-    }
-    return null
-  }, [])
-
   useEffect(() => {
-    if (!isAuthenticated) {
-      // Disconnect if logged out
-      if (socketRef.current) {
-        socketRef.current.disconnect()
-        socketRef.current = null
-        setStatus('disconnected')
-      }
-      return
-    }
-
-    const token = getToken()
-    if (!token) return
+    // Logged out: nothing to do — the previous effect's cleanup (below)
+    // already disconnected any socket when isAuthenticated flipped.
+    if (!isAuthenticated) return
 
     setStatus('connecting')
 
-    const socket = io(WS_URL || undefined, {
-      query: { token },
+    const s = io(WS_URL || undefined, {
+      // Auth rides the httpOnly access cookie on the handshake. No token is
+      // sent from JS (none is held there) and never in the query string.
+      withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 10,
@@ -62,37 +48,37 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       timeout: 10000,
     })
 
-    socket.on('connect', () => {
+    s.on('connect', () => {
       setStatus('connected')
     })
 
-    socket.on('disconnect', () => {
+    s.on('disconnect', () => {
       setStatus('disconnected')
     })
 
-    socket.on('connect_error', () => {
+    s.on('connect_error', () => {
       setStatus('error')
     })
 
-    socket.on('connected', (data: { user_id?: string; anonymous?: boolean }) => {
+    s.on('connected', (data: { user_id?: string; anonymous?: boolean }) => {
       if (data.anonymous) {
         console.warn('[Socket] Connected anonymously — token may be invalid')
       }
     })
 
-    socketRef.current = socket
+    setSocket(s)
 
     return () => {
-      socket.disconnect()
-      socketRef.current = null
+      s.disconnect()
+      setSocket(null)
       setStatus('disconnected')
     }
-  }, [isAuthenticated, getToken])
+  }, [isAuthenticated])
 
   return (
     <SocketContext.Provider
       value={{
-        socket: socketRef.current,
+        socket,
         status,
         isConnected: status === 'connected',
       }}

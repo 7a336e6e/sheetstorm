@@ -132,17 +132,9 @@ export default function ReportsPage() {
         if (!selectedIncidentId) return
         setDownloadingReportId(report.id)
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
-            const token = api.getToken()
-            const response = await fetch(
-                `${API_URL}/incidents/${selectedIncidentId}/reports/${report.id}/download`,
-                {
-                    method: 'GET',
-                    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-                }
+            const blob = await api.downloadFile(
+                `/incidents/${selectedIncidentId}/reports/${report.id}/download`
             )
-            if (!response.ok) throw new Error('Download failed')
-            const blob = await response.blob()
             const url = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
@@ -189,23 +181,10 @@ export default function ReportsPage() {
         toast({ title: 'Generating Report', description: `Starting AI-powered generation of ${title}...` })
 
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
-            const token = api.getToken()
-            const response = await fetch(`${API_URL}/incidents/${selectedIncidentId}/reports/generate-pdf`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-                },
-                body: JSON.stringify({ report_type: typeId }),
-            })
-
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({ message: 'Report generation failed' }))
-                throw new Error(errData.message || 'Report generation failed')
-            }
-
-            const pdfBlob = await response.blob()
+            const pdfBlob = await api.postForBlob(
+                `/incidents/${selectedIncidentId}/reports/generate-pdf`,
+                { report_type: typeId }
+            )
 
             // Trigger browser download
             const url = URL.createObjectURL(pdfBlob)

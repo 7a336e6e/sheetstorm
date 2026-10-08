@@ -5,6 +5,7 @@
 
 "use client"
 
+import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -28,7 +29,7 @@ const TAB_CONFIG = [
     { value: 'authentication', label: 'Authentication', icon: Shield },
 ] as const
 
-export default function SettingsPage() {
+function SettingsInner() {
     const searchParams = useSearchParams()
     const defaultTab = searchParams.get('tab') || 'general'
 
@@ -75,5 +76,13 @@ export default function SettingsPage() {
                 </TabsContent>
             </Tabs>
         </div>
+    )
+}
+
+export default function SettingsPage() {
+    return (
+        <Suspense fallback={null}>
+            <SettingsInner />
+        </Suspense>
     )
 }

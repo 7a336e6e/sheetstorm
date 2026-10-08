@@ -68,8 +68,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   // Fetch unread notification count
   const fetchUnreadCount = useCallback(async () => {
     try {
-      const data = await api.get<{ items: { is_read: boolean }[]; total: number }>('/notifications?is_read=false&per_page=1')
-      setUnreadCount(data.total)
+      const data = await api.get<{ unread_count: number }>('/notifications/unread-count')
+      setUnreadCount(data.unread_count)
     } catch {
       // Silently fail — badge just won't show
     }

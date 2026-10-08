@@ -179,6 +179,24 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
     }
   }
 
+  const handleExportCustody = async (format: 'pdf' | 'csv') => {
+    if (!custodyArtifact) return
+    try {
+      const blob = await api.downloadFile(
+        `/incidents/${incidentId}/artifacts/${custodyArtifact.id}/custody/export?format=${format}`
+      )
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `custody_${custodyArtifact.original_filename}.${format}`
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(url)
+      toast({ title: 'Custody report exported' })
+    } catch {
+      toast({ title: 'Export failed', description: 'Could not export custody report', variant: 'destructive' })
+    }
+  }
+
   const VerificationIcon = ({ status }: { status: string }) => {
     if (status === 'verified') return <ShieldCheck className="h-4 w-4 text-green-400" />
     if (status === 'mismatch') return <ShieldX className="h-4 w-4 text-red-400" />
@@ -526,6 +544,14 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
               </div>
             )}
           </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => handleExportCustody('csv')}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+            </Button>
+            <Button size="sm" onClick={() => handleExportCustody('pdf')}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" /> Export Report (PDF)
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

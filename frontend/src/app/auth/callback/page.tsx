@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { useAuthStore } from '@/lib/store'
-import api from '@/lib/api'
+import { useAuthStore, type User } from '@/lib/store'
 import { Shield, Loader2, AlertCircle, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,12 +17,7 @@ export default function AuthCallbackPage() {
   const [preAuthToken, setPreAuthToken] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
 
-  const completeLogin = (result: { access_token: string; refresh_token?: string; user: any }) => {
-    api.setToken(result.access_token)
-    localStorage.setItem('access_token', result.access_token)
-    if (result.refresh_token) {
-      localStorage.setItem('refresh_token', result.refresh_token)
-    }
+  const completeLogin = (result: { user: User }) => {
     useAuthStore.setState({
       user: result.user,
       isAuthenticated: true,
@@ -51,6 +45,9 @@ export default function AuthCallbackPage() {
         const res = await fetch(`${apiUrl}/auth/supabase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          // Session cookies are set by this response — must be included
+          // when the API is on a different origin.
+          credentials: 'include',
           body: JSON.stringify({ access_token: data.session.access_token }),
         })
 
@@ -86,6 +83,7 @@ export default function AuthCallbackPage() {
       const res = await fetch(`${apiUrl}/auth/mfa/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ pre_auth_token: preAuthToken, mfa_code: mfaCode }),
       })
 

@@ -47,14 +47,8 @@ export const useAuthStore = create<AuthState>()(
           if (!sbError && sbData.session) {
             // Exchange Supabase token for backend JWT
             const response = await api.post<{
-              access_token: string
-              refresh_token: string
               user: User
             }>('/auth/supabase', { access_token: sbData.session.access_token })
-
-            api.setToken(response.access_token)
-            localStorage.setItem('refresh_token', response.refresh_token)
-
             set({
               user: response.user,
               isAuthenticated: true,
@@ -69,8 +63,6 @@ export const useAuthStore = create<AuthState>()(
         if (!authenticated) {
           // Fallback: local backend auth (for local/admin users)
           const response = await api.post<{
-            access_token: string
-            refresh_token: string
             user: User
             mfa_required?: boolean
           }>('/auth/login', { email, password, mfa_code: mfaCode })
@@ -78,10 +70,6 @@ export const useAuthStore = create<AuthState>()(
           if (response.mfa_required) {
             throw Object.assign(new Error('MFA code required'), { mfa_required: true, error: 'mfa_required' })
           }
-
-          api.setToken(response.access_token)
-          localStorage.setItem('refresh_token', response.refresh_token)
-
           set({
             user: response.user,
             isAuthenticated: true,
@@ -103,14 +91,8 @@ export const useAuthStore = create<AuthState>()(
 
           if (!sbError && sbData.session) {
             const response = await api.post<{
-              access_token: string
-              refresh_token: string
               user: User
             }>('/auth/supabase', { access_token: sbData.session.access_token })
-
-            api.setToken(response.access_token)
-            localStorage.setItem('refresh_token', response.refresh_token)
-
             set({
               user: response.user,
               isAuthenticated: true,
@@ -125,14 +107,8 @@ export const useAuthStore = create<AuthState>()(
         if (!registered) {
           // Fallback: local backend registration
           const response = await api.post<{
-            access_token: string
-            refresh_token: string
             user: User
           }>('/auth/register', { email, password, name })
-
-          api.setToken(response.access_token)
-          localStorage.setItem('refresh_token', response.refresh_token)
-
           set({
             user: response.user,
             isAuthenticated: true,
@@ -148,23 +124,17 @@ export const useAuthStore = create<AuthState>()(
           // Ignore errors on logout
         }
         await supabase.auth.signOut()
-        api.setToken(null)
-        localStorage.removeItem('refresh_token')
         set({ user: null, isAuthenticated: false })
       },
 
       checkAuth: async () => {
-        const token = api.getToken()
-        if (!token) {
-          set({ isLoading: false, isAuthenticated: false })
-          return
-        }
-
+        // Verify with the server using the httpOnly cookie. If the access
+        // cookie expired, the API client silently refreshes once; /auth/me
+        // never hard-redirects — AuthProvider routes on the resulting state.
         try {
           const user = await api.get<User>('/auth/me')
           set({ user, isAuthenticated: true, isLoading: false })
         } catch {
-          api.setToken(null)
           set({ user: null, isAuthenticated: false, isLoading: false })
         }
       },
@@ -197,6 +167,12 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 )
+
+// When the API client concludes the session is gone (refresh failed), drop
+// the cached user so persisted state can't claim we're still logged in.
+api.onUnauthorized(() => {
+  useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false })
+})
 
 // Incident store
 export interface Incident {

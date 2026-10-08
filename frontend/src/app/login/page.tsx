@@ -265,15 +265,7 @@ function LoginPageInner() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="login-password">Password</Label>
-                      <Link
-                        href="/forgot-password"
-                        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors"
-                      >
-                        Forgot password?
-                      </Link>
-                    </div>
+                    <Label htmlFor="login-password">Password</Label>
                     <PasswordInput
                       id="login-password"
                       placeholder="••••••••"
@@ -283,6 +275,9 @@ function LoginPageInner() {
                       disabled={isLoading}
                       className="h-11"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Forgot your password? Contact your administrator to reset your password.
+                    </p>
                   </div>
 
                   {mfaRequired && (

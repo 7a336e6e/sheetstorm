@@ -35,6 +35,7 @@ import {
   Clock,
   Star,
   Target,
+  BookOpen,
 } from 'lucide-react'
 
 // ─── Tab Components ──────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ import { IncidentDetailSkeleton } from '@/components/incidents/detail/IncidentDe
 import { DescriptionBlock } from '@/components/incidents/detail/DescriptionBlock'
 import { OverviewTab } from '@/components/incidents/detail/OverviewTab'
 import { TasksTab } from '@/components/incidents/detail/TasksTab'
+import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
 import { EditIncidentModal, UpdateStatusModal, ReportModal } from '@/components/incidents/detail/IncidentModals'
 
 // ─── Main Page Component ─────────────────────────────────────────────────
@@ -208,6 +210,9 @@ export default function IncidentDetailPage() {
             <TabsTrigger variant="underline" value="tasks" className="gap-2">
               <CheckSquare className="h-4 w-4" /> Tasks
             </TabsTrigger>
+            <TabsTrigger variant="underline" value="playbook" className="gap-2">
+              <BookOpen className="h-4 w-4" /> Playbook
+            </TabsTrigger>
             <TabsTrigger variant="underline" value="graph" className="gap-2">
               <Network className="h-4 w-4" /> Attack Graph
             </TabsTrigger>
@@ -304,6 +309,11 @@ export default function IncidentDetailPage() {
               hosts={hosts}
               onTasksChange={setTasks}
             />
+          </TabsContent>
+
+          {/* Playbook */}
+          <TabsContent value="playbook">
+            <IncidentPlaybookTab incidentId={incidentId} />
           </TabsContent>
 
           {/* Attack Graph */}

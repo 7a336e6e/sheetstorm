@@ -1,96 +1,103 @@
-"""Defanging/refanging tools for IOC safety."""
+"""IOC defanging/refanging tools — safely share indicators of compromise."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from sheetstorm_bridge.client import SheetStormAPIError
-from sheetstorm_bridge.server import mcp, get_client
+from sheetstorm_bridge.server import get_client, mcp
 
 
 @mcp.tool()
 async def sheetstorm_defang_iocs(
-    values: Optional[str] = None,
+    values: Optional[list[str]] = None,
     text: Optional[str] = None,
+    ioc_type: str = "auto",
 ) -> str:
-    """Defang IOC values for safe sharing (e.g. evil.com → evil[.]com).
+    """Defang IOCs for safe sharing — converts active indicators to inert text.
 
-    Provide either a pipe-separated list of values OR a block of text.
+    Examples:
+      evil.com   → evil[.]com
+      http://     → hxxp://
+      1.2.3.4    → 1[.]2[.]3[.]4
+      user@e.com → user[@]e[.]com
+
+    Provide EITHER a list of individual values OR a free-text block.
 
     Args:
-        values: Pipe-separated IOC values (e.g. 'evil.com|192.168.1.1|http://bad.site')
-        text: Free-form text containing IOCs to defang
+        values: List of IOC strings to defang individually
+        text: A block of text containing IOCs to defang in-place
+        ioc_type: Type hint for individual values — auto, ip, domain, url, email (default auto)
     """
     client = get_client()
     try:
         payload: dict = {}
         if values:
-            payload["values"] = [v.strip() for v in values.split("|") if v.strip()]
-        if text:
+            payload["values"] = values
+            payload["type"] = ioc_type
+        elif text:
             payload["text"] = text
-        if not payload:
-            return "Provide either 'values' (pipe-separated) or 'text' to defang."
+        else:
+            return "✗ Provide either 'values' (list) or 'text' (string)."
 
         data = await client.post("/tools/defang", json=payload)
 
-        if data.get("defanged_text"):
-            return f"**Defanged Text:**\n{data['defanged_text']}"
-        elif data.get("results") or data.get("defanged"):
-            results = data.get("results", data.get("defanged", []))
-            if isinstance(results, list):
-                lines = ["**Defanged IOCs:**"]
-                for r in results:
-                    if isinstance(r, dict):
-                        lines.append(f"  {r.get('original', '?')} → {r.get('defanged', '?')}")
-                    else:
-                        lines.append(f"  {r}")
-                return "\n".join(lines)
-            return f"**Defanged:** {results}"
-        else:
-            return f"Result: {data}"
+        # Individual values mode
+        items = data.get("items")
+        if items:
+            lines = [f"**Defanged IOCs** ({len(items)} items)\n"]
+            for item in items:
+                lines.append(f"  {item['original']}  →  {item['defanged']}")
+            return "\n".join(lines)
+
+        # Text mode
+        if "defanged" in data:
+            return f"**Defanged text**:\n{data['defanged']}"
+
+        return "✗ Unexpected response."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
 @mcp.tool()
 async def sheetstorm_refang_iocs(
-    values: Optional[str] = None,
+    values: Optional[list[str]] = None,
     text: Optional[str] = None,
 ) -> str:
-    """Refang defanged IOCs back to original form (e.g. evil[.]com → evil.com).
+    """Refang IOCs — convert defanged indicators back to active form.
 
-    Provide either a pipe-separated list of values OR a block of text.
+    Examples:
+      evil[.]com → evil.com
+      hxxp://    → http://
+
+    Provide EITHER a list of individual values OR a free-text block.
 
     Args:
-        values: Pipe-separated defanged IOC values (e.g. 'evil[.]com|192[.]168[.]1[.]1')
-        text: Free-form text containing defanged IOCs to refang
+        values: List of defanged IOC strings to refang
+        text: A block of defanged text to refang in-place
     """
     client = get_client()
     try:
         payload: dict = {}
         if values:
-            payload["values"] = [v.strip() for v in values.split("|") if v.strip()]
-        if text:
+            payload["values"] = values
+        elif text:
             payload["text"] = text
-        if not payload:
-            return "Provide either 'values' (pipe-separated) or 'text' to refang."
+        else:
+            return "✗ Provide either 'values' (list) or 'text' (string)."
 
         data = await client.post("/tools/refang", json=payload)
 
-        if data.get("refanged_text"):
-            return f"**Refanged Text:**\n{data['refanged_text']}"
-        elif data.get("results") or data.get("refanged"):
-            results = data.get("results", data.get("refanged", []))
-            if isinstance(results, list):
-                lines = ["**Refanged IOCs:**"]
-                for r in results:
-                    if isinstance(r, dict):
-                        lines.append(f"  {r.get('original', '?')} → {r.get('refanged', '?')}")
-                    else:
-                        lines.append(f"  {r}")
-                return "\n".join(lines)
-            return f"**Refanged:** {results}"
-        else:
-            return f"Result: {data}"
+        items = data.get("items")
+        if items:
+            lines = [f"**Refanged IOCs** ({len(items)} items)\n"]
+            for item in items:
+                lines.append(f"  {item['defanged']}  →  {item['original']}")
+            return "\n".join(lines)
+
+        if "original" in data:
+            return f"**Refanged text**:\n{data['original']}"
+
+        return "✗ Unexpected response."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"

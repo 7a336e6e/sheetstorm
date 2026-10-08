@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
-
+from sheetstorm_mcp.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # User Management
@@ -49,27 +48,48 @@ async def sheetstorm_list_users(page: int = 1, per_page: int = 20) -> str:
         return f"✗ Error: {exc}"
 
 
+ROLE_NAMES = ["Administrator", "Incident Responder", "Analyst", "Manager", "Operator", "Viewer"]
+_ROLE_ALIASES = {"admin": "Administrator", "responder": "Incident Responder", "ir": "Incident Responder"}
+
+
+def _canonical_role(role: str) -> str | None:
+    """Map user input (any case, common aliases) to a backend role name."""
+    key = " ".join(role.replace("_", " ").split()).lower()
+    for name in ROLE_NAMES:
+        if name.lower() == key:
+            return name
+    return _ROLE_ALIASES.get(key)
+
+
 @mcp.tool()
 async def sheetstorm_create_user(
     email: str,
     name: str,
     password: str,
-    role: str = "analyst",
+    role: Optional[str] = None,
+    organizational_role: Optional[str] = None,
 ) -> str:
-    """Create a new user.
+    """Create a new user in your organization. Requires users:manage; assigning a
+    role additionally requires roles:manage. Without a role the user gets Viewer.
 
     Args:
         email: User email address
         name: Display name
-        password: Initial password
-        role: Role (admin, manager, analyst, viewer)
+        password: Initial password (must meet the server password policy)
+        role: One of: Administrator, Incident Responder, Analyst, Manager, Operator, Viewer
+        organizational_role: Optional job title (e.g. "DFIR Lead")
     """
+    payload: dict = {"email": email, "name": name, "password": password}
+    if role:
+        canonical = _canonical_role(role)
+        if canonical is None:
+            return f"✗ Unknown role '{role}'. Valid roles: {', '.join(ROLE_NAMES)}."
+        payload["roles"] = [canonical]
+    if organizational_role:
+        payload["organizational_role"] = organizational_role
     client = get_client()
     try:
-        user = await client.post(
-            "/users",
-            json={"email": email, "name": name, "password": password, "role": role},
-        )
+        user = await client.post("/users", json=payload)
         return f"✓ User created:\n{_format_user(user)}"
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
@@ -78,28 +98,26 @@ async def sheetstorm_create_user(
 @mcp.tool()
 async def sheetstorm_update_user(
     user_id: str,
-    email: Optional[str] = None,
     name: Optional[str] = None,
-    role: Optional[str] = None,
     is_active: Optional[bool] = None,
+    organizational_role: Optional[str] = None,
 ) -> str:
-    """Update a user's details.
+    """Update a user's name, active flag or job title. (Email and roles cannot be
+    changed through this tool.) Deactivating requires users:manage.
 
     Args:
         user_id: UUID of the user
-        email: New email
-        name: New name
-        role: New role
-        is_active: Activate/deactivate user
+        name: New display name
+        is_active: Activate (true) or deactivate (false) the user
+        organizational_role: New job title ("" clears it)
     """
     client = get_client()
     try:
         payload: dict = {}
         for field, val in [
-            ("email", email),
             ("name", name),
-            ("role", role),
             ("is_active", is_active),
+            ("organizational_role", organizational_role),
         ]:
             if val is not None:
                 payload[field] = val
@@ -142,7 +160,7 @@ async def sheetstorm_list_notifications(unread_only: bool = False) -> str:
     try:
         params: dict = {}
         if unread_only:
-            params["unread"] = True
+            params["unread_only"] = "true"
         data = await client.get("/notifications", params=params)
         items = data if isinstance(data, list) else data.get("items", data.get("notifications", []))
 
@@ -172,7 +190,7 @@ async def sheetstorm_mark_notification_read(notification_id: str) -> str:
     """
     client = get_client()
     try:
-        await client.put(f"/notifications/{notification_id}/read")
+        await client.post(f"/notifications/{notification_id}/read")
         return f"✓ Notification {notification_id} marked as read."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
@@ -183,7 +201,7 @@ async def sheetstorm_mark_all_notifications_read() -> str:
     """Mark all notifications as read."""
     client = get_client()
     try:
-        await client.post("/notifications/mark-all-read")
+        await client.post("/notifications/read-all")
         return "✓ All notifications marked as read."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"

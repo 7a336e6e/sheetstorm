@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
-
+from sheetstorm_mcp.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # Formatters
@@ -143,7 +142,8 @@ async def sheetstorm_add_network_ioc(
         destination_host_id: UUID of the destination compromised host (creates a host link)
         add_to_attack_graph: If true, automatically creates an attack graph node for this IOC
     """
-    from datetime import datetime as dt, timezone
+    from datetime import datetime as dt
+    from datetime import timezone
 
     client = get_client()
     try:

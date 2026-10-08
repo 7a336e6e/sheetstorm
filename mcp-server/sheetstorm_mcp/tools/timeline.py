@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
+from sheetstorm_mcp.server import get_client, mcp
 
 
 def _format_event(e: dict) -> str:
@@ -28,8 +28,15 @@ def _format_event(e: dict) -> str:
         parts.append(f"  MITRE: {e['mitre_tactic']} / {e.get('mitre_technique', 'N/A')}")
     if e.get("hostname"):
         parts.append(f"  Host: {e['hostname']}")
+    if e.get("detection_time") or e.get("confidence_level"):
+        parts.append(
+            f"  Detected: {e.get('detection_time') or 'N/A'} | "
+            f"Confidence: {e.get('confidence_level') or 'N/A'}"
+        )
     if e.get("is_key_event"):
         parts.append("  ★ Key Event")
+    if e.get("is_ioc"):
+        parts.append("  ⚑ Marked as IOC")
     return "\n".join(parts)
 
 
@@ -81,6 +88,8 @@ async def sheetstorm_create_timeline_event(
     mitre_mappings: Optional[str] = None,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
+    detection_time: Optional[str] = None,
+    confidence_level: Optional[str] = None,
 ) -> str:
     """Create a new timeline event for an incident.
 
@@ -101,6 +110,8 @@ async def sheetstorm_create_timeline_event(
         mitre_mappings: JSON array of MITRE mappings (each with tactic, technique, name)
         mitre_tactic: Legacy single MITRE ATT&CK tactic
         mitre_technique: Legacy single MITRE ATT&CK technique
+        detection_time: ISO 8601 time the activity was DETECTED (timestamp is when it happened)
+        confidence_level: Analyst confidence in this event — one of: low, medium, high, certain
     """
     import json as _json
     client = get_client()
@@ -109,6 +120,10 @@ async def sheetstorm_create_timeline_event(
             "timestamp": timestamp,
             "activity": activity,
         }
+        if detection_time:
+            payload["detection_time"] = detection_time
+        if confidence_level:
+            payload["confidence_level"] = confidence_level
         if source:
             payload["source"] = source
         if host_id:
@@ -144,6 +159,8 @@ async def sheetstorm_update_timeline_event(
     mitre_mappings: Optional[str] = None,
     mitre_tactic: Optional[str] = None,
     mitre_technique: Optional[str] = None,
+    detection_time: Optional[str] = None,
+    confidence_level: Optional[str] = None,
 ) -> str:
     """Update an existing timeline event.
 
@@ -160,6 +177,8 @@ async def sheetstorm_update_timeline_event(
         mitre_mappings: JSON array of MITRE mappings (each with tactic, technique, name)
         mitre_tactic: Legacy single MITRE tactic
         mitre_technique: Legacy single MITRE technique
+        detection_time: ISO 8601 time the activity was detected
+        confidence_level: One of: low, medium, high, certain
     """
     import json as _json
     client = get_client()
@@ -171,6 +190,8 @@ async def sheetstorm_update_timeline_event(
             ("source", source),
             ("phase", phase),
             ("is_key_event", is_key_event),
+            ("detection_time", detection_time),
+            ("confidence_level", confidence_level),
         ]:
             if value is not None:
                 payload[field] = value
@@ -212,15 +233,52 @@ async def sheetstorm_delete_timeline_event(incident_id: str, event_id: str) -> s
 
 
 @mcp.tool()
-async def sheetstorm_get_mitre_tactics() -> str:
-    """List available MITRE ATT&CK tactics for timeline event mapping."""
+async def sheetstorm_mark_timeline_event_as_ioc(
+    incident_id: str,
+    event_id: str,
+    artifact_type: str = "other",
+    notes: Optional[str] = None,
+    is_malicious: bool = True,
+) -> str:
+    """Flag a timeline event as an IOC and create a linked host-based indicator
+    (its value is the event's activity text, its host the event's host).
+
+    Args:
+        incident_id: UUID of the incident
+        event_id: UUID of the timeline event
+        artifact_type: Host IOC type — one of: wmi_event, asep, registry, scheduled_task, service, file, process, other
+        notes: Optional analyst notes for the indicator
+        is_malicious: Whether the indicator is confirmed malicious (default true)
+    """
+    client = get_client()
+    try:
+        payload: dict = {"artifact_type": artifact_type, "is_malicious": is_malicious}
+        if notes:
+            payload["notes"] = notes
+        data = await client.post(
+            f"/incidents/{incident_id}/timeline/{event_id}/mark-as-ioc", json=payload
+        )
+        ioc = data.get("ioc", {})
+        return (
+            f"✓ Event marked as IOC. Host indicator created (ID: {ioc.get('id', 'N/A')}, "
+            f"type: {ioc.get('artifact_type', artifact_type)})"
+        )
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_timeline_mitre_tactics() -> str:
+    """List the MITRE ATT&CK tactic identifiers accepted by timeline events
+    (mitre_tactic / mitre_mappings[].tactic). For full ATT&CK descriptions use
+    sheetstorm_get_mitre_tactics."""
     client = get_client()
     try:
         data = await client.get("/mitre/tactics")
         tactics = data if isinstance(data, list) else data.get("tactics", [])
         if not tactics:
             return "No MITRE tactics available."
-        lines = ["**MITRE ATT&CK Tactics**\n"]
+        lines = ["**Timeline MITRE ATT&CK Tactics**\n"]
         for t in tactics:
             if isinstance(t, dict):
                 lines.append(f"- **{t.get('id', 'N/A')}**: {t.get('name', 'N/A')}")
@@ -232,11 +290,12 @@ async def sheetstorm_get_mitre_tactics() -> str:
 
 
 @mcp.tool()
-async def sheetstorm_get_mitre_techniques(tactic: Optional[str] = None) -> str:
-    """List MITRE ATT&CK techniques, optionally filtered by tactic.
+async def sheetstorm_list_timeline_mitre_techniques(tactic: Optional[str] = None) -> str:
+    """List the MITRE ATT&CK techniques accepted by timeline events, optionally for
+    one tactic. For searchable ATT&CK details use sheetstorm_get_mitre_techniques.
 
     Args:
-        tactic: Optional MITRE tactic identifier to filter by (e.g. 'initial-access', 'execution')
+        tactic: Optional tactic identifier (from sheetstorm_list_timeline_mitre_tactics)
     """
     client = get_client()
     try:
@@ -247,6 +306,12 @@ async def sheetstorm_get_mitre_techniques(tactic: Optional[str] = None) -> str:
         techniques = data if isinstance(data, list) else data.get("techniques", [])
         if not techniques:
             return f"No techniques found for tactic: {tactic}"
+        if isinstance(techniques, dict):  # all tactics: {tactic: [techniques]}
+            lines = ["**Timeline MITRE ATT&CK Techniques**"]
+            for tac, techs in techniques.items():
+                lines.append(f"\n**{tac}**")
+                lines.extend(f"- {t.get('id', 'N/A')}: {t.get('name', 'N/A')}" for t in techs)
+            return "\n".join(lines)
         lines = [f"**Techniques for {tactic}**\n"]
         for t in techniques:
             if isinstance(t, dict):

@@ -1,44 +1,45 @@
-"""Admin tools — user management, notifications, audit logs, and system health."""
+"""Admin tools — user management, notifications, audit logs, health check."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from sheetstorm_bridge.client import SheetStormAPIError
-from sheetstorm_bridge.server import mcp, get_client
+from sheetstorm_bridge.server import get_client, mcp
 
+# ---------------------------------------------------------------------------
+# User Management
+# ---------------------------------------------------------------------------
 
 def _format_user(u: dict) -> str:
+    roles = u.get('roles', [])
+    role_str = ', '.join(roles) if isinstance(roles, list) else str(roles)
     return (
-        f"**{u.get('name', u.get('username', 'N/A'))}** (ID: {u.get('id', 'N/A')})\n"
-        f"  Email: {u.get('email', 'N/A')} | Role: {u.get('role', 'N/A')}\n"
+        f"**{u.get('name', 'Unknown')}** (ID: {u.get('id', 'N/A')})\n"
+        f"  Email: {u.get('email', 'N/A')} | Roles: {role_str}\n"
         f"  Active: {'Yes' if u.get('is_active', True) else 'No'} | "
-        f"Created: {u.get('created_at', 'N/A')}"
+        f"MFA: {'Enabled' if u.get('mfa_enabled') else 'Disabled'}"
     )
 
 
-# ---------------------------------------------------------------------------
-# User management
-# ---------------------------------------------------------------------------
-
 @mcp.tool()
-async def sheetstorm_list_users(page: int = 1, per_page: int = 50) -> str:
-    """List all users (admin only).
+async def sheetstorm_list_users(page: int = 1, per_page: int = 20) -> str:
+    """List all users in the organization.
 
     Args:
-        page: Page number
-        per_page: Items per page
+        page: Page number (default 1)
+        per_page: Items per page (default 20)
     """
     client = get_client()
     try:
         data = await client.get("/users", params={"page": page, "per_page": per_page})
-        items = data if isinstance(data, list) else data.get("items", data.get("users", []))
-        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
+        items = data.get("items", data.get("users", []))
+        total = data.get("total", len(items))
 
         if not items:
             return "No users found."
 
-        lines = [f"**Users** (showing {len(items)} of {total})\n"]
+        lines = [f"**Users** (page {page}, {total} total)\n"]
         for u in items:
             lines.append(_format_user(u))
             lines.append("")
@@ -47,27 +48,48 @@ async def sheetstorm_list_users(page: int = 1, per_page: int = 50) -> str:
         return f"✗ Error: {exc}"
 
 
+ROLE_NAMES = ["Administrator", "Incident Responder", "Analyst", "Manager", "Operator", "Viewer"]
+_ROLE_ALIASES = {"admin": "Administrator", "responder": "Incident Responder", "ir": "Incident Responder"}
+
+
+def _canonical_role(role: str) -> str | None:
+    """Map user input (any case, common aliases) to a backend role name."""
+    key = " ".join(role.replace("_", " ").split()).lower()
+    for name in ROLE_NAMES:
+        if name.lower() == key:
+            return name
+    return _ROLE_ALIASES.get(key)
+
+
 @mcp.tool()
 async def sheetstorm_create_user(
-    name: str,
     email: str,
+    name: str,
     password: str,
-    role: str = "analyst",
+    role: Optional[str] = None,
+    organizational_role: Optional[str] = None,
 ) -> str:
-    """Create a new user (admin only).
+    """Create a new user in your organization. Requires users:manage; assigning a
+    role additionally requires roles:manage. Without a role the user gets Viewer.
 
     Args:
-        name: Full name
-        email: Email address
-        password: Password
-        role: Role (admin, manager, analyst, viewer)
+        email: User email address
+        name: Display name
+        password: Initial password (must meet the server password policy)
+        role: One of: Administrator, Incident Responder, Analyst, Manager, Operator, Viewer
+        organizational_role: Optional job title (e.g. "DFIR Lead")
     """
+    payload: dict = {"email": email, "name": name, "password": password}
+    if role:
+        canonical = _canonical_role(role)
+        if canonical is None:
+            return f"✗ Unknown role '{role}'. Valid roles: {', '.join(ROLE_NAMES)}."
+        payload["roles"] = [canonical]
+    if organizational_role:
+        payload["organizational_role"] = organizational_role
     client = get_client()
     try:
-        user = await client.post(
-            "/users",
-            json={"name": name, "email": email, "password": password, "role": role},
-        )
+        user = await client.post("/users", json=payload)
         return f"✓ User created:\n{_format_user(user)}"
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
@@ -77,27 +99,31 @@ async def sheetstorm_create_user(
 async def sheetstorm_update_user(
     user_id: str,
     name: Optional[str] = None,
-    email: Optional[str] = None,
-    role: Optional[str] = None,
     is_active: Optional[bool] = None,
+    organizational_role: Optional[str] = None,
 ) -> str:
-    """Update a user (admin only).
+    """Update a user's name, active flag or job title. (Email and roles cannot be
+    changed through this tool.) Deactivating requires users:manage.
 
     Args:
         user_id: UUID of the user
-        name: New name
-        email: New email
-        role: New role
-        is_active: Whether the user is active
+        name: New display name
+        is_active: Activate (true) or deactivate (false) the user
+        organizational_role: New job title ("" clears it)
     """
     client = get_client()
     try:
         payload: dict = {}
-        for field, val in [("name", name), ("email", email), ("role", role), ("is_active", is_active)]:
+        for field, val in [
+            ("name", name),
+            ("is_active", is_active),
+            ("organizational_role", organizational_role),
+        ]:
             if val is not None:
                 payload[field] = val
         if not payload:
             return "No fields to update."
+
         user = await client.put(f"/users/{user_id}", json=payload)
         return f"✓ User updated:\n{_format_user(user)}"
     except SheetStormAPIError as exc:
@@ -106,7 +132,7 @@ async def sheetstorm_update_user(
 
 @mcp.tool()
 async def sheetstorm_delete_user(user_id: str) -> str:
-    """Delete a user (admin only).
+    """Delete a user (soft-delete).
 
     Args:
         user_id: UUID of the user to delete
@@ -125,7 +151,7 @@ async def sheetstorm_delete_user(user_id: str) -> str:
 
 @mcp.tool()
 async def sheetstorm_list_notifications(unread_only: bool = False) -> str:
-    """List your notifications.
+    """List notifications for the current user.
 
     Args:
         unread_only: Only show unread notifications
@@ -134,7 +160,7 @@ async def sheetstorm_list_notifications(unread_only: bool = False) -> str:
     try:
         params: dict = {}
         if unread_only:
-            params["unread"] = "true"
+            params["unread_only"] = "true"
         data = await client.get("/notifications", params=params)
         items = data if isinstance(data, list) else data.get("items", data.get("notifications", []))
 
@@ -143,11 +169,11 @@ async def sheetstorm_list_notifications(unread_only: bool = False) -> str:
 
         lines = [f"**Notifications** ({len(items)})\n"]
         for n in items:
-            read_mark = "○" if not n.get("is_read") else "●"
+            read_marker = "  " if n.get("is_read") else "● "
             lines.append(
-                f"{read_mark} [{n.get('created_at', 'N/A')}] "
-                f"**{n.get('title', n.get('type', 'Notification'))}** — "
-                f"{n.get('message', n.get('body', 'N/A'))} "
+                f"{read_marker}[{n.get('created_at', 'N/A')}] "
+                f"**{n.get('title', n.get('type', 'Notification'))}**\n"
+                f"    {n.get('message', n.get('body', 'N/A'))} "
                 f"(ID: {n.get('id', 'N/A')})"
             )
         return "\n".join(lines)
@@ -164,7 +190,7 @@ async def sheetstorm_mark_notification_read(notification_id: str) -> str:
     """
     client = get_client()
     try:
-        await client.patch(f"/notifications/{notification_id}/read")
+        await client.post(f"/notifications/{notification_id}/read")
         return f"✓ Notification {notification_id} marked as read."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
@@ -175,50 +201,52 @@ async def sheetstorm_mark_all_notifications_read() -> str:
     """Mark all notifications as read."""
     client = get_client()
     try:
-        await client.patch("/notifications/read-all")
+        await client.post("/notifications/read-all")
         return "✓ All notifications marked as read."
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
 # ---------------------------------------------------------------------------
-# Audit & health
+# Audit Logs
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
 async def sheetstorm_get_audit_logs(
     page: int = 1,
-    per_page: int = 50,
-    action: Optional[str] = None,
+    per_page: int = 20,
     user_id: Optional[str] = None,
+    action: Optional[str] = None,
 ) -> str:
-    """Get audit logs (admin only).
+    """Get audit logs. Requires admin permissions.
 
     Args:
         page: Page number
         per_page: Items per page
-        action: Filter by action type
         user_id: Filter by user UUID
+        action: Filter by action type
     """
     client = get_client()
     try:
         params: dict = {"page": page, "per_page": per_page}
-        if action:
-            params["action"] = action
         if user_id:
             params["user_id"] = user_id
+        if action:
+            params["action"] = action
+
         data = await client.get("/audit-logs", params=params)
-        items = data if isinstance(data, list) else data.get("items", data.get("logs", []))
+        items = data.get("items", data.get("logs", []))
+        total = data.get("total", len(items))
 
         if not items:
             return "No audit logs found."
 
-        lines = [f"**Audit Logs** ({len(items)})\n"]
+        lines = [f"**Audit Logs** (page {page}, {total} total)\n"]
         for log in items:
             lines.append(
-                f"[{log.get('created_at', 'N/A')}] "
-                f"**{log.get('action', 'N/A')}** by {log.get('user', log.get('user_id', 'N/A'))}\n"
-                f"  Resource: {log.get('resource_type', 'N/A')} {log.get('resource_id', '')}\n"
+                f"[{log.get('created_at', log.get('timestamp', 'N/A'))}] "
+                f"**{log.get('action', 'N/A')}** by {log.get('user_name', log.get('user_id', 'Unknown'))}\n"
+                f"  Resource: {log.get('resource_type', 'N/A')} / {log.get('resource_id', 'N/A')}\n"
                 f"  Details: {log.get('details', 'N/A')}"
             )
         return "\n".join(lines)
@@ -226,17 +254,26 @@ async def sheetstorm_get_audit_logs(
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Health Check
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
 async def sheetstorm_health_check() -> str:
-    """Check SheetStorm system health."""
+    """Check the SheetStorm API health status."""
     client = get_client()
     try:
         data = await client.get("/health")
         status = data.get("status", "unknown")
-        parts = [f"**System Health**: {status.upper()}"]
-        for key, val in data.items():
-            if key != "status":
-                parts.append(f"  {key}: {val}")
+        parts = [f"**API Health**: {status}"]
+        if data.get("version"):
+            parts.append(f"  Version: {data['version']}")
+        if data.get("database"):
+            parts.append(f"  Database: {data['database']}")
+        if data.get("redis"):
+            parts.append(f"  Redis: {data['redis']}")
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
+    except Exception as exc:
+        return f"✗ API unreachable: {exc}"

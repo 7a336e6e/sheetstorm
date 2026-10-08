@@ -5,35 +5,38 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_bridge.client import SheetStormAPIError
-from sheetstorm_bridge.server import mcp, get_client
+from sheetstorm_bridge.server import get_client, mcp
 
 
 def _format_incident(inc: dict) -> str:
-    tlp = (inc.get('tlp') or 'amber').upper().replace('_', '+')
+    """Format a single incident into a readable string."""
+    tlp = inc.get('tlp', 'amber')
     team = inc.get('owning_team', {}) or {}
-    team_name = team.get('name', 'Unassigned') if isinstance(team, dict) else 'Unassigned'
+    team_name = team.get('name', 'N/A') if isinstance(team, dict) else 'N/A'
     return (
         f"**{inc.get('title', 'Untitled')}** (ID: {inc.get('id', 'N/A')})\n"
         f"  Status: {inc.get('status', 'N/A')} | Severity: {inc.get('severity', 'N/A')} | "
-        f"Phase: {inc.get('phase', 'N/A')} | TLP: {tlp}\n"
-        f"  Classification: {inc.get('classification', 'N/A')} | Team: {team_name}\n"
+        f"Phase: {inc.get('phase', 'N/A')}\n"
+        f"  Classification: {inc.get('classification', 'N/A')} | "
+        f"TLP: {tlp.upper()} | Team: {team_name}\n"
         f"  Created: {inc.get('created_at', 'N/A')}"
     )
 
 
 def _format_incident_detail(inc: dict) -> str:
-    tlp = (inc.get('tlp') or 'amber').upper().replace('_', '+')
+    """Format full incident details."""
+    tlp = inc.get('tlp', 'amber')
     team = inc.get('owning_team', {}) or {}
-    team_name = team.get('name', 'Unassigned') if isinstance(team, dict) else 'Unassigned'
+    team_name = team.get('name', 'N/A') if isinstance(team, dict) else 'N/A'
     parts = [
         f"# {inc.get('title', 'Untitled')}",
         f"**ID**: {inc.get('id', 'N/A')}",
         f"**Status**: {inc.get('status', 'N/A')}",
         f"**Severity**: {inc.get('severity', 'N/A')}",
         f"**Phase**: {inc.get('phase', 'N/A')}",
-        f"**TLP**: {tlp}",
-        f"**Owning Team**: {team_name}",
         f"**Classification**: {inc.get('classification', 'N/A')}",
+        f"**TLP**: {tlp.upper()}",
+        f"**Owning Team**: {team_name}",
         f"**Created**: {inc.get('created_at', 'N/A')}",
         f"**Updated**: {inc.get('updated_at', 'N/A')}",
     ]
@@ -43,9 +46,12 @@ def _format_incident_detail(inc: dict) -> str:
         parts.append(f"\n**Executive Summary**:\n{inc['executive_summary']}")
     if inc.get("lessons_learned"):
         parts.append(f"\n**Lessons Learned**:\n{inc['lessons_learned']}")
+
+    # Phase timestamps
     for ts_name in ["detected_at", "contained_at", "eradicated_at", "recovered_at", "closed_at"]:
         if inc.get(ts_name):
             parts.append(f"**{ts_name.replace('_', ' ').title()}**: {inc[ts_name]}")
+
     return "\n".join(parts)
 
 
@@ -62,7 +68,7 @@ async def sheetstorm_list_incidents(
     Args:
         page: Page number (default 1)
         per_page: Items per page (default 20, max 100)
-        status: Filter by status (open, contained, eradicated, recovered, closed)
+        status: Filter by status (open, investigating, contained, eradicated, recovered, closed)
         severity: Filter by severity (critical, high, medium, low)
         search: Search term for title/description
     """
@@ -125,8 +131,8 @@ async def sheetstorm_create_incident(
         severity: Severity level (critical, high, medium, low)
         classification: Optional classification type
         phase: IR phase 1-6 (default 1 = Preparation)
-        tlp: Traffic Light Protocol level (white, green, amber, amber_strict, red). Default amber.
-        team_id: UUID of the owning team (defaults to organisation's default team)
+        tlp: Traffic Light Protocol level (white, green, amber, amber_strict, red). Default: amber
+        team_id: UUID of the owning team (optional)
     """
     client = get_client()
     try:
@@ -141,6 +147,7 @@ async def sheetstorm_create_incident(
             payload["classification"] = classification
         if team_id:
             payload["team_id"] = team_id
+
         inc = await client.post("/incidents", json=payload)
         return f"✓ Incident created:\n{_format_incident(inc)}"
     except SheetStormAPIError as exc:
@@ -176,14 +183,21 @@ async def sheetstorm_update_incident(
     try:
         payload: dict = {}
         for field, value in [
-            ("title", title), ("description", description), ("severity", severity),
-            ("classification", classification), ("executive_summary", executive_summary),
-            ("lessons_learned", lessons_learned), ("tlp", tlp), ("team_id", team_id),
+            ("title", title),
+            ("description", description),
+            ("severity", severity),
+            ("classification", classification),
+            ("executive_summary", executive_summary),
+            ("lessons_learned", lessons_learned),
+            ("tlp", tlp),
+            ("team_id", team_id),
         ]:
             if value is not None:
                 payload[field] = value
+
         if not payload:
             return "No fields to update. Provide at least one field."
+
         inc = await client.put(f"/incidents/{incident_id}", json=payload)
         return f"✓ Incident updated:\n{_format_incident(inc)}"
     except SheetStormAPIError as exc:
@@ -200,8 +214,8 @@ async def sheetstorm_update_incident_status(
 
     Args:
         incident_id: UUID of the incident
-        status: New status (open, contained, eradicated, recovered, closed)
-        phase: New IR phase (1-6)
+        status: New status (open, investigating, contained, eradicated, recovered, closed); the IR phase follows automatically
+        phase: New IR phase (1=Preparation, 2=Identification, 3=Containment, 4=Eradication, 5=Recovery, 6=Lessons Learned)
     """
     client = get_client()
     try:
@@ -210,24 +224,101 @@ async def sheetstorm_update_incident_status(
             payload["status"] = status
         if phase is not None:
             payload["phase"] = phase
+
         if not payload:
-            return "No fields to update."
+            return "No status or phase provided."
+
         inc = await client.patch(f"/incidents/{incident_id}/status", json=payload)
-        return f"✓ Incident status updated:\n{_format_incident(inc)}"
+        return f"✓ Incident status updated:\n  Status: {inc.get('status')} | Phase: {inc.get('phase')}"
     except SheetStormAPIError as exc:
-        return f"✗ Error: {exc}"
+        return f"✗ Error updating status: {exc}"
 
 
 @mcp.tool()
-async def sheetstorm_delete_incident(incident_id: str) -> str:
-    """Delete an incident (soft-delete).
+async def sheetstorm_archive_incident(incident_id: str) -> str:
+    """Archive an incident (soft delete). The incident disappears from normal
+    listings but all its data is kept and it can be restored with
+    sheetstorm_unarchive_incident. Requires the Administrator or Manager role.
 
     Args:
-        incident_id: UUID of the incident to delete
+        incident_id: UUID of the incident to archive
     """
     client = get_client()
     try:
-        await client.delete(f"/incidents/{incident_id}")
-        return f"✓ Incident {incident_id} deleted."
+        await client.post(f"/incidents/{incident_id}/archive")
+        return f"✓ Incident {incident_id} archived (restorable)."
     except SheetStormAPIError as exc:
-        return f"✗ Error: {exc}"
+        return f"✗ Error archiving incident: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_archived_incidents(
+    page: int = 1,
+    per_page: int = 20,
+    search: Optional[str] = None,
+) -> str:
+    """List archived incidents. Requires the Administrator role.
+
+    Args:
+        page: Page number (default 1)
+        per_page: Items per page (default 20, max 100)
+        search: Search term for title/description
+    """
+    client = get_client()
+    try:
+        params: dict = {"page": page, "per_page": min(per_page, 100)}
+        if search:
+            params["search"] = search
+        data = await client.get("/incidents/archived", params=params)
+        items = data.get("items", [])
+        if not items:
+            return "No archived incidents found."
+        lines = [f"**Archived Incidents** (page {page}, {len(items)} of {data.get('total', len(items))} total)\n"]
+        for inc in items:
+            lines.append(_format_incident(inc) + f"\n  Archived: {inc.get('archived_at', 'N/A')}")
+            lines.append("")
+        return "\n".join(lines)
+    except SheetStormAPIError as exc:
+        return f"✗ Error listing archived incidents: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_unarchive_incident(incident_id: str) -> str:
+    """Restore an archived incident to the active list. Requires the Administrator role.
+
+    Args:
+        incident_id: UUID of the archived incident
+    """
+    client = get_client()
+    try:
+        await client.post(f"/incidents/{incident_id}/unarchive")
+        return f"✓ Incident {incident_id} restored from archive."
+    except SheetStormAPIError as exc:
+        return f"✗ Error restoring incident: {exc}"
+
+
+PERMANENT_DELETE_CONFIRMATION = "DELETE PERMANENTLY"
+
+
+@mcp.tool()
+async def sheetstorm_permanently_delete_incident(incident_id: str, confirmation: str) -> str:
+    """IRREVERSIBLY delete an ARCHIVED incident and all of its evidence records,
+    timeline, IOCs and notes. Administrator role only. The incident must be
+    archived first (sheetstorm_archive_incident). Only call this after the user
+    has explicitly asked for permanent deletion of this specific incident.
+
+    Args:
+        incident_id: UUID of the archived incident
+        confirmation: Must be exactly "DELETE PERMANENTLY" — anything else aborts
+    """
+    if confirmation != PERMANENT_DELETE_CONFIRMATION:
+        return (
+            f"✗ Aborted: confirmation must be exactly '{PERMANENT_DELETE_CONFIRMATION}'. "
+            "Prefer sheetstorm_archive_incident, which is reversible."
+        )
+    client = get_client()
+    try:
+        await client.delete(f"/incidents/{incident_id}/permanent")
+        return f"✓ Incident {incident_id} permanently deleted."
+    except SheetStormAPIError as exc:
+        return f"✗ Error deleting incident: {exc}"

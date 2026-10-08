@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import get_client, mcp
+from sheetstorm_bridge.client import SheetStormAPIError
+from sheetstorm_bridge.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # Helpers

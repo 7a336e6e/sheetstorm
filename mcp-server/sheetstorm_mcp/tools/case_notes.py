@@ -5,17 +5,17 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
+from sheetstorm_mcp.server import get_client, mcp
 
 # Valid note categories — keep in sync with CaseNote.CATEGORIES in the backend
 CATEGORIES = [
     "general",
-    "forensic",
-    "communication",
+    "finding",
+    "question",
+    "action_item",
+    "handoff",
     "evidence",
-    "remediation",
-    "legal",
-    "executive",
+    "hypothesis",
 ]
 
 
@@ -56,7 +56,7 @@ async def sheetstorm_list_case_notes(
 
     Args:
         incident_id: UUID of the incident
-        category: Optional filter — one of: general, forensic, communication, evidence, remediation, legal, executive
+        category: Optional filter — one of: general, finding, question, action_item, handoff, evidence, hypothesis
         page: Page number (default 1)
         per_page: Items per page (default 50, max 100)
     """
@@ -66,7 +66,7 @@ async def sheetstorm_list_case_notes(
         if category:
             params["category"] = category
 
-        data = await client.get(f"/incidents/{incident_id}/notes", params=params)
+        data = await client.get(f"/incidents/{incident_id}/case-notes", params=params)
         items = data.get("items", [])
         total = data.get("total", len(items))
 
@@ -95,7 +95,7 @@ async def sheetstorm_get_case_note(
     """
     client = get_client()
     try:
-        data = await client.get(f"/incidents/{incident_id}/notes/{note_id}")
+        data = await client.get(f"/incidents/{incident_id}/case-notes/{note_id}")
         return _format_note_detail(data)
     except SheetStormAPIError as exc:
         return f"✗ Error retrieving case note: {exc}"
@@ -115,7 +115,7 @@ async def sheetstorm_create_case_note(
         incident_id: UUID of the incident
         title: Note title
         content: Note content (Markdown supported)
-        category: Note category — one of: general, forensic, communication, evidence, remediation, legal, executive
+        category: Note category — one of: general, finding, question, action_item, handoff, evidence, hypothesis
         is_pinned: Pin the note to the top (default false)
     """
     client = get_client()
@@ -126,7 +126,7 @@ async def sheetstorm_create_case_note(
             "category": category,
             "is_pinned": is_pinned,
         }
-        data = await client.post(f"/incidents/{incident_id}/notes", json=payload)
+        data = await client.post(f"/incidents/{incident_id}/case-notes", json=payload)
         return f"✓ Case note created: **{data.get('title')}** (ID: {data.get('id')})"
     except SheetStormAPIError as exc:
         return f"✗ Error creating case note: {exc}"
@@ -148,7 +148,7 @@ async def sheetstorm_update_case_note(
         note_id: UUID of the case note to update
         title: New title (optional)
         content: New content (optional, Markdown supported)
-        category: New category (optional) — one of: general, forensic, communication, evidence, remediation, legal, executive
+        category: New category (optional) — one of: general, finding, question, action_item, handoff, evidence, hypothesis
         is_pinned: Pin or unpin the note (optional)
     """
     client = get_client()
@@ -166,7 +166,7 @@ async def sheetstorm_update_case_note(
         if not payload:
             return "✗ No fields to update — provide at least one of: title, content, category, is_pinned."
 
-        data = await client.put(f"/incidents/{incident_id}/notes/{note_id}", json=payload)
+        data = await client.put(f"/incidents/{incident_id}/case-notes/{note_id}", json=payload)
         return f"✓ Case note updated: **{data.get('title')}** (ID: {data.get('id')})"
     except SheetStormAPIError as exc:
         return f"✗ Error updating case note: {exc}"
@@ -177,7 +177,7 @@ async def sheetstorm_delete_case_note(
     incident_id: str,
     note_id: str,
 ) -> str:
-    """Delete a case note (soft-delete).
+    """Delete (archive) a case note. Administrator role only.
 
     Args:
         incident_id: UUID of the incident
@@ -185,7 +185,7 @@ async def sheetstorm_delete_case_note(
     """
     client = get_client()
     try:
-        await client.delete(f"/incidents/{incident_id}/notes/{note_id}")
+        await client.delete(f"/incidents/{incident_id}/case-notes/{note_id}")
         return f"✓ Case note {note_id} deleted."
     except SheetStormAPIError as exc:
         return f"✗ Error deleting case note: {exc}"

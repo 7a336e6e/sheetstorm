@@ -4,10 +4,10 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **50+ tools** covering the full SheetStorm API surface
-- **8 MCP resources** for reference data (MITRE ATT&CK, IR phases, severity levels, etc.)
-- **Async HTTP client** with JWT auth, auto-refresh, and retry logic
-- **stdio & SSE transports** — works with Claude Desktop, VS Code, and remote clients
+- **108 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
+- **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
+- Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
 
 ## Quick Start
 
@@ -22,8 +22,12 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 cd mcp-server
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e .
+pip install --require-hashes --no-deps -r requirements.lock        # hash-locked, reviewed pins
+pip install --require-hashes --no-deps -r build-requirements.lock  # pinned build backend (hatchling)
+pip install --no-deps --no-build-isolation -e .
 ```
+
+`mcp` must stay on 1.x (`>=1.30,<2`): mcp 2.x removed `mcp.server.fastmcp`.
 
 ### Configuration
 
@@ -38,11 +42,17 @@ Key settings:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SHEETSTORM_API_URL` | `http://localhost:5000/api/v1` | Backend API base URL |
-| `SHEETSTORM_USERNAME` | — | Auto-login username |
-| `SHEETSTORM_PASSWORD` | — | Auto-login password |
-| `SHEETSTORM_API_TOKEN` | — | Pre-existing JWT token |
-| `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `sse` |
-| `MCP_AUTH_TOKEN` | — | Bearer token for SSE transport auth (required for production) |
+| `MCP_TRANSPORT` | `stdio` | `stdio` (local, single user) or `sse` (remote, multi-user OAuth) |
+| `SHEETSTORM_USERNAME` / `SHEETSTORM_PASSWORD` | — | **stdio only** — auto-login credentials |
+| `SHEETSTORM_API_TOKEN` | — | **stdio only** — pre-issued JWT |
+| `MCP_ISSUER_URL` | `http://localhost:8811` | Public URL clients reach (OAuth issuer) — sse only |
+| `MCP_SSE_PORT` / `SSE_PORT` | `8811` | HTTP port — sse only |
+| `REDIS_URL` | — | Persist OAuth client registrations (90-day TTL) — sse only |
+| `MCP_ALLOWED_REDIRECT_HOSTS` | — | Comma-separated https hosts allowed as OAuth redirect targets besides loopback (e.g. `claude.ai,vscode.dev`) — sse only |
+| `ARTIFACT_DIR` | `/tmp/sheetstorm-artifacts` | Root of per-user artifact sandboxes — sse only |
+
+The remote transport ignores the static credentials above: every user signs
+in with their own SheetStorm account through the browser OAuth flow.
 
 ### Run
 
@@ -92,87 +102,54 @@ For local stdio transport, add to `.vscode/mcp.json`:
 }
 ```
 
-For remote SSE transport (e.g. via Docker or remote server), use the VS Code command:
+## Remote server (OAuth)
+
+With `MCP_TRANSPORT=sse` (the Docker image default) the server exposes
+`/sse` and Streamable HTTP `/mcp`. Clients discover OAuth via
+`/.well-known/oauth-authorization-server`, register dynamically, and open
+`/sheetstorm-login` in the browser. The login page shows the requesting
+client's name and the host it will redirect to and requires explicit consent.
 
 ```bash
-code --add-mcp '{
-  "name": "sheetstorm",
-  "type": "sse",
-  "url": "https://your-domain.example.com/sse",
-  "headers": {
-    "Authorization": "Bearer YOUR_MCP_AUTH_TOKEN"
-  }
-}'
+code --add-mcp '{"name": "sheetstorm", "type": "http", "url": "https://your-domain.example.com/mcp"}'
 ```
 
-> **Security**: When using SSE transport, always set `MCP_AUTH_TOKEN` in your
-> `.env` file. Without it, anyone who can reach the `/sse` endpoint can
-> discover and invoke all tools with the server's auto-authenticated session.
+Security properties of the remote transport:
+
+- Dynamically registered redirect URIs must be loopback (`http://127.0.0.1`,
+  `http://localhost`) or an https host in `MCP_ALLOWED_REDIRECT_HOSTS`.
+- Each MCP request is executed as the user whose bearer token it carries; MCP
+  access tokens live 1 hour, refresh tokens 30 days, pending logins 10 minutes.
+  Backend refresh tokens are rotated and re-stored on every refresh; if the
+  backend refuses a refresh the client is forced to sign in again.
+- `sheetstorm_logout` revokes the backend tokens and the connection's MCP tokens.
+- Artifact upload/download paths are relative to a private per-user directory
+  `ARTIFACT_DIR/<org_id>/<user_id>/` (mode 0700; absolute paths, traversal and
+  symlinks are rejected).
 
 ## Tool Categories
 
-### Authentication (3 tools)
-- `sheetstorm_login` — Authenticate with credentials
-- `sheetstorm_get_current_user` — Get current user profile
-- `sheetstorm_logout` — Invalidate session
+Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 
-### Incidents (6 tools)
-- `sheetstorm_list_incidents` — List/filter incidents
-- `sheetstorm_get_incident` — Get incident details
-- `sheetstorm_create_incident` — Create new incident
-- `sheetstorm_update_incident` — Update incident fields
-- `sheetstorm_update_incident_status` — Change incident status/phase
-- `sheetstorm_delete_incident` — Delete incident
-
-### Timeline (6 tools)
-- `sheetstorm_list_timeline_events` — List timeline events
-- `sheetstorm_create_timeline_event` — Add timeline event
-- `sheetstorm_update_timeline_event` — Update timeline event
-- `sheetstorm_delete_timeline_event` — Delete timeline event
-- `sheetstorm_get_mitre_tactics` — List MITRE ATT&CK tactics
-- `sheetstorm_get_mitre_techniques` — List MITRE techniques by tactic
-
-### Tasks (6 tools)
-- `sheetstorm_list_tasks` — List incident tasks
-- `sheetstorm_create_task` — Create task
-- `sheetstorm_update_task` — Update task
-- `sheetstorm_delete_task` — Delete task
-- `sheetstorm_add_task_comment` — Add task comment
-- `sheetstorm_list_task_comments` — List task comments
-
-### Compromised Assets (8 tools)
-- `sheetstorm_list_hosts` / `sheetstorm_add_host` / `sheetstorm_update_host` / `sheetstorm_delete_host`
-- `sheetstorm_list_accounts` / `sheetstorm_add_account` / `sheetstorm_reveal_account_password`
-
-### IOCs (12 tools)
-- Network IOCs: `sheetstorm_list_network_iocs` / `sheetstorm_add_network_ioc` / `sheetstorm_update_network_ioc` / `sheetstorm_delete_network_ioc`
-- Host IOCs: `sheetstorm_list_host_iocs` / `sheetstorm_add_host_ioc` / `sheetstorm_update_host_ioc` / `sheetstorm_delete_host_ioc`
-- Malware: `sheetstorm_list_malware` / `sheetstorm_add_malware` / `sheetstorm_update_malware` / `sheetstorm_delete_malware`
-
-### Artifacts (5 tools)
-- `sheetstorm_list_artifacts` — List evidence files
-- `sheetstorm_upload_artifact` — Upload evidence
-- `sheetstorm_verify_artifact` — Verify integrity
-- `sheetstorm_get_chain_of_custody` — View custody chain
-- `sheetstorm_download_artifact` — Download evidence file
-
-### Attack Graph (10 tools)
-- `sheetstorm_get_attack_graph` — Full graph view
-- `sheetstorm_auto_generate_graph` — Auto-generate from data
-- Nodes: `sheetstorm_add_graph_node` / `sheetstorm_update_graph_node` / `sheetstorm_delete_graph_node`
-- Edges: `sheetstorm_add_graph_edge` / `sheetstorm_delete_graph_edge`
-- Reference: `sheetstorm_get_node_types` / `sheetstorm_get_edge_types`
-
-### Reports (3 tools)
-- `sheetstorm_list_reports` — List reports
-- `sheetstorm_generate_pdf_report` — Generate PDF
-- `sheetstorm_generate_ai_report` — AI-generated report
-
-### Admin (9 tools)
-- Users: `sheetstorm_list_users` / `sheetstorm_create_user` / `sheetstorm_update_user` / `sheetstorm_delete_user`
-- Notifications: `sheetstorm_list_notifications` / `sheetstorm_mark_notification_read` / `sheetstorm_mark_all_notifications_read`
-- `sheetstorm_get_audit_logs` — Audit trail
-- `sheetstorm_health_check` — API health
+- **Auth (2)**: `sheetstorm_get_current_user`, `sheetstorm_logout`
+- **Incidents (9)**: list/get/create/update, `sheetstorm_update_incident_status`,
+  `sheetstorm_archive_incident`, `sheetstorm_unarchive_incident`, `sheetstorm_list_archived_incidents`,
+  `sheetstorm_permanently_delete_incident` (Administrator, archived incidents only, requires `confirmation="DELETE PERMANENTLY"`)
+- **Assignments (3)**: list/assign/remove responders
+- **Timeline (7)**: list/create/update/delete events (`detection_time`, `confidence_level`),
+  `sheetstorm_mark_timeline_event_as_ioc`, `sheetstorm_list_timeline_mitre_tactics`, `sheetstorm_list_timeline_mitre_techniques`
+- **Tasks & leads (6)**: tasks with `task_type`, `lead_outcome`, `investigation_direction`, `evidence_refs`; comments
+- **Compromised assets (9)**: hosts (`triage_status`, acquisition flags), accounts incl. `sheetstorm_update_account`,
+  `sheetstorm_delete_account`, `sheetstorm_reveal_account_password` (one account; plaintext enters the model context)
+- **IOCs (12)**: network IOCs, host IOCs, malware
+- **Artifacts (7)**: list, upload (acquisition metadata), download, verify, chain of custody,
+  `sheetstorm_set_legal_hold`, `sheetstorm_export_custody` (JSON)
+- **Attack graph (10)**: graph, auto-generate, node/edge CRUD incl. `sheetstorm_update_graph_edge`, node/edge types
+- **Case notes (5)**, **Reports (3)**, **Admin (9)**, **Threat intel (7)**, **Knowledge base (6)**,
+  **Advanced analysis (4)**, **Defang (2)**
+- **Playbooks (7)**: `sheetstorm_list_playbook_templates`, `sheetstorm_get_playbook_template`,
+  `sheetstorm_activate_playbook`, `sheetstorm_get_incident_playbook`, `sheetstorm_advance_playbook_phase`,
+  `sheetstorm_execute_playbook_action`, `sheetstorm_toggle_playbook_task`
 
 ## Resources
 
@@ -189,7 +166,8 @@ code --add-mcp '{
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+pip install --require-hashes --no-deps -r requirements-dev.lock   # runtime + test/lint + build backend
+pip install --no-deps --no-build-isolation -e .
 pytest
 ruff check .
 ruff format .

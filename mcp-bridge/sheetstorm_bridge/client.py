@@ -1,12 +1,14 @@
 """Async HTTP client for the SheetStorm backend API.
 
 Simplified version for the local bridge — no OAuth, no ContextVars.
-Handles authentication, token refresh, retries, and typed errors.
+Handles authentication, token refresh (with refresh-token rotation), retries,
+and typed errors.
 """
 
 from __future__ import annotations
 
 import logging
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
 
 import httpx
@@ -43,6 +45,11 @@ class ServerError(SheetStormAPIError):
     pass
 
 
+def no_cookie_jar() -> CookieJar:
+    """Cookie jar that never stores or sends cookies (auth is header-only)."""
+    return CookieJar(policy=DefaultCookiePolicy(allowed_domains=[]))
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -53,12 +60,13 @@ class SheetStormClient:
     def __init__(self, config: Config) -> None:
         self._config = config
         self._base_url = config.api_url.rstrip("/")
-        self._access_token: str | None = config.api_token
+        self._access_token: str | None = config.api_token or None
         self._refresh_token: str | None = None
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(config.http_timeout),
             follow_redirects=True,
+            cookies=no_cookie_jar(),
         )
 
     async def close(self) -> None:
@@ -77,17 +85,19 @@ class SheetStormClient:
 
         if resp.status_code >= 400:
             raise AuthenticationError(
-                data.get("error", "Login failed"),
+                data.get("message") or data.get("error") or "Login failed",
                 status_code=resp.status_code,
                 detail=data,
             )
 
         self._access_token = data.get("access_token")
         self._refresh_token = data.get("refresh_token")
-        logger.info("Authenticated as %s", username)
+        logger.info("Authenticated to SheetStorm backend")
         return data
 
     async def refresh(self) -> None:
+        """Refresh the access token. The backend rotates refresh tokens: the
+        presented one is revoked, so the new one MUST be stored."""
         if not self._refresh_token:
             raise AuthenticationError("No refresh token available", status_code=401)
         resp = await self._http.post(
@@ -99,12 +109,18 @@ class SheetStormClient:
             self._refresh_token = None
             raise AuthenticationError("Token refresh failed", status_code=resp.status_code)
         data = resp.json()
-        self._access_token = data.get("access_token", self._access_token)
+        if not data.get("access_token"):
+            self._access_token = None
+            self._refresh_token = None
+            raise AuthenticationError("Token refresh returned no access token", status_code=resp.status_code)
+        self._access_token = data["access_token"]
+        self._refresh_token = data.get("refresh_token") or None
 
     async def logout(self) -> dict:
+        """Log out, revoking both the access and the refresh token."""
+        body = {"refresh_token": self._refresh_token} if self._refresh_token else None
         try:
-            resp = await self._request("POST", "/auth/logout")
-            return resp
+            return await self._request("POST", "/auth/logout", json=body, _retry=1)
         finally:
             self._access_token = None
             self._refresh_token = None
@@ -138,26 +154,34 @@ class SheetStormClient:
     async def delete(self, path: str) -> Any:
         return await self._request("DELETE", path)
 
-    async def upload(self, path: str, file_path: str, field_name: str = "file") -> Any:
+    async def upload(
+        self,
+        path: str,
+        filename: str,
+        content: bytes,
+        data: dict[str, str] | None = None,
+        field_name: str = "file",
+    ) -> Any:
+        """Upload file content via multipart/form-data with optional form fields."""
         import mimetypes
-        from pathlib import Path
 
-        p = Path(file_path)
-        mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        files = {field_name: (p.name, p.read_bytes(), mime)}
-        return await self._request("POST", path, files=files)
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        files = {field_name: (filename, content, mime)}
+        return await self._request("POST", path, files=files, data=data)
 
     async def download(self, path: str) -> bytes:
-        await self.ensure_authenticated()
-        headers = {"Authorization": f"Bearer {self._access_token}"} if self._access_token else {}
-        resp = await self._http.get(path, headers=headers)
-        if resp.status_code >= 400:
-            self._raise_for_status(resp)
+        resp = await self._send("GET", path)
         return resp.content
 
     # -- internal ------------------------------------------------------------
 
-    async def _request(
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        resp = await self._send(method, path, **kwargs)
+        if resp.status_code == 204 or not resp.content:
+            return {"success": True}
+        return resp.json()
+
+    async def _send(
         self,
         method: str,
         path: str,
@@ -165,53 +189,64 @@ class SheetStormClient:
         json: dict | None = None,
         params: dict | None = None,
         files: dict | None = None,
+        data: dict | None = None,
         _retry: int = 0,
-    ) -> Any:
+    ) -> httpx.Response:
         await self.ensure_authenticated()
 
         headers: dict[str, str] = {}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
+        again = dict(json=json, params=params, files=files, data=data)
         try:
             resp = await self._http.request(
-                method, path, headers=headers, json=json, params=params, files=files,
+                method, path, headers=headers, json=json, params=params, files=files, data=data,
             )
         except httpx.TransportError as exc:
             if _retry < self._config.http_max_retries:
-                logger.warning("Network error, retrying (%d/%d): %s", _retry + 1, self._config.http_max_retries, exc)
-                return await self._request(method, path, json=json, params=params, files=files, _retry=_retry + 1)
+                logger.warning(
+                    "Network error, retrying (%d/%d): %s",
+                    _retry + 1, self._config.http_max_retries, exc,
+                )
+                return await self._send(method, path, **again, _retry=_retry + 1)
             raise SheetStormAPIError(f"Network error: {exc}") from exc
 
-        # auto-refresh on 401
-        if resp.status_code == 401 and self._refresh_token and _retry == 0:
+        # auto-refresh (or re-login) on 401, once
+        if resp.status_code == 401 and _retry == 0:
             try:
-                await self.refresh()
-                return await self._request(method, path, json=json, params=params, files=files, _retry=1)
+                if self._refresh_token:
+                    await self.refresh()
+                else:
+                    self._access_token = None
+                    await self.ensure_authenticated()
+                return await self._send(method, path, **again, _retry=1)
             except AuthenticationError:
-                pass
+                logger.debug("Re-authentication after 401 failed")
 
         # retry 5xx
         if resp.status_code >= 500 and _retry < self._config.http_max_retries:
-            logger.warning("Server error %d, retrying (%d/%d)", resp.status_code, _retry + 1, self._config.http_max_retries)
-            return await self._request(method, path, json=json, params=params, files=files, _retry=_retry + 1)
+            logger.warning(
+                "Server error %d, retrying (%d/%d)",
+                resp.status_code, _retry + 1, self._config.http_max_retries,
+            )
+            return await self._send(method, path, **again, _retry=_retry + 1)
 
         if resp.status_code >= 400:
             self._raise_for_status(resp)
-
-        if resp.status_code == 204 or not resp.content:
-            return {"success": True}
-
-        return resp.json()
+        return resp
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:
+        """Raise a typed exception; prefers the human-readable ``message``."""
         try:
             data = resp.json()
         except Exception:
-            data = {"error": resp.text or "Unknown error"}
+            data = {"message": resp.text or "Unknown error"}
+        if not isinstance(data, dict):
+            data = {"message": str(data)}
 
-        message = data.get("error") or data.get("message") or data.get("msg") or str(data)
+        message = data.get("message") or data.get("error") or data.get("msg") or str(data)
         status = resp.status_code
 
         if status == 400:

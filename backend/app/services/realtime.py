@@ -470,8 +470,8 @@ def broadcast_presence(incident_id, emitter=None):
 
 def _actor():
     try:
-        from flask import g, has_app_context
-        if not has_app_context():
+        from flask import g, has_request_context
+        if not has_request_context():
             return None
         user = g.get('current_user')
         if user is not None:

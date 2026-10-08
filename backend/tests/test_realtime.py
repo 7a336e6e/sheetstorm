@@ -169,8 +169,14 @@ def test_envelope_actor_and_object_serialization(app, users, make_incident):
             return {'id': str(self.id), 'title': 'x', 'version': self.version}
 
     with app.test_request_context():
+        previous = g.pop('current_user', None)
         g.current_user = users['Analyst']
-        env = realtime.build_envelope(inc.id, 'task', 'updated', obj=Obj())
+        try:
+            env = realtime.build_envelope(inc.id, 'task', 'updated', obj=Obj())
+        finally:
+            g.pop('current_user', None)
+            if previous is not None:
+                g.current_user = previous
     assert env['actor'] == {'id': str(users['Analyst'].id), 'name': users['Analyst'].name}
     assert env['version'] == 3 and env['id'] == str(Obj.id) and env['data']['title'] == 'x'
 

@@ -17,7 +17,9 @@ CASES: dict[str, tuple] = {
     "sheetstorm_get_current_user": ({}, "GET", "/auth/me", None, None),
     "sheetstorm_logout": ({}, "POST", "/auth/logout", None, None),
     # incidents
-    "sheetstorm_list_incidents": ({"status": "open"}, "GET", "/incidents", None, {"status": "open"}),
+    "sheetstorm_list_incidents": ({"status": "open", "q": "x", "sort": "-severity", "per_page": 500}, "GET",
+                                  "/incidents", None,
+                                  {"status": "open", "q": "x", "sort": "-severity", "per_page": "200"}),
     "sheetstorm_get_incident": ({"incident_id": I}, "GET", f"/incidents/{I}", None, None),
     "sheetstorm_create_incident": ({"title": "T", "description": "D"}, "POST", "/incidents",
                                    {"title": "T", "description": "D", "severity": "medium"}, None),
@@ -26,7 +28,8 @@ CASES: dict[str, tuple] = {
                                           f"/incidents/{I}/status", {"status": "contained"}, None),
     "sheetstorm_archive_incident": ({"incident_id": I}, "POST", f"/incidents/{I}/archive", None, None),
     "sheetstorm_unarchive_incident": ({"incident_id": I}, "POST", f"/incidents/{I}/unarchive", None, None),
-    "sheetstorm_list_archived_incidents": ({"search": "x"}, "GET", "/incidents/archived", None, {"search": "x"}),
+    "sheetstorm_list_archived_incidents": ({"search": "x", "sort": "title"}, "GET", "/incidents/archived", None,
+                                           {"search": "x", "sort": "title"}),
     "sheetstorm_permanently_delete_incident": ({"incident_id": I, "confirmation": "DELETE PERMANENTLY"},
                                                "DELETE", f"/incidents/{I}/permanent", None, None),
     # assignments
@@ -209,7 +212,10 @@ CASES: dict[str, tuple] = {
     "sheetstorm_get_mitre_techniques": ({"search": "rdp"}, "GET", "/knowledge-base/mitre-attack", None,
                                         {"search": "rdp"}),
     # advanced
-    "sheetstorm_search": ({"query": "evil"}, "GET", "/search", None, {"q": "evil"}),
+    "sheetstorm_search": ({"query": "evil", "incident_id": I, "sort": "-timestamp", "since": "2026-01-01",
+                           "per_page": 500}, "GET", "/search", None,
+                          {"q": "evil", "incident_id": I, "sort": "-timestamp", "since": "2026-01-01",
+                           "per_page": "50"}),
     "sheetstorm_correlate_iocs": ({"ioc_values": "1.2.3.4"}, "POST", "/correlate-iocs",
                                   {"ioc_values": ["1.2.3.4"]}, None),
     "sheetstorm_export_stix": ({"incident_id": I}, "GET", f"/incidents/{I}/export/stix", None, None),

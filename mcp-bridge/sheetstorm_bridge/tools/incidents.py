@@ -62,25 +62,33 @@ async def sheetstorm_list_incidents(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     search: Optional[str] = None,
+    q: Optional[str] = None,
+    sort: Optional[str] = None,
 ) -> str:
     """List incidents with optional filters and pagination.
 
     Args:
         page: Page number (default 1)
-        per_page: Items per page (default 20, max 100)
-        status: Filter by status (open, investigating, contained, eradicated, recovered, closed)
-        severity: Filter by severity (critical, high, medium, low)
-        search: Search term for title/description
+        per_page: Items per page (default 20, max 200)
+        status: Filter by status; comma-separate several (open, investigating, contained, eradicated, recovered, closed)
+        severity: Filter by severity; comma-separate several (critical, high, medium, low)
+        search: Search term for title/description (legacy alias of q)
+        q: Search term for title/description/incident number
+        sort: Sort field, "-" prefix for descending, up to 2 comma-separated (created_at, updated_at, incident_number, title, severity, status, phase, detected_at). Default -created_at.
     """
     client = get_client()
     try:
-        params: dict = {"page": page, "per_page": min(per_page, 100)}
+        params: dict = {"page": page, "per_page": max(1, min(per_page, 200))}
         if status:
             params["status"] = status
         if severity:
             params["severity"] = severity
-        if search:
+        if q:
+            params["q"] = q
+        elif search:
             params["search"] = search
+        if sort:
+            params["sort"] = sort
 
         data = await client.get("/incidents", params=params)
         items = data.get("items", [])
@@ -256,19 +264,27 @@ async def sheetstorm_list_archived_incidents(
     page: int = 1,
     per_page: int = 20,
     search: Optional[str] = None,
+    q: Optional[str] = None,
+    sort: Optional[str] = None,
 ) -> str:
     """List archived incidents. Requires the Administrator role.
 
     Args:
         page: Page number (default 1)
-        per_page: Items per page (default 20, max 100)
-        search: Search term for title/description
+        per_page: Items per page (default 20, max 200)
+        search: Search term for title/description (legacy alias of q)
+        q: Search term for title/description/incident number
+        sort: Sort field, "-" prefix for descending (archived_at, created_at, updated_at, title, severity, status, ...). Default -archived_at.
     """
     client = get_client()
     try:
-        params: dict = {"page": page, "per_page": min(per_page, 100)}
-        if search:
+        params: dict = {"page": page, "per_page": max(1, min(per_page, 200))}
+        if q:
+            params["q"] = q
+        elif search:
             params["search"] = search
+        if sort:
+            params["sort"] = sort
         data = await client.get("/incidents/archived", params=params)
         items = data.get("items", [])
         if not items:

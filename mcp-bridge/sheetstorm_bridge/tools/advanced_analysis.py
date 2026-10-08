@@ -16,25 +16,36 @@ from sheetstorm_bridge.server import get_client, mcp
 async def sheetstorm_search(
     query: str,
     types: Optional[str] = None,
+    incident_id: Optional[str] = None,
+    sort: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
     page: int = 1,
     per_page: int = 50,
 ) -> str:
-    """Search across all incidents for matching data.
+    """Search across all incidents you can access.
 
-    Full-text search across incidents, timeline events, hosts, accounts,
-    IOCs, malware, and case notes.
+    Matches substrings (partial IPs, hash prefixes, paths, DOMAIN\\user) in
+    incidents, timeline events, hosts, accounts, IOCs, malware, and case notes.
+    Types you lack the read permission for are left out.
 
     Args:
-        query: Search term (min 2 characters)
+        query: Search term (2-200 characters)
         types: Comma-separated entity types to search (incidents,timeline,hosts,accounts,network_iocs,host_iocs,malware,notes). Default: all.
+        incident_id: Restrict results to one incident (UUID)
+        sort: relevance (default), -timestamp (newest first) or timestamp (oldest first)
+        since: Only results at or after this ISO-8601 timestamp
+        until: Only results at or before this ISO-8601 timestamp
         page: Page number (default 1)
-        per_page: Results per page (default 50, max 200)
+        per_page: Results per page (default 50, max 50)
     """
     client = get_client()
     try:
-        params: dict = {"q": query, "page": page, "per_page": per_page}
-        if types:
-            params["types"] = types
+        params: dict = {"q": query, "page": page, "per_page": max(1, min(per_page, 50))}
+        for key, value in (("types", types), ("incident_id", incident_id), ("sort", sort),
+                           ("since", since), ("until", until)):
+            if value:
+                params[key] = value
 
         data = await client.get("/search", params=params)
         results = data.get("results", [])
@@ -43,7 +54,12 @@ async def sheetstorm_search(
         if not results:
             return f"No results found for '{query}'."
 
-        parts = [f"**Search Results** — {total} matches for '{query}' (page {page})\n"]
+        parts = [f"**Search Results** — {total} matches for '{query}' "
+                 f"(page {data.get('page', page)} of {data.get('pages', 1)})"]
+        facets = data.get("facets") or {}
+        if facets:
+            parts.append("By type: " + ", ".join(f"{k}: {v}" for k, v in sorted(facets.items())))
+        parts.append("")
         for r in results:
             icon = {
                 'incident': '📋', 'timeline_event': '⏱️', 'host': '🖥️',
@@ -53,8 +69,9 @@ async def sheetstorm_search(
 
             parts.append(
                 f"{icon} **[{r['type'].upper()}]** {r['title']}\n"
-                f"   Incident: {r.get('incident_title', 'N/A')} (`{r.get('incident_id', '')[:8]}…`)\n"
-                f"   {r.get('snippet', '')[:150]}\n"
+                f"   ID: `{r.get('id', '')}`\n"
+                f"   Incident: {r.get('incident_title', 'N/A')} (`{r.get('incident_id', '')}`)\n"
+                f"   {(r.get('snippet') or '')[:150]}\n"
                 f"   _{r.get('timestamp', 'N/A')}_\n"
             )
 

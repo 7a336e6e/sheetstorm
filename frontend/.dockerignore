@@ -35,3 +35,6 @@ test-results
 # Docker
 Dockerfile
 .dockerignore
+
+# Playwright storage states (live session cookies)
+e2e/.auth

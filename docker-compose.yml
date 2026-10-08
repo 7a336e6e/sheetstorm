@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     container_name: sheetstorm-redis
     command: redis-server --appendonly yes
     volumes:
@@ -47,6 +47,9 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       FERNET_KEY: ${FERNET_KEY}
+      # HMAC key for chain-of-custody signatures (kept separate from SECRET_KEY
+      # so rotating SECRET_KEY does not invalidate custody records).
+      CUSTODY_SIGNING_KEY: ${CUSTODY_SIGNING_KEY:-}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -57,6 +60,11 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-}
+      LOCAL_LLM_TIMEOUT: ${LOCAL_LLM_TIMEOUT:-120}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
       GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
       GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
@@ -66,10 +74,25 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-}
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # Comma-separated browser origins allowed to call the API with credentials.
+      # Required when serving from anything other than localhost.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Auth cookies are Secure (HTTPS-only) in production. Set false only for
+      # plain-HTTP, non-localhost deployments (not recommended).
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-true}
+      # Hosts/CIDRs admins may target for self-hosted integrations (Ollama, MISP, ...).
+      OUTBOUND_URL_ALLOWLIST: ${OUTBOUND_URL_ALLOWLIST:-}
+      # Automatically enrich new IOCs via configured threat-intel integrations.
+      IOC_AUTO_ENRICH: ${IOC_AUTO_ENRICH:-false}
+      JWT_REFRESH_GRACE_SECONDS: ${JWT_REFRESH_GRACE_SECONDS:-30}
+      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-600 per minute}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sheetstorm.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
     ports:
       - "127.0.0.1:5000:5000"
+    volumes:
+      # Local evidence storage (used when no S3/Drive backend is configured).
+      - artifacts_data:/app/artifacts
     depends_on:
       database:
         condition: service_healthy
@@ -121,6 +144,8 @@ services:
       MCP_TRANSPORT: sse
       SSE_PORT: "8811"
       MCP_ISSUER_URL: ${MCP_ISSUER_URL:-http://localhost:8811}
+      # Extra OAuth redirect hosts MCP clients may use (comma-separated).
+      MCP_ALLOWED_REDIRECT_HOSTS: ${MCP_ALLOWED_REDIRECT_HOSTS:-}
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
     ports:
@@ -144,6 +169,14 @@ services:
       context: ./proxy
       dockerfile: Dockerfile
     container_name: sheetstorm-proxy
+    environment:
+      # Upstream proxies/load balancers whose forwarded client-IP header nginx
+      # may believe (comma/space-separated IPs or CIDRs). Empty = trust nobody
+      # (secure default for direct exposure). List only proxies you control.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      # Header carrying the client IP: X-Forwarded-For, X-Real-IP,
+      # CF-Connecting-IP or True-Client-IP.
+      REAL_IP_HEADER: ${REAL_IP_HEADER:-X-Forwarded-For}
     ports:
       - "8080:80"
     depends_on:
@@ -158,6 +191,26 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Optional local LLM. Enable with:  docker compose --profile local-llm up -d
+  # then set an `ollama` AI integration with base_url http://ollama:11434
+  # (no host port is published: the backend reaches it over the compose network;
+  # if you point OUTBOUND_URL_ALLOWLIST at it, add `ollama`).
+  ollama:
+    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
+    container_name: sheetstorm-ollama
+    profiles: ["local-llm"]
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:
+  artifacts_data:

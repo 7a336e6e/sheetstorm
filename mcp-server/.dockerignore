@@ -1,3 +1,8 @@
+# Secrets — never bake credentials into the image
+.env
+.env.*
+!.env.example
+
 # Virtual environments
 .venv/
 venv/

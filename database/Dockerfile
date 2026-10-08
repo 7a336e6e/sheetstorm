@@ -1,5 +1,5 @@
 # Base image pinned by multi-arch index digest (Dependabot "docker" updates it).
-FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+FROM postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
 
 # Copy initialization scripts
 COPY init/ /docker-entrypoint-initdb.d/

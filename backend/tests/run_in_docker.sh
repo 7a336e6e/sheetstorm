@@ -42,11 +42,19 @@ for _ in $(seq 1 60); do
 done
 sleep 1
 
-docker run --rm --network "$NET" \
-  -v "$ROOT/backend:/app" \
-  -v "$ROOT/database/init:/db-init:ro" \
-  -w /app \
+# Stream the sources into the container instead of bind-mounting the repo:
+# works on Docker Desktop without file-sharing access to the checkout (e.g.
+# ~/Documents on macOS) and on remote/rootless daemons. COPYFILE_DISABLE and
+# --no-mac-metadata stop macOS bsdtar from adding AppleDouble ._* files.
+TAR_FLAGS=(--exclude='__pycache__' --exclude='.pytest_cache' --exclude='._*')
+if tar --version 2>/dev/null | grep -q bsdtar; then
+  TAR_FLAGS+=(--no-xattrs --no-mac-metadata)
+fi
+COPYFILE_DISABLE=1 tar -C "$ROOT" "${TAR_FLAGS[@]}" -cf - backend database/init | \
+docker run -i --rm --network "$NET" \
   -e TEST_DATABASE_URL="postgresql://sheetstorm:sheetstorm-test@${PG}:5432/sheetstorm_test" \
   -e TEST_REDIS_URL="redis://${REDIS}:6379/0" \
-  -e DB_INIT_DIR=/db-init \
-  --entrypoint python "$IMAGE" -m pytest "$@"
+  -e DB_INIT_DIR=/tmp/src/database/init \
+  --entrypoint sh "$IMAGE" -c \
+  'mkdir -p /tmp/src && tar -xf - -C /tmp/src && cd /tmp/src/backend && exec python -m pytest "$@"' \
+  sh "$@"

@@ -1,0 +1,21 @@
+# Normalise line endings; keep shell scripts LF so they run in Linux containers
+* text=auto
+
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+backend/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

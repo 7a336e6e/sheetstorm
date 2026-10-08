@@ -101,6 +101,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
         system_type: 'workstation',
         os_version: '',
         containment_status: 'active',
+        triage_status: 'under_analysis',
         first_seen: '',
         evidence: '',
     })
@@ -138,7 +139,8 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
     const resetForm = () => {
         setForm({
             hostname: '', ip_address: '', system_type: 'workstation',
-            os_version: '', containment_status: 'active', first_seen: '', evidence: '',
+            os_version: '', containment_status: 'active', triage_status: 'under_analysis',
+            first_seen: '', evidence: '',
         })
         setEditingHost(null)
     }
@@ -152,6 +154,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                 system_type: host.system_type || 'workstation',
                 os_version: host.os_version || '',
                 containment_status: host.containment_status || 'active',
+                triage_status: host.triage_status || 'under_analysis',
                 first_seen: host.first_seen || '',
                 evidence: host.evidence || '',
             })
@@ -328,6 +331,18 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                                 <Label>OS Version</Label>
                                 <Input value={form.os_version} onChange={e => setForm({ ...form, os_version: e.target.value })} variant="glass" placeholder="Windows 11 23H2" />
                             </div>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Triage Status</Label>
+                            <Select value={form.triage_status} onValueChange={v => setForm({ ...form, triage_status: v })}>
+                                <SelectTrigger variant="glass"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="under_analysis">Under Analysis</SelectItem>
+                                    <SelectItem value="suspicious">Suspicious</SelectItem>
+                                    <SelectItem value="compromised">Compromised</SelectItem>
+                                    <SelectItem value="clean">Clean</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">

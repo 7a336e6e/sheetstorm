@@ -12,14 +12,11 @@ echo ""
 # 1. Detect Python
 PYTHON=""
 for candidate in python3 python; do
-    if command -v "$candidate" &>/dev/null; then
-        version=$("$candidate" --version 2>&1 | grep -oP '\d+\.\d+')
-        major=$(echo "$version" | cut -d. -f1)
-        minor=$(echo "$version" | cut -d. -f2)
-        if [[ "$major" -ge 3 && "$minor" -ge 11 ]]; then
-            PYTHON="$candidate"
-            break
-        fi
+    # Portable version check (BSD grep on macOS has no -P).
+    if command -v "$candidate" &>/dev/null \
+        && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' &>/dev/null; then
+        PYTHON="$candidate"
+        break
     fi
 done
 
@@ -41,8 +38,9 @@ fi
 
 # 3. Install package + deps
 echo "Installing sheetstorm-mcp-bridge and dependencies..."
-.venv/bin/pip install --upgrade pip >/dev/null 2>&1
-.venv/bin/pip install -e . 2>&1 | tail -5
+# Hash-locked install of the reviewed pins (no resolver, no unpinned upgrades).
+.venv/bin/pip install --require-hashes --no-deps -r requirements.lock 2>&1 | tail -5
+.venv/bin/pip install --no-deps -e . 2>&1 | tail -5
 
 # 4. Verify
 echo ""

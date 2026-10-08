@@ -6,9 +6,9 @@ API key is required.  The frontend can search/filter client-side.
 import re
 
 from flask import jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt
+from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app.middleware.rbac import require_permission
+from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 
 from app.api.v1.endpoints.kb_data_lolbas import LOLBAS_DATA, LOLBAS_CATEGORIES
@@ -217,6 +217,12 @@ def kb_d3fend_suggest():
 from app.services.mitre_suggest_service import suggest_mitre_techniques as mitre_suggest, get_all_patterns, save_patterns
 
 
+def _org_id():
+    """Organization of the authenticated user (resolved server-side, never
+    from a token claim)."""
+    return str(get_current_user().organization_id)
+
+
 @api_bp.route('/mitre/suggest', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
@@ -226,10 +232,15 @@ def mitre_auto_suggest():
     Body: { "activity": "...", "limit": 5 }
     Returns: { "suggestions": [{ "technique", "tactic", "name", "score" }] }
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     activity = data.get('activity', '')
-    limit = min(int(data.get('limit', 5)), 20)
-    org_id = get_jwt().get('organization_id')
+    if not isinstance(activity, str):
+        return jsonify({'error': 'bad_request', 'message': 'activity must be a string'}), 400
+    try:
+        limit = max(1, min(int(data.get('limit', 5)), 20))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'bad_request', 'message': 'limit must be an integer'}), 400
+    org_id = _org_id()
 
     suggestions = mitre_suggest(activity, org_id, limit=limit)
     return jsonify({'suggestions': suggestions}), 200
@@ -259,7 +270,7 @@ def _validate_regex_list(regex_list):
 @require_permission('incidents:read')
 def list_mitre_patterns():
     """Return all MITRE detection patterns."""
-    org_id = get_jwt().get('organization_id')
+    org_id = _org_id()
     return jsonify({'patterns': get_all_patterns(org_id)}), 200
 
 
@@ -274,7 +285,7 @@ def update_mitre_patterns():
     Each pattern: { technique, tactic, name, keywords[], regex[]?, weight? }
     """
     data = request.get_json() or {}
-    org_id = get_jwt().get('organization_id')
+    org_id = _org_id()
     patterns_list = data.get('patterns')
     if patterns_list is None:
         return jsonify({'error': 'bad_request', 'message': 'patterns list required'}), 400
@@ -304,7 +315,7 @@ def add_mitre_pattern():
     Body: { technique, tactic, name, keywords[], regex[]?, weight? }
     """
     data = request.get_json() or {}
-    org_id = get_jwt().get('organization_id')
+    org_id = _org_id()
     if not data.get('technique') or not data.get('tactic') or not data.get('name'):
         return jsonify({'error': 'bad_request', 'message': 'technique, tactic, name required'}), 400
 
@@ -333,7 +344,7 @@ def add_mitre_pattern():
 @audit_log('data_modification', 'delete', 'mitre_pattern')
 def delete_mitre_pattern(technique_id):
     """Remove pattern(s) matching the given technique ID."""
-    org_id = get_jwt().get('organization_id')
+    org_id = _org_id()
     current = get_all_patterns(org_id)
     filtered = [p for p in current if p['technique'] != technique_id]
 

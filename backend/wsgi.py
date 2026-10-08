@@ -10,4 +10,8 @@ from app import create_app, socketio
 app = create_app()
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    # Debug (Werkzeug debugger + reloader) is only enabled in development.
+    # Never run with debug=True in production — it leaks stack traces and
+    # exposes an interactive console.
+    debug = os.environ.get('FLASK_ENV', 'production').lower() == 'development'
+    socketio.run(app, host='0.0.0.0', port=5000, debug=debug)

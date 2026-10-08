@@ -1,5 +1,5 @@
 """Indicator of Compromise (IOC) endpoints"""
-from flask import jsonify, request, g
+from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
 from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
@@ -134,7 +134,48 @@ def create_network_ioc(incident_id):
 
     db.session.commit()
 
+    # IR-augmenting automation: enrich the indicator on creation. Opt-in (org
+    # setting `auto_enrich_iocs`, else the IOC_AUTO_ENRICH global default —
+    # off) because it sends indicator values to third-party services; a
+    # request may still opt out with auto_enrich=false. Runs in a background
+    # task so slow/failing providers never block or fail the request.
+    if dns_ip and data.get('auto_enrich', True) is not False and _auto_enrich_enabled(user):
+        socketio.start_background_task(
+            _enrich_network_ioc, current_app._get_current_object(), ioc.id,
+            dns_ip.strip(), str(user.organization_id),
+        )
+
     return jsonify(ioc.to_dict()), 201
+
+
+def _auto_enrich_enabled(user):
+    """Org setting `auto_enrich_iocs` overrides the IOC_AUTO_ENRICH default."""
+    settings = (user.organization.settings if user.organization else None) or {}
+    if 'auto_enrich_iocs' in settings:
+        return bool(settings['auto_enrich_iocs'])
+    return bool(current_app.config.get('IOC_AUTO_ENRICH', False))
+
+
+def _enrich_network_ioc(app, ioc_id, value, organization_id):
+    """Background enrichment of one network IOC (never raises)."""
+    import re as _re
+    with app.app_context():
+        try:
+            from app.services.enrichment_service import EnrichmentService
+            ioc_type = 'ip-src' if _re.match(r'^\d{1,3}(\.\d{1,3}){3}$', value) else 'domain'
+            enrichment = EnrichmentService.auto_enrich_ioc(ioc_type, value, organization_id)
+            if enrichment:
+                ioc = db.session.get(NetworkIndicator, ioc_id)
+                if ioc:
+                    ed = dict(ioc.extra_data or {})
+                    ed['enrichment'] = enrichment
+                    ioc.extra_data = ed
+                    db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.warning('IOC auto-enrichment failed for %s', ioc_id, exc_info=True)
+        finally:
+            db.session.remove()
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs/<uuid:ioc_id>', methods=['PUT'])

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Activity,
   FileText,
@@ -54,21 +54,15 @@ function posFor(index: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function FeatureOrbit() {
-  const [activeIndex, setActiveIndex] = useState(0)
+  // Index and cumulative hand angle live together so the hand always moves
+  // clockwise (never reverses) and updates stay pure (StrictMode-safe).
+  const [orbit, setOrbit] = useState({ index: 0, angle: -90 }) // index 0 at top (-90°)
+  const activeIndex = orbit.index
   const [isPaused, setIsPaused] = useState(false)
   const [spokeActiveIndex, setSpokeActiveIndex] = useState(0)
-  const prevIndex = useRef(0)
-  // Track cumulative rotation so the hand always goes clockwise (never reverses)
-  const cumulativeAngle = useRef(-90) // start at top (index 0 → -90°)
-
   const advance = useCallback(() => {
-    setActiveIndex((prev) => {
-      prevIndex.current = prev
-      const next = (prev + 1) % TOTAL
-      // Always add one step clockwise (positive direction)
-      cumulativeAngle.current += 360 / TOTAL
-      return next
-    })
+    // Always add one step clockwise (positive direction)
+    setOrbit((prev) => ({ index: (prev.index + 1) % TOTAL, angle: prev.angle + 360 / TOTAL }))
   }, [])
 
   useEffect(() => {
@@ -93,16 +87,14 @@ export function FeatureOrbit() {
   const positions = useMemo(() => features.map((_, i) => posFor(i)), [])
 
   // Use cumulative angle so hand always rotates clockwise
-  const handAngle = cumulativeAngle.current
+  const handAngle = orbit.angle
 
   // When user clicks a feature, compute shortest clockwise jump
   const jumpTo = useCallback((target: number) => {
-    setActiveIndex((prev) => {
-      prevIndex.current = prev
+    setOrbit((prev) => {
       // Calculate clockwise steps from current to target
-      const steps = (target - prev + TOTAL) % TOTAL
-      cumulativeAngle.current += steps * (360 / TOTAL)
-      return target
+      const steps = (target - prev.index + TOTAL) % TOTAL
+      return { index: target, angle: prev.angle + steps * (360 / TOTAL) }
     })
   }, [])
 

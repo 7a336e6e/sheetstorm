@@ -12,11 +12,11 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **~65 tools** covering the full SheetStorm IR workflow
+- **108 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
-- Auto-refreshes expired JWT tokens
+- Auto-refreshes expired JWT tokens (stores the rotated refresh token)
 - Retry with exponential backoff for transient errors
 
 ## Quick Start
@@ -35,8 +35,8 @@ Or manually:
 ```bash
 cd mcp-bridge
 python3 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .
+.venv/bin/pip install --require-hashes --no-deps -r requirements.lock   # hash-locked, reviewed pins
+.venv/bin/pip install --no-deps -e .
 ```
 
 > **Important**: Use `.venv/bin/pip` (not just `pip`) to ensure packages install into the venv, not system Python.
@@ -63,7 +63,7 @@ SHEETSTORM_PASSWORD=changeme
 # SHEETSTORM_API_TOKEN=your-jwt-token-here
 
 # Optional
-# SHEETSTORM_LOG_LEVEL=INFO
+# LOG_LEVEL=INFO
 ```
 
 ### 3. Test
@@ -111,18 +111,20 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Category | Tools | Description |
 |----------|-------|-------------|
 | Auth | 2 | Get current user, logout |
-| Incidents | 6 | CRUD, status updates, search |
-| Timeline | 4 | Event management within incidents |
-| Tasks | 6 | Task management, comments |
-| Assets | 7 | Compromised hosts, accounts |
+| Incidents | 9 | CRUD, status, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
+| Assignments | 3 | Assign / unassign responders |
+| Timeline | 7 | Events (detection time, confidence), mark event as IOC, timeline MITRE lists |
+| Tasks | 6 | Tasks & investigative leads (type, outcome, direction, evidence refs), comments |
+| Assets | 9 | Hosts (triage / acquisition status), accounts (update, delete, single-account reveal) |
 | IOCs | 12 | Network IOCs, host IOCs, malware |
-| Artifacts | 5 | Upload, download, verify, chain of custody |
-| Attack Graph | 10 | Nodes, edges, auto-generation |
+| Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
+| Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |
 | Case Notes | 5 | Investigator notes |
-| Reports | 3 | PDF and AI-generated reports |
+| Playbooks | 7 | Templates, activate, phase advance, run actions, tick tasks |
+| Reports | 3 | PDF and AI-generated summaries |
 | Admin | 9 | Users, notifications, audit logs, health |
 | Threat Intel | 7 | VirusTotal, MISP, CVE, reputation |
-| Knowledge Base | 7 | LOLBAS, event IDs, D3FEND, MITRE |
+| Knowledge Base | 6 | LOLBAS, event IDs, D3FEND, MITRE ATT&CK |
 | Advanced | 4 | Search, correlate, STIX export, bulk enrich |
 | Defang | 2 | Defang/refang IOCs |
 
@@ -170,7 +172,7 @@ cd mcp-bridge
 .venv/bin/pip show sheetstorm-mcp-bridge
 
 # If not found, install it:
-.venv/bin/pip install -e .
+.venv/bin/pip install --require-hashes --no-deps -r requirements.lock && .venv/bin/pip install --no-deps -e .
 
 # Verify it works:
 .venv/bin/python -c "from sheetstorm_bridge.server import mcp; print('OK:', mcp.name)"
@@ -178,9 +180,10 @@ cd mcp-bridge
 
 If you see `No module named 'mcp'` or other import errors, the dependencies didn't install. Re-run:
 ```bash
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .
+.venv/bin/pip install --require-hashes --no-deps -r requirements.lock && .venv/bin/pip install --no-deps -e .
 ```
+
+`mcp` must be a 1.x release (`>=1.30,<2`): mcp 2.x removed `mcp.server.fastmcp`.
 
 **"No credentials configured"**: Set either `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
 

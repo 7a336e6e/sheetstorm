@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
+from sheetstorm_mcp.server import get_client, mcp
 
 
 def _format_report(r: dict) -> str:
@@ -56,8 +56,8 @@ async def sheetstorm_generate_pdf_report(
 
     Args:
         incident_id: UUID of the incident
-        report_type: Report type (full, executive, technical, timeline)
-        sections: Comma-separated list of sections to include (e.g. "summary,timeline,hosts,iocs")
+        report_type: Report type — one of: executive, full, metrics, ioc, trends
+        sections: Optional comma-separated sections to include (defaults to the report type's sections)
     """
     client = get_client()
     try:
@@ -74,29 +74,31 @@ async def sheetstorm_generate_pdf_report(
 @mcp.tool()
 async def sheetstorm_generate_ai_report(
     incident_id: str,
-    report_type: str = "executive",
-    additional_context: Optional[str] = None,
+    summary_type: str = "executive",
+    provider: Optional[str] = None,
 ) -> str:
-    """Generate an AI-written incident report using the backend AI service.
+    """Generate an AI-written summary of the incident from its timeline, hosts,
+    accounts and IOCs using the backend AI service (returned as text, not stored).
 
     Args:
         incident_id: UUID of the incident
-        report_type: Report type (executive, technical, lessons_learned)
-        additional_context: Extra context for the AI to consider
+        summary_type: One of: executive, technical, recommendations
+        provider: Optional AI provider name configured on the server (default: first available)
     """
     client = get_client()
     try:
-        payload: dict = {"report_type": report_type}
-        if additional_context:
-            payload["additional_context"] = additional_context
+        payload: dict = {"summary_type": summary_type}
+        if provider:
+            payload["provider"] = provider
 
         result = await client.post(f"/incidents/{incident_id}/reports/ai-generate", json=payload)
-
-        if isinstance(result, dict) and result.get("content"):
-            content = result["content"]
-            preview = content[:500] + "..." if len(content) > 500 else content
-            return f"✓ AI report generated ({report_type}):\n\n{preview}"
-
-        return f"✓ AI report generated:\n{_format_report(result)}"
+        summary = result.get("summary") if isinstance(result, dict) else None
+        if not summary:
+            return "✗ The AI service returned no summary."
+        used = result.get("provider")
+        header = f"✓ AI {result.get('summary_type', summary_type)} summary"
+        if used:
+            header += f" (provider: {used})"
+        return f"{header}:\n\n{summary}"
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"

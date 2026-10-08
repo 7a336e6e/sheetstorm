@@ -6,8 +6,8 @@ domain-specific context and formatting guidance.
 
 from __future__ import annotations
 
-from sheetstorm_mcp.server import mcp, get_client
 from sheetstorm_mcp.client import SheetStormAPIError
+from sheetstorm_mcp.server import get_client, mcp
 
 
 def _format_mitre_label(e: dict, prefix: str = "", existing_prefix: str = "") -> str:
@@ -65,7 +65,7 @@ async def analyze_incident(incident_id: str) -> str:
         (f"/incidents/{incident_id}/host-iocs", "host"),
         (f"/incidents/{incident_id}/malware", "malware"),
         (f"/incidents/{incident_id}/tasks", "tasks"),
-        (f"/incidents/{incident_id}/notes", "notes"),
+        (f"/incidents/{incident_id}/case-notes", "notes"),
     ]:
         try:
             data = await client.get(endpoint)
@@ -392,7 +392,7 @@ async def draft_executive_summary(incident_id: str) -> str:
         "6. **Timeline** — key dates (detection, containment, expected resolution)\n\n"
         "Keep the language clear and jargon-free. Use bullet points. "
         "Maximum 1 page.\n",
-        f"---\n\n# Incident Data\n",
+        "---\n\n# Incident Data\n",
         f"**Title**: {incident.get('title', 'Unknown')}",
         f"**Severity**: {incident.get('severity')} | **Status**: {incident.get('status')} | "
         f"**Phase**: {incident.get('phase')}",
@@ -452,7 +452,7 @@ async def full_ir_report(incident_id: str) -> str:
         'host_iocs': f"/incidents/{incident_id}/host-iocs",
         'malware': f"/incidents/{incident_id}/malware",
         'tasks': f"/incidents/{incident_id}/tasks",
-        'notes': f"/incidents/{incident_id}/notes",
+        'notes': f"/incidents/{incident_id}/case-notes",
         'artifacts': f"/incidents/{incident_id}/artifacts",
     }
 
@@ -490,7 +490,7 @@ async def full_ir_report(incident_id: str) -> str:
         "11. **Recommendations** (immediate, short-term, long-term)\n"
         "12. **Appendices** (IOC tables, affected host list, reference links)\n\n"
         "Use professional formatting with headers, tables, and bullet points.\n",
-        f"---\n\n# INCIDENT DATA\n",
+        "---\n\n# INCIDENT DATA\n",
         f"**Title**: {incident.get('title', 'Unknown')}",
         f"**ID**: {incident.get('id')}",
         f"**Status**: {incident.get('status')} | **Phase**: {incident.get('phase_name', incident.get('phase'))} | "
@@ -608,7 +608,7 @@ async def lessons_learned(incident_id: str) -> str:
     except SheetStormAPIError:
         pass
     try:
-        n = await client.get(f"/incidents/{incident_id}/notes")
+        n = await client.get(f"/incidents/{incident_id}/case-notes")
         notes = n.get("items", n) if isinstance(n, dict) else n
     except SheetStormAPIError:
         pass
@@ -655,7 +655,7 @@ async def lessons_learned(incident_id: str) -> str:
             parts.append(f"- [{t.get('status')}] {t.get('title')} — {t.get('priority', '?')}")
 
     if notes:
-        parts.append(f"\n## Case Notes")
+        parts.append("\n## Case Notes")
         for n in notes:
             parts.append(f"- {n.get('title')}: {(n.get('content', '') or '')[:200]}")
 

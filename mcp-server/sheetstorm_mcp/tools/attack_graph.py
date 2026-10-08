@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
-
+from sheetstorm_mcp.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # Formatters
@@ -112,12 +111,12 @@ async def sheetstorm_add_graph_node(
     Args:
         incident_id: UUID of the incident
         label: Display label for the node
-        node_type: Node type (host, account, ioc, malware, process, action, attacker, target, lateral_movement)
+        node_type: Node type — one of: workstation, server, domain_controller, attacker, c2_server, cloud_resource, user, service_account, external, unknown, ip_address, malware, host_indicator, database, web_server, file_server
         compromised_host_id: UUID of the related compromised host
         compromised_account_id: UUID of the related compromised account
         position_x: X coordinate for positioning
         position_y: Y coordinate for positioning
-        metadata: JSON string with extra metadata
+        metadata: JSON object string with extra metadata (stored as the node's extra_data)
     """
     client = get_client()
     try:
@@ -134,9 +133,12 @@ async def sheetstorm_add_graph_node(
             payload["position_y"] = position_y
         if metadata:
             try:
-                payload["metadata"] = _json.loads(metadata)
+                extra = _json.loads(metadata)
             except _json.JSONDecodeError:
-                payload["metadata"] = metadata
+                return "✗ Error: metadata must be a JSON object."
+            if not isinstance(extra, dict):
+                return "✗ Error: metadata must be a JSON object."
+            payload["extra_data"] = extra
 
         node = await client.post(f"/incidents/{incident_id}/attack-graph/nodes", json=payload)
         return f"✓ Node added:\n{_format_node(node)}"
@@ -159,7 +161,7 @@ async def sheetstorm_update_graph_node(
         incident_id: UUID of the incident
         node_id: UUID of the node
         label: New label
-        node_type: New node type
+        node_type: New node type — one of: workstation, server, domain_controller, attacker, c2_server, cloud_resource, user, service_account, external, unknown, ip_address, malware, host_indicator, database, web_server, file_server
         position_x: New X coordinate
         position_y: New Y coordinate
     """
@@ -206,6 +208,11 @@ async def sheetstorm_add_graph_edge(
     target_node_id: str,
     edge_type: str,
     label: Optional[str] = None,
+    mitre_tactic: Optional[str] = None,
+    mitre_technique: Optional[str] = None,
+    timestamp: Optional[str] = None,
+    description: Optional[str] = None,
+    timeline_event_id: Optional[str] = None,
 ) -> str:
     """Add an edge between two attack graph nodes.
 
@@ -213,8 +220,13 @@ async def sheetstorm_add_graph_edge(
         incident_id: UUID of the incident
         source_node_id: UUID of the source node
         target_node_id: UUID of the target node
-        edge_type: Edge type (compromised, lateral_movement, command_control, data_exfiltration, exploited, spawned, accessed, communicates_with, drops, executes)
+        edge_type: Edge type — one of: lateral_movement, credential_theft, data_exfiltration, command_control, initial_access, privilege_escalation, persistence, discovery, execution, defense_evasion, collection, associated_with
         label: Display label for the edge
+        mitre_tactic: Optional MITRE ATT&CK tactic for this step
+        mitre_technique: Optional MITRE ATT&CK technique ID (e.g. T1021.001)
+        timestamp: Optional ISO 8601 time of this step
+        description: Optional description
+        timeline_event_id: Optional timeline event UUID to link (fills MITRE/timestamp from it)
     """
     client = get_client()
     try:
@@ -223,10 +235,64 @@ async def sheetstorm_add_graph_edge(
             "target_node_id": target_node_id,
             "edge_type": edge_type,
         }
-        if label:
-            payload["label"] = label
+        for field, val in [
+            ("label", label),
+            ("mitre_tactic", mitre_tactic),
+            ("mitre_technique", mitre_technique),
+            ("timestamp", timestamp),
+            ("description", description),
+            ("timeline_event_id", timeline_event_id),
+        ]:
+            if val:
+                payload[field] = val
         edge = await client.post(f"/incidents/{incident_id}/attack-graph/edges", json=payload)
         return f"✓ Edge added:\n{_format_edge(edge)}"
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_update_graph_edge(
+    incident_id: str,
+    edge_id: str,
+    edge_type: Optional[str] = None,
+    label: Optional[str] = None,
+    mitre_tactic: Optional[str] = None,
+    mitre_technique: Optional[str] = None,
+    timestamp: Optional[str] = None,
+    description: Optional[str] = None,
+) -> str:
+    """Update an attack graph edge. Only the fields given are changed.
+
+    Args:
+        incident_id: UUID of the incident
+        edge_id: UUID of the edge
+        edge_type: New edge type — one of: lateral_movement, credential_theft, data_exfiltration, command_control, initial_access, privilege_escalation, persistence, discovery, execution, defense_evasion, collection, associated_with
+        label: New display label
+        mitre_tactic: MITRE ATT&CK tactic
+        mitre_technique: MITRE ATT&CK technique ID
+        timestamp: ISO 8601 time of this step
+        description: Description
+    """
+    client = get_client()
+    try:
+        payload: dict = {}
+        for field, val in [
+            ("edge_type", edge_type),
+            ("label", label),
+            ("mitre_tactic", mitre_tactic),
+            ("mitre_technique", mitre_technique),
+            ("timestamp", timestamp),
+            ("description", description),
+        ]:
+            if val is not None:
+                payload[field] = val
+        if not payload:
+            return "No fields to update."
+        edge = await client.put(
+            f"/incidents/{incident_id}/attack-graph/edges/{edge_id}", json=payload
+        )
+        return f"✓ Edge updated:\n{_format_edge(edge)}"
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
@@ -252,16 +318,12 @@ async def sheetstorm_delete_graph_edge(incident_id: str, edge_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def sheetstorm_get_node_types(incident_id: str) -> str:
-    """Get available attack graph node types.
-
-    Args:
-        incident_id: UUID of the incident
-    """
+async def sheetstorm_get_node_types() -> str:
+    """Get the valid attack graph node types."""
     client = get_client()
     try:
-        data = await client.get(f"/incidents/{incident_id}/attack-graph/node-types")
-        types = data if isinstance(data, list) else data.get("node_types", data.get("types", []))
+        data = await client.get("/attack-graph/node-types")
+        types = data if isinstance(data, list) else data.get("node_types", [])
         if not types:
             return "No node types available."
         return "**Node Types**: " + ", ".join(str(t) for t in types)
@@ -270,16 +332,12 @@ async def sheetstorm_get_node_types(incident_id: str) -> str:
 
 
 @mcp.tool()
-async def sheetstorm_get_edge_types(incident_id: str) -> str:
-    """Get available attack graph edge types.
-
-    Args:
-        incident_id: UUID of the incident
-    """
+async def sheetstorm_get_edge_types() -> str:
+    """Get the valid attack graph edge types."""
     client = get_client()
     try:
-        data = await client.get(f"/incidents/{incident_id}/attack-graph/edge-types")
-        types = data if isinstance(data, list) else data.get("edge_types", data.get("types", []))
+        data = await client.get("/attack-graph/edge-types")
+        types = data if isinstance(data, list) else data.get("edge_types", [])
         if not types:
             return "No edge types available."
         return "**Edge Types**: " + ", ".join(str(t) for t in types)

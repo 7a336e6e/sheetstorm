@@ -6,7 +6,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -91,14 +90,13 @@ const SECRET_FIELDS = new Set([
   'api_key', 'secret_key', 'client_secret', 'smtp_password', 'password', 'token', 'webhook_url', 'access_key',
 ])
 
-/** Categories to hide from the generic Integrations tab (they have their own tabs) */
+/** Categories to hide from the generic Integrations tab (they have their own
+ *  tabs): AI → AI Providers tab, storage (S3 + Google Drive) → Storage tab. */
 const HIDDEN_CATEGORIES = new Set(['ai', 'storage'])
 
 export function IntegrationsTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
-  const router = useRouter()
-  const searchParams = useSearchParams()
 
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
@@ -132,24 +130,6 @@ export function IntegrationsTab() {
     } catch { setDriveStatus(null) }
   }, [])
 
-  useEffect(() => {
-    const driveConnected = searchParams.get('drive_connected')
-    const driveToken = searchParams.get('drive_token')
-    const driveRefresh = searchParams.get('drive_refresh')
-    const driveError = searchParams.get('drive_error')
-    if (driveError) {
-      toast({ title: 'Google Drive Error', description: driveError, variant: 'destructive' })
-      router.replace('/dashboard/admin/settings?tab=integrations')
-      return
-    }
-    if (driveConnected === 'true' && driveToken && driveRefresh) {
-      setDriveLoading(true)
-      api.post('/google-drive/connect', { access_token: driveToken, refresh_token: driveRefresh })
-        .then(() => { toast({ title: 'Google Drive Connected' }); loadDriveStatus(); loadData(); setShowFolderPicker(true) })
-        .catch(() => toast({ title: 'Connection Failed', variant: 'destructive' }))
-        .finally(() => { setDriveLoading(false); router.replace('/dashboard/admin/settings?tab=integrations') })
-    }
-  }, [searchParams])  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); loadDriveStatus() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 

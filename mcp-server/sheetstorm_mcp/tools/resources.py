@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
 import json
 
+from sheetstorm_mcp.client import SheetStormAPIError
+from sheetstorm_mcp.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # Static reference resources
@@ -28,12 +28,12 @@ SEVERITY_LEVELS = [
 ]
 
 INCIDENT_STATUSES = [
-    {"status": "open", "description": "Incident is actively being worked."},
-    {"status": "in_progress", "description": "Investigation and response underway."},
-    {"status": "contained", "description": "Threat has been contained."},
-    {"status": "eradicated", "description": "Threat has been removed from environment."},
-    {"status": "resolved", "description": "Incident fully resolved, systems restored."},
-    {"status": "closed", "description": "Post-incident review complete, case closed."},
+    {"status": "open", "phase": 1, "description": "Incident opened, scoping not yet started."},
+    {"status": "investigating", "phase": 2, "description": "Investigation and scoping underway."},
+    {"status": "contained", "phase": 3, "description": "Threat has been contained."},
+    {"status": "eradicated", "phase": 4, "description": "Threat has been removed from the environment."},
+    {"status": "recovered", "phase": 5, "description": "Systems restored to normal operation."},
+    {"status": "closed", "phase": 6, "description": "Post-incident review complete, case closed."},
 ]
 
 
@@ -83,18 +83,21 @@ async def get_mitre_techniques_resource() -> str:
 
 @mcp.resource("sheetstorm://reference/node-types")
 async def get_graph_node_types_resource() -> str:
-    """Attack graph node types. Note: requires an incident context; returns general types."""
-    return json.dumps([
-        "host", "account", "ioc", "malware", "process",
-        "action", "attacker", "target", "lateral_movement",
-    ], indent=2)
+    """Valid attack graph node types (from the backend)."""
+    client = get_client()
+    try:
+        data = await client.get("/attack-graph/node-types")
+        return json.dumps(data.get("node_types", []), indent=2)
+    except SheetStormAPIError:
+        return json.dumps({"error": "Could not fetch node types. Ensure backend is running."})
 
 
 @mcp.resource("sheetstorm://reference/edge-types")
 async def get_graph_edge_types_resource() -> str:
-    """Attack graph edge types. Note: returns general types."""
-    return json.dumps([
-        "compromised", "lateral_movement", "command_control",
-        "data_exfiltration", "exploited", "spawned",
-        "accessed", "communicates_with", "drops", "executes",
-    ], indent=2)
+    """Valid attack graph edge types (from the backend)."""
+    client = get_client()
+    try:
+        data = await client.get("/attack-graph/edge-types")
+        return json.dumps(data.get("edge_types", []), indent=2)
+    except SheetStormAPIError:
+        return json.dumps({"error": "Could not fetch edge types. Ensure backend is running."})

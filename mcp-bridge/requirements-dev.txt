@@ -1,0 +1,9 @@
+# Exact test/lint pins (input for requirements-dev.lock - run scripts/lock-python.sh
+# after editing). Released >=7 days before pinning.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+respx==0.23.1
+iniconfig==2.3.0
+pluggy==1.6.0
+packaging==26.3
+ruff==0.16.9

@@ -111,6 +111,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
 
     const [form, setForm] = useState({
         timestamp: '',
+        detection_time: '',
+        confidence_level: '',
         activity: '',
         source: '',
         host_id: '',
@@ -300,6 +302,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         try {
             const payload = {
                 timestamp: form.timestamp,
+                detection_time: form.detection_time || null,
+                confidence_level: form.confidence_level || null,
                 activity: form.activity,
                 source: form.source || null,
                 host_id: form.host_id || null,
@@ -346,6 +350,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
         }
         setForm({
             timestamp: event.timestamp ? new Date(event.timestamp).toISOString().slice(0, 16) : '',
+            detection_time: event.detection_time ? new Date(event.detection_time).toISOString().slice(0, 16) : '',
+            confidence_level: event.confidence_level || '',
             activity: event.activity,
             source: event.source || '',
             host_id: event.host?.id || '',
@@ -376,6 +382,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
     const resetForm = () => {
         setForm({
             timestamp: '',
+            detection_time: '',
+            confidence_level: '',
             activity: '',
             source: '',
             host_id: '',
@@ -711,6 +719,26 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                         <div className="space-y-2">
                             <Label>Source</Label>
                             <Input value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} placeholder="e.g. Sysmon, EDR, Firewall..." />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label>Detection Time</Label>
+                                <Input type="datetime-local" value={form.detection_time} onChange={e => setForm({ ...form, detection_time: e.target.value })} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Confidence</Label>
+                                <select
+                                    value={form.confidence_level}
+                                    onChange={e => setForm({ ...form, confidence_level: e.target.value })}
+                                    className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                                >
+                                    <option value="">—</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                    <option value="certain">Certain</option>
+                                </select>
+                            </div>
                         </div>
                         <div className="space-y-2">
                             <Label>Host</Label>

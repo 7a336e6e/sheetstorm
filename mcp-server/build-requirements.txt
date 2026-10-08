@@ -1,0 +1,10 @@
+# Human-edited pins for the build backend (hatchling) used to build the
+# sheetstorm-mcp wheel with --no-build-isolation. Docker installs the hash-locked
+# build-requirements.lock - after editing, run scripts/lock-python.sh.
+# editables: needed by hatchling only for `pip install -e .` (local dev).
+hatchling==1.32.4
+pathspec==1.1.1
+trove-classifiers==2026.9.21.13
+packaging==26.3
+pluggy==1.6.0
+editables==0.5

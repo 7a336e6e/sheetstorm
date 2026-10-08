@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
+from sheetstorm_mcp.server import get_client, mcp
 
 
 def _format_incident(inc: dict) -> str:
@@ -68,7 +68,7 @@ async def sheetstorm_list_incidents(
     Args:
         page: Page number (default 1)
         per_page: Items per page (default 20, max 100)
-        status: Filter by status (open, contained, eradicated, recovered, closed)
+        status: Filter by status (open, investigating, contained, eradicated, recovered, closed)
         severity: Filter by severity (critical, high, medium, low)
         search: Search term for title/description
     """
@@ -214,7 +214,7 @@ async def sheetstorm_update_incident_status(
 
     Args:
         incident_id: UUID of the incident
-        status: New status (open, contained, eradicated, recovered, closed)
+        status: New status (open, investigating, contained, eradicated, recovered, closed); the IR phase follows automatically
         phase: New IR phase (1=Preparation, 2=Identification, 3=Containment, 4=Eradication, 5=Recovery, 6=Lessons Learned)
     """
     client = get_client()
@@ -235,15 +235,90 @@ async def sheetstorm_update_incident_status(
 
 
 @mcp.tool()
-async def sheetstorm_delete_incident(incident_id: str) -> str:
-    """Delete an incident. This is irreversible.
+async def sheetstorm_archive_incident(incident_id: str) -> str:
+    """Archive an incident (soft delete). The incident disappears from normal
+    listings but all its data is kept and it can be restored with
+    sheetstorm_unarchive_incident. Requires the Administrator or Manager role.
 
     Args:
-        incident_id: UUID of the incident to delete
+        incident_id: UUID of the incident to archive
     """
     client = get_client()
     try:
-        await client.delete(f"/incidents/{incident_id}")
-        return f"✓ Incident {incident_id} deleted."
+        await client.post(f"/incidents/{incident_id}/archive")
+        return f"✓ Incident {incident_id} archived (restorable)."
+    except SheetStormAPIError as exc:
+        return f"✗ Error archiving incident: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_archived_incidents(
+    page: int = 1,
+    per_page: int = 20,
+    search: Optional[str] = None,
+) -> str:
+    """List archived incidents. Requires the Administrator role.
+
+    Args:
+        page: Page number (default 1)
+        per_page: Items per page (default 20, max 100)
+        search: Search term for title/description
+    """
+    client = get_client()
+    try:
+        params: dict = {"page": page, "per_page": min(per_page, 100)}
+        if search:
+            params["search"] = search
+        data = await client.get("/incidents/archived", params=params)
+        items = data.get("items", [])
+        if not items:
+            return "No archived incidents found."
+        lines = [f"**Archived Incidents** (page {page}, {len(items)} of {data.get('total', len(items))} total)\n"]
+        for inc in items:
+            lines.append(_format_incident(inc) + f"\n  Archived: {inc.get('archived_at', 'N/A')}")
+            lines.append("")
+        return "\n".join(lines)
+    except SheetStormAPIError as exc:
+        return f"✗ Error listing archived incidents: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_unarchive_incident(incident_id: str) -> str:
+    """Restore an archived incident to the active list. Requires the Administrator role.
+
+    Args:
+        incident_id: UUID of the archived incident
+    """
+    client = get_client()
+    try:
+        await client.post(f"/incidents/{incident_id}/unarchive")
+        return f"✓ Incident {incident_id} restored from archive."
+    except SheetStormAPIError as exc:
+        return f"✗ Error restoring incident: {exc}"
+
+
+PERMANENT_DELETE_CONFIRMATION = "DELETE PERMANENTLY"
+
+
+@mcp.tool()
+async def sheetstorm_permanently_delete_incident(incident_id: str, confirmation: str) -> str:
+    """IRREVERSIBLY delete an ARCHIVED incident and all of its evidence records,
+    timeline, IOCs and notes. Administrator role only. The incident must be
+    archived first (sheetstorm_archive_incident). Only call this after the user
+    has explicitly asked for permanent deletion of this specific incident.
+
+    Args:
+        incident_id: UUID of the archived incident
+        confirmation: Must be exactly "DELETE PERMANENTLY" — anything else aborts
+    """
+    if confirmation != PERMANENT_DELETE_CONFIRMATION:
+        return (
+            f"✗ Aborted: confirmation must be exactly '{PERMANENT_DELETE_CONFIRMATION}'. "
+            "Prefer sheetstorm_archive_incident, which is reversible."
+        )
+    client = get_client()
+    try:
+        await client.delete(f"/incidents/{incident_id}/permanent")
+        return f"✓ Incident {incident_id} permanently deleted."
     except SheetStormAPIError as exc:
         return f"✗ Error deleting incident: {exc}"

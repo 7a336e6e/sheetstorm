@@ -1,12 +1,20 @@
-FROM node:20-alpine AS base
+# Base image pinned by multi-arch index digest (Dependabot "docker" updates it).
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS base
 
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# Supply-chain hardening (see assets/docs/supply-chain.md):
+#  - lockfile-only install (npm ci); the lockfile is REQUIRED, never `npm install`
+#  - lifecycle scripts disabled (.npmrc ignore-scripts=true + explicit flag).
+#    No dependency currently needs one: @next/swc, sharp (@img/*) and
+#    unrs-resolver ship prebuilt binaries as optionalDependencies. If one ever
+#    does, allowlist it explicitly here with `npm rebuild <pkg>` - never
+#    re-enable scripts globally.
+#  - no secrets in this stage: only package manifests are copied.
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci --ignore-scripts --legacy-peer-deps --no-fund
 
 # Rebuild the source code only when needed
 FROM base AS builder

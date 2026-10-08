@@ -1,15 +1,14 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useAuthStore } from '@/lib/store'
-import api from '@/lib/api'
+import { useAuthStore, type User } from '@/lib/store'
 import { Shield, Loader2, AlertCircle, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-export default function GitHubCallbackPage() {
+function GitHubCallbackInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +39,9 @@ export default function GitHubCallbackPage() {
         const res = await fetch(`${apiUrl}/auth/github/callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          // Session cookies are set by this response — must be included
+          // when the API is on a different origin.
+          credentials: 'include',
           body: JSON.stringify({ code, state }),
         })
 
@@ -66,12 +68,7 @@ export default function GitHubCallbackPage() {
     exchangeCode()
   }, [searchParams, router])
 
-  const completeLogin = (data: { access_token: string; refresh_token?: string; user: any }) => {
-    api.setToken(data.access_token)
-    localStorage.setItem('access_token', data.access_token)
-    if (data.refresh_token) {
-      localStorage.setItem('refresh_token', data.refresh_token)
-    }
+  const completeLogin = (data: { user: User }) => {
     useAuthStore.setState({
       user: data.user,
       isAuthenticated: true,
@@ -90,6 +87,7 @@ export default function GitHubCallbackPage() {
       const res = await fetch(`${apiUrl}/auth/mfa/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ pre_auth_token: preAuthToken, mfa_code: mfaCode }),
       })
 
@@ -195,5 +193,13 @@ export default function GitHubCallbackPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function GitHubCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <GitHubCallbackInner />
+    </Suspense>
   )
 }

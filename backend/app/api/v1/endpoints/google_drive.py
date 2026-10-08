@@ -1,6 +1,8 @@
 """Google Drive integration endpoints for artifact upload and case management."""
 import json
+import re
 import secrets
+from urllib.parse import quote
 from flask import jsonify, request, g, redirect, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
@@ -41,7 +43,8 @@ def _get_valid_access_token(integration, creds):
         return None
 
     try:
-        new_tokens = google_drive_service.refresh_access_token(creds['refresh_token'])
+        new_tokens = google_drive_service.refresh_access_token(
+            creds['refresh_token'], org_id=str(integration.organization_id))
         creds['access_token'] = new_tokens['access_token']
         # Save updated tokens
         creds_json = json.dumps(creds)
@@ -60,7 +63,7 @@ def google_drive_status():
     """Check Google Drive integration status."""
     user = get_current_user()
 
-    if not google_drive_service.is_configured():
+    if not google_drive_service.is_configured(str(user.organization_id)):
         return jsonify({
             'configured': False,
             'connected': False,
@@ -101,19 +104,36 @@ def google_drive_status():
         }), 200
 
 
+_DRIVE_STATE_TTL = 600  # seconds an OAuth `state` stays valid
+
+
+def _drive_state_key(state):
+    return f'gdrive_oauth_state:{state}'
+
+
 @api_bp.route('/google-drive/auth', methods=['POST'])
 @jwt_required()
 @require_permission('integrations:create')
 def google_drive_auth():
-    """Initiate Google Drive OAuth flow. Returns the auth URL."""
-    if not google_drive_service.is_configured():
-        return jsonify({'error': 'not_configured', 'message': 'Google Drive OAuth not configured'}), 400
+    """Initiate Google Drive OAuth flow. Returns the auth URL.
 
+    The OAuth `state` is bound server-side (Redis, TTL) to the initiating
+    user + organization; the callback only accepts a state it issued.
+    """
+    from app import redis_client
     user = get_current_user()
-    state = secrets.token_urlsafe(32)
+    org_id = str(user.organization_id)
+    if not google_drive_service.is_configured(org_id):
+        return jsonify({'error': 'not_configured', 'message': 'Google Drive OAuth not configured'}), 400
+    if redis_client is None:
+        return jsonify({'error': 'unavailable', 'message': 'OAuth state store unavailable'}), 503
 
-    # Store state in the integration config for CSRF verification
-    auth_url = google_drive_service.get_auth_url(state=state)
+    state = secrets.token_urlsafe(32)
+    redis_client.setex(
+        _drive_state_key(state), _DRIVE_STATE_TTL,
+        json.dumps({'user_id': str(user.id), 'org_id': org_id}),
+    )
+    auth_url = google_drive_service.get_auth_url(state=state, org_id=org_id)
 
     return jsonify({
         'auth_url': auth_url,
@@ -121,38 +141,116 @@ def google_drive_auth():
     }), 200
 
 
+def _settings_redirect(suffix):
+    """Redirect back to the storage settings tab.
+
+    The host comes from FRONTEND_URL config only (never the request Host
+    header, which is attacker-influenced); without it a same-host relative
+    redirect is used. Tokens are never placed in the URL.
+    """
+    frontend_url = (current_app.config.get('FRONTEND_URL') or '').rstrip('/')
+    return redirect(f'{frontend_url}/dashboard/admin/settings?tab=storage&{suffix}')
+
+
+def _drive_error(code):
+    code = re.sub(r'[^a-z0-9_]', '', str(code or '').lower())[:64] or 'oauth_error'
+    return _settings_redirect(f'drive_error={quote(code)}')
+
+
 @api_bp.route('/google-drive/oauth/callback', methods=['GET'])
 def google_drive_callback():
-    """Handle Google OAuth callback (browser redirect)."""
+    """Handle Google OAuth callback (browser redirect).
+
+    Validates the single-use `state`, exchanges the code server-side and
+    stores the tokens encrypted on the organization's google_drive
+    integration. The browser only ever sees `drive=connected` or
+    `drive_error=<code>`.
+    """
+    from app import redis_client
+    from app.models import User
+    from app.middleware.audit import log_audit_event
+
     code = request.args.get('code')
     error = request.args.get('error')
     state = request.args.get('state')
 
-    # Derive frontend URL: prefer config, then use the request's origin
-    frontend_url = current_app.config.get('FRONTEND_URL') or ''
-    if not frontend_url:
-        # Use the proxy host from the incoming browser request (via X-Forwarded-*)
-        frontend_url = f"{request.scheme}://{request.host}"
+    if not state or redis_client is None:
+        return _drive_error('invalid_state')
+    try:
+        pipe = redis_client.pipeline()
+        pipe.get(_drive_state_key(state))
+        pipe.delete(_drive_state_key(state))
+        raw, _ = pipe.execute()
+        ctx = json.loads(raw) if raw else None
+    except Exception:
+        current_app.logger.exception('Google Drive OAuth state lookup failed')
+        ctx = None
+    if not ctx:
+        return _drive_error('invalid_state')
 
-    settings_url = f'{frontend_url}/dashboard/admin/settings'
+    user = db.session.get(User, ctx.get('user_id'))
+    if (not user or not user.is_active or str(user.organization_id) != ctx.get('org_id')
+            or not user.has_permission('integrations:create')):
+        return _drive_error('invalid_state')
+    org_id = ctx['org_id']
 
     if error:
-        return redirect(f'{settings_url}?drive_error={error}')
-
+        return _drive_error(error)
     if not code:
-        return redirect(f'{settings_url}?drive_error=no_code')
+        return _drive_error('no_code')
 
     try:
-        tokens = google_drive_service.exchange_code(code)
-        # Store tokens temporarily — they'll be saved by the complete endpoint
-        return redirect(
-            f'{settings_url}?drive_connected=true'
-            f'&drive_token={tokens.get("access_token", "")}'
-            f'&drive_refresh={tokens.get("refresh_token", "")}'
-        )
+        tokens = google_drive_service.exchange_code(code, org_id=org_id)
     except Exception as e:
         current_app.logger.error(f"Google Drive OAuth callback error: {e}")
-        return redirect(f'{settings_url}?drive_error=token_exchange_failed')
+        return _drive_error('token_exchange_failed')
+
+    integration = Integration.query.filter_by(organization_id=org_id, type='google_drive').first()
+    existing = {}
+    if integration and integration.credentials_encrypted:
+        try:
+            existing = json.loads(encryption_service.decrypt(integration.credentials_encrypted) or '{}')
+        except Exception:
+            existing = {}
+
+    refresh_token = tokens.get('refresh_token') or existing.get('refresh_token')
+    if not tokens.get('access_token') or not refresh_token:
+        return _drive_error('no_refresh_token')
+
+    oauth_config = google_drive_service.get_oauth_config(org_id)
+    creds = {
+        **existing,
+        'client_id': oauth_config.get('client_id', ''),
+        'client_secret': oauth_config.get('client_secret', ''),
+        'access_token': tokens['access_token'],
+        'refresh_token': refresh_token,
+        'root_folder_id': existing.get('root_folder_id', 'root'),
+        'root_folder_name': existing.get('root_folder_name', 'My Drive'),
+    }
+    creds_encrypted = encryption_service.encrypt(json.dumps(creds))
+    config = dict((integration.config if integration else None) or {})
+    config.update({'root_folder_id': creds['root_folder_id'], 'root_folder_name': creds['root_folder_name']})
+
+    if integration:
+        integration.credentials_encrypted = creds_encrypted
+        integration.is_enabled = True
+        integration.config = config
+    else:
+        integration = Integration(
+            organization_id=org_id,
+            type='google_drive',
+            name='Google Drive',
+            is_enabled=True,
+            config=config,
+            credentials_encrypted=creds_encrypted,
+            created_by=user.id,
+        )
+        db.session.add(integration)
+    db.session.commit()
+
+    log_audit_event('admin_action', 'connect', resource_type='google_drive',
+                    resource_id=integration.id, user=user)
+    return _settings_redirect('drive=connected')
 
 
 @api_bp.route('/google-drive/connect', methods=['POST'])
@@ -171,7 +269,7 @@ def google_drive_connect():
         return jsonify({'error': 'bad_request', 'message': 'Tokens required'}), 400
 
     # Store OAuth app credentials alongside tokens so the record is self-contained
-    oauth_config = google_drive_service.get_oauth_config()
+    oauth_config = google_drive_service.get_oauth_config(str(user.organization_id))
     creds = {
         'client_id': oauth_config.get('client_id', ''),
         'client_secret': oauth_config.get('client_secret', ''),

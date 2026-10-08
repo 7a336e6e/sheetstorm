@@ -1,0 +1,37 @@
+# Dependencies (reinstalled fresh in the deps stage)
+node_modules
+
+# Next.js build output (rebuilt in the builder stage)
+.next
+out
+
+# Git
+.git
+.gitignore
+
+# Local env (build uses build args; never bake local secrets into layers)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs & caches
+npm-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+
+# Tooling / tests
+coverage
+playwright-report
+test-results
+.eslintcache
+
+# OS / IDE
+.DS_Store
+.vscode
+.idea
+
+# Docker
+Dockerfile
+.dockerignore

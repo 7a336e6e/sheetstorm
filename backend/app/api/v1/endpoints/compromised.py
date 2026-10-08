@@ -9,6 +9,7 @@ from app.models import CompromisedHost, CompromisedAccount, TimelineEvent
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
+from app.utils.validation import parse_datetime, check_choice, json_body
 
 
 # =============================================================================
@@ -61,16 +62,19 @@ def create_compromised_host(incident_id):
     """Add a compromised host."""
     user = get_current_user()
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
-    if not data:
-        return jsonify({'error': 'bad_request', 'message': 'No data provided'}), 400
-
-    hostname = data.get('hostname', '').strip()
+    hostname = data.get('hostname') if isinstance(data.get('hostname'), str) else ''
+    hostname = hostname.strip()
     if not hostname:
         return jsonify({'error': 'bad_request', 'message': 'hostname is required'}), 400
 
-    status = data.get('containment_status', 'active')
+    triage_status = check_choice(data.get('triage_status') or 'under_analysis',
+                                 CompromisedHost.TRIAGE_STATUSES, 'triage_status')
+    first_seen = parse_datetime(data.get('first_seen'), 'first_seen')
+    last_seen = parse_datetime(data.get('last_seen'), 'last_seen')
+
+    status = data.get('containment_status') or 'active'
     if status not in CompromisedHost.CONTAINMENT_STATUSES:
         return jsonify({
             'error': 'bad_request',
@@ -86,11 +90,13 @@ def create_compromised_host(incident_id):
         system_type=data.get('system_type'),
         os_version=data.get('os_version'),
         evidence=data.get('evidence'),
-        first_seen=parse_date(data['first_seen']) if data.get('first_seen') else None,
-        last_seen=parse_date(data['last_seen']) if data.get('last_seen') else None,
-        containment_status=data.get('containment_status', 'active'),
+        first_seen=first_seen,
+        last_seen=last_seen,
+        containment_status=status,
+        triage_status=triage_status,
+        acquisition_status=data.get('acquisition_status') or {},
         notes=data.get('notes'),
-        extra_data=data.get('extra_data', {}),
+        extra_data=data.get('extra_data') or {},
         created_by=user.id
     )
 
@@ -109,11 +115,22 @@ def create_compromised_host(incident_id):
 def update_compromised_host(incident_id, host_id):
     """Update a compromised host."""
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
     host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
     if not host:
         return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+
+    if 'hostname' in data and (not isinstance(data['hostname'], str) or not data['hostname'].strip()):
+        return jsonify({'error': 'bad_request', 'message': 'hostname must be a non-empty string'}), 400
+    if 'triage_status' in data:
+        # Explicit null resets to the default (column is NOT NULL).
+        data['triage_status'] = check_choice(data['triage_status'] or 'under_analysis',
+                                             CompromisedHost.TRIAGE_STATUSES, 'triage_status')
+    if 'first_seen' in data:
+        data['first_seen'] = parse_datetime(data['first_seen'], 'first_seen')
+    if 'last_seen' in data:
+        data['last_seen'] = parse_datetime(data['last_seen'], 'last_seen')
 
     # Validate containment_status before applying
     if 'containment_status' in data and data['containment_status'] not in CompromisedHost.CONTAINMENT_STATUSES:
@@ -125,14 +142,15 @@ def update_compromised_host(incident_id, host_id):
 
     # Update fields
     for field in ['hostname', 'ip_address', 'mac_address', 'system_type', 'os_version',
-                  'evidence', 'containment_status', 'notes', 'extra_data']:
+                  'evidence', 'containment_status', 'triage_status', 'acquisition_status',
+                  'notes', 'extra_data']:
         if field in data:
             setattr(host, field, data[field])
 
     if 'first_seen' in data:
-        host.first_seen = parse_date(data['first_seen']) if data['first_seen'] else None
+        host.first_seen = data['first_seen']
     if 'last_seen' in data:
-        host.last_seen = parse_date(data['last_seen']) if data['last_seen'] else None
+        host.last_seen = data['last_seen']
 
     db.session.commit()
 
@@ -225,6 +243,44 @@ def list_compromised_accounts(incident_id):
     }), 200
 
 
+@api_bp.route('/incidents/<uuid:incident_id>/accounts/<uuid:account_id>', methods=['GET'])
+@jwt_required()
+@require_incident_access('accounts:read')
+def get_compromised_account(incident_id, account_id):
+    """Get one compromised account (same shape as a list item).
+
+    `?reveal=true` decrypts ONLY this account's password; it requires the
+    compromised_accounts:reveal permission (403 otherwise) and writes exactly
+    one password_reveal security event.
+    """
+    user = get_current_user()
+    incident = g.incident
+    reveal = request.args.get('reveal', 'false').lower() == 'true'
+
+    account = CompromisedAccount.query.filter_by(id=account_id, incident_id=incident.id).first()
+    if not account:
+        return jsonify({'error': 'not_found', 'message': 'Account not found'}), 404
+
+    if reveal and not user.has_permission('compromised_accounts:reveal'):
+        return jsonify({
+            'error': 'forbidden',
+            'message': 'Permission denied. Required: compromised_accounts:reveal'
+        }), 403
+
+    decrypted_password = None
+    if reveal and account.password_encrypted:
+        decrypted_password = encryption_service.decrypt(account.password_encrypted)
+        log_security_event(
+            action='password_reveal',
+            resource_type='compromised_account',
+            resource_id=account.id,
+            incident_id=incident.id,
+            details={'account_name': account.account_name}
+        )
+
+    return jsonify(account.to_dict(reveal_password=reveal, decrypted_password=decrypted_password)), 200
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/accounts', methods=['POST'])
 @jwt_required()
 @require_incident_access('accounts:create')
@@ -278,7 +334,7 @@ def create_compromised_account(incident_id):
         incident_id=incident.id,
         host_id=host_id,
         timeline_event_id=timeline_event_id,
-        datetime_seen=parse_date(datetime_seen) if isinstance(datetime_seen, str) else datetime_seen,
+        datetime_seen=parse_datetime(datetime_seen, 'datetime_seen', required=True),
         account_name=account_name,
         password_encrypted=password_encrypted,
         host_system=host_system,
@@ -318,7 +374,7 @@ def update_compromised_account(incident_id, account_id):
             setattr(account, field, data[field])
 
     if 'datetime_seen' in data:
-        account.datetime_seen = parse_date(data['datetime_seen']) if data['datetime_seen'] else None
+        account.datetime_seen = parse_datetime(data['datetime_seen'], 'datetime_seen', required=True)
 
     # Handle host_id
     if 'host_id' in data:

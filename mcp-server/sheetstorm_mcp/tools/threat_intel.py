@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
-
+from sheetstorm_mcp.server import get_client, mcp
 
 # ---------------------------------------------------------------------------
 # VirusTotal

@@ -347,136 +347,189 @@ Timeline Events:
 Provide prioritized recommendations with specific technical steps."""
 
     def __init__(self):
-        """Initialize AI service with lazy-loaded provider clients."""
-        self._openai_client = None
-        self._google_client = None
-        self._resolved_openai_key = None
-        self._resolved_google_key = None
-        self._ollama_base_url: Optional[str] = None
+        """Stateless across organizations: every provider lookup is scoped to
+        an explicit organization_id (never another tenant's integration)."""
 
-    def _get_key_from_integration(self, integration_type: str) -> Optional[str]:
-        """Resolve an API key from the integrations table (DB-first).
+    # ── Provider resolution (org-scoped DB integration first, env second) ──
 
-        Queries enabled integrations of the given type, decrypts the stored
-        credentials, and returns the 'api_key' field.  Returns None when no
-        matching integration exists or decryption fails.
+    @staticmethod
+    def _get_integration(integration_type: str, organization_id: Optional[str]):
+        """Return this organization's enabled integration of a type, or None.
+
+        Without an organization_id no DB lookup is made at all — there is no
+        "first enabled integration" fallback that could leak another org's
+        credentials or endpoint.
         """
+        if not organization_id:
+            return None
         try:
             from app.models.integration import Integration
-            integration = (
+            return (
                 Integration.query
-                .filter_by(type=integration_type, is_enabled=True)
+                .filter_by(organization_id=organization_id, type=integration_type, is_enabled=True)
                 .first()
             )
-            if integration and integration.credentials_encrypted:
-                encryption_service = EncryptionService()
-                decrypted = encryption_service.decrypt(integration.credentials_encrypted)
-                if decrypted:
-                    creds = json.loads(decrypted)
-                    return creds.get('api_key')
         except Exception as e:
-            current_app.logger.debug(f"Could not load {integration_type} key from DB: {e}")
-        return None
+            current_app.logger.debug(f"Could not load {integration_type} integration: {e}")
+            return None
 
-    def _resolve_api_key(self, integration_type: str, env_config_key: str) -> Optional[str]:
-        """Return an API key checking the DB integrations table first, then env."""
-        # 1. Try DB integration
-        db_key = self._get_key_from_integration(integration_type)
+    @staticmethod
+    def _integration_credentials(integration) -> dict:
+        if not integration or not integration.credentials_encrypted:
+            return {}
+        try:
+            decrypted = EncryptionService().decrypt(integration.credentials_encrypted)
+            return json.loads(decrypted) if decrypted else {}
+        except Exception as e:
+            current_app.logger.debug(f"Could not decrypt {integration.type} credentials: {e}")
+            return {}
+
+    def _get_key_from_integration(self, integration_type: str, organization_id: Optional[str]) -> Optional[str]:
+        """Resolve an API key from this organization's integration (DB-first)."""
+        integration = self._get_integration(integration_type, organization_id)
+        return self._integration_credentials(integration).get('api_key') or None
+
+    def _resolve_api_key(self, integration_type: str, env_config_key: str,
+                         organization_id: Optional[str]) -> Optional[str]:
+        """Return an API key: the org's DB integration first, then env."""
+        db_key = self._get_key_from_integration(integration_type, organization_id)
         if db_key:
             return db_key
-        # 2. Fall back to env / Flask config
         env_key = current_app.config.get(env_config_key)
         return env_key if env_key else None
 
-    @property
-    def openai_api_key(self) -> Optional[str]:
-        """Resolve OpenAI API key (DB integration first, then env)."""
-        return self._resolve_api_key('openai', 'OPENAI_API_KEY')
+    def openai_api_key(self, organization_id: Optional[str] = None) -> Optional[str]:
+        return self._resolve_api_key('openai', 'OPENAI_API_KEY', organization_id)
 
-    @property
-    def google_api_key(self) -> Optional[str]:
-        """Resolve Google AI API key (DB integration first, then env)."""
-        return self._resolve_api_key('google_ai', 'GOOGLE_AI_API_KEY')
+    def google_api_key(self, organization_id: Optional[str] = None) -> Optional[str]:
+        return self._resolve_api_key('google_ai', 'GOOGLE_AI_API_KEY', organization_id)
 
-    def _resolve_ollama_url(self) -> Optional[str]:
-        """Resolve Ollama base URL from DB integration or env."""
-        try:
-            from app.models.integration import Integration
-            integration = (
-                Integration.query
-                .filter_by(type='ollama', is_enabled=True)
-                .first()
-            )
-            if integration and integration.config:
-                url = integration.config.get('base_url')
-                if url:
-                    return url.rstrip('/')
-        except Exception as e:
-            current_app.logger.debug(f"Could not load ollama URL from DB: {e}")
+    @staticmethod
+    def _safe_tenant_url(url: Optional[str]) -> Optional[str]:
+        """Apply the outbound allowlist to a tenant-configured LLM endpoint.
+
+        Local LLMs are usually private (e.g. http://ollama:11434), so private
+        targets are allowed only when the host is on OUTBOUND_URL_ALLOWLIST;
+        link-local / metadata addresses are always refused.
+        """
+        if not url:
+            return None
+        from app.utils.url_validator import validate_outbound_url
+        ok, reason = validate_outbound_url(url, allow_allowlisted_private=True)
+        if not ok:
+            current_app.logger.warning(f"Refusing LLM endpoint {url!r}: {reason}")
+            return None
+        return url.rstrip('/')
+
+    def ollama_base_url(self, organization_id: Optional[str] = None) -> Optional[str]:
+        """Resolve the Ollama base URL from the org integration, else env.
+
+        The env value (OLLAMA_BASE_URL) is operator-set and trusted as-is.
+        """
+        integration = self._get_integration('ollama', organization_id)
+        if integration and integration.config and integration.config.get('base_url'):
+            return self._safe_tenant_url(integration.config.get('base_url'))
         env_url = current_app.config.get('OLLAMA_BASE_URL')
         return env_url.rstrip('/') if env_url else None
 
-    @property
-    def ollama_base_url(self) -> Optional[str]:
-        """Get Ollama base URL."""
-        self._ollama_base_url = self._resolve_ollama_url()
-        return self._ollama_base_url
+    def _resolve_ollama_model(self, organization_id: Optional[str] = None) -> Optional[str]:
+        """Honour the model configured for the org's Ollama integration."""
+        integ = self._get_integration('ollama', organization_id)
+        if integ and integ.config and integ.config.get('model'):
+            return integ.config['model']
+        return current_app.config.get('LOCAL_LLM_MODEL') or None
 
-    @property
-    def openai_client(self):
-        """Get or create OpenAI client."""
-        api_key = self.openai_api_key
-        if api_key:
-            # Recreate client if key changed
-            if self._resolved_openai_key != api_key:
-                import openai
-                self._openai_client = openai.OpenAI(api_key=api_key)
-                self._resolved_openai_key = api_key
-        else:
-            self._openai_client = None
-            self._resolved_openai_key = None
-        return self._openai_client
+    def _resolve_openai_compatible(self, organization_id: Optional[str] = None):
+        """Resolve (base_url, model, api_key) for the openai_compatible provider.
 
-    @property
-    def google_client(self):
-        """Get or create Google Generative AI client."""
-        api_key = self.google_api_key
-        if api_key:
-            if self._resolved_google_key != api_key:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                self._google_client = genai.GenerativeModel('gemini-pro')
-                self._resolved_google_key = api_key
-        else:
-            self._google_client = None
-            self._resolved_google_key = None
-        return self._google_client
+        Covers any OpenAI-compatible local endpoint: vLLM, LM Studio, llama.cpp
+        server, LocalAI, and Ollama's /v1. Org DB integration first, env
+        fallback (OPENAI_BASE_URL + OPENAI_COMPATIBLE_API_KEY). The real
+        OPENAI_API_KEY is never sent to these arbitrary endpoints.
+        """
+        integ = self._get_integration('openai_compatible', organization_id)
+        if integ and integ.config and integ.config.get('base_url'):
+            base_url = self._safe_tenant_url(integ.config.get('base_url'))
+            if not base_url:
+                return None, None, None
+            api_key = self._integration_credentials(integ).get('api_key')
+            return base_url, integ.config.get('model'), (api_key or 'sk-local')
+        env_base = current_app.config.get('OPENAI_BASE_URL')
+        if env_base:
+            return (env_base.rstrip('/'),
+                    current_app.config.get('LOCAL_LLM_MODEL') or None,
+                    current_app.config.get('OPENAI_COMPATIBLE_API_KEY') or 'sk-local')
+        return None, None, None
 
-    def is_configured(self, provider: str = None) -> bool:
-        """Check if AI service is configured (DB integrations checked first)."""
+    def _generate_openai_compatible_sync(self, prompt: str, system_prompt: str = None,
+                                         organization_id: Optional[str] = None) -> Optional[str]:
+        """Generate via a configurable OpenAI-compatible endpoint (local LLMs)."""
+        base_url, model, api_key = self._resolve_openai_compatible(organization_id)
+        if not base_url:
+            return None
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            import openai
+            client = openai.OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=float(current_app.config.get('LOCAL_LLM_TIMEOUT', 120)),
+            )
+            resp = client.chat.completions.create(
+                model=model or 'local-model',
+                messages=messages,
+                temperature=0.3,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"openai_compatible generation error: {e}")
+            return None
+
+    def openai_client(self, organization_id: Optional[str] = None):
+        """A fresh OpenAI client bound to this organization's key (or None)."""
+        api_key = self.openai_api_key(organization_id)
+        if not api_key:
+            return None
+        import openai
+        return openai.OpenAI(api_key=api_key)
+
+    def google_client(self, organization_id: Optional[str] = None):
+        """A Gemini model configured with this organization's key (or None).
+
+        Note: google.generativeai keeps the key in module-global state, so it
+        is (re)configured immediately before each use.
+        """
+        api_key = self.google_api_key(organization_id)
+        if not api_key:
+            return None
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel('gemini-pro')
+
+    def is_configured(self, provider: str = None, organization_id: Optional[str] = None) -> bool:
+        """Check if AI is configured for this organization (DB first, then env)."""
         if provider == 'openai':
-            return bool(self.openai_api_key)
+            return bool(self.openai_api_key(organization_id))
         elif provider == 'google':
-            return bool(self.google_api_key)
+            return bool(self.google_api_key(organization_id))
         elif provider == 'ollama':
-            return bool(self.ollama_base_url)
-        return self.is_configured('openai') or self.is_configured('google') or self.is_configured('ollama')
+            return bool(self.ollama_base_url(organization_id))
+        elif provider == 'openai_compatible':
+            return bool(self._resolve_openai_compatible(organization_id)[0])
+        return bool(self.get_available_providers(organization_id))
 
-    def get_available_providers(self) -> list:
-        """Get list of configured AI providers."""
-        providers = []
-        if self.is_configured('openai'):
-            providers.append('openai')
-        if self.is_configured('google'):
-            providers.append('google')
-        if self.is_configured('ollama'):
-            providers.append('ollama')
-        return providers
+    def get_available_providers(self, organization_id: Optional[str] = None) -> list:
+        """Get list of AI providers configured for this organization."""
+        return [p for p in ('openai', 'google', 'ollama', 'openai_compatible')
+                if self.is_configured(p, organization_id)]
 
-    def list_ollama_models(self) -> List[str]:
-        """Fetch available model tags from a running Ollama instance."""
+    def list_ollama_models(self, organization_id: Optional[str] = None) -> List[str]:
+        """Fetch available model tags from the org's Ollama instance."""
         import requests
-        base = self.ollama_base_url
+        base = self.ollama_base_url(organization_id)
         if not base:
             return []
         try:
@@ -496,7 +549,8 @@ Provide prioritized recommendations with specific technical steps."""
         timeline_events: list,
         compromised_assets: Dict[str, list],
         iocs: Dict[str, list],
-        provider: str = None
+        provider: str = None,
+        organization_id: Optional[str] = None,
     ) -> Optional[str]:
         """Generate a full AI-powered report in Markdown format.
 
@@ -506,13 +560,14 @@ Provide prioritized recommendations with specific technical steps."""
             timeline_events: List of timeline event dicts
             compromised_assets: Dict with 'hosts' and 'accounts' lists
             iocs: Dict with 'network', 'host', 'malware' lists
-            provider: 'openai' or 'google' (auto-detected if None)
+            provider: provider name (auto-detected if None)
+            organization_id: org whose AI integration to use
 
         Returns:
             Markdown string or None on failure
         """
         if provider is None:
-            providers = self.get_available_providers()
+            providers = self.get_available_providers(organization_id)
             if not providers:
                 return None
             provider = providers[0]
@@ -529,11 +584,16 @@ Provide prioritized recommendations with specific technical steps."""
         system_prompt = f"{self.SYSTEM_PROMPT_BASE}\n\n{report_instructions}"
 
         if provider == 'openai':
-            return self._generate_report_openai(system_prompt, user_prompt)
+            return self._generate_report_openai(system_prompt, user_prompt, organization_id)
         elif provider == 'google':
-            return self._generate_report_google(system_prompt, user_prompt)
+            return self._generate_report_google(system_prompt, user_prompt, organization_id)
         elif provider == 'ollama':
-            return self._generate_ollama_sync(f"{system_prompt}\n\n{user_prompt}")
+            return self._generate_ollama_sync(f"{system_prompt}\n\n{user_prompt}",
+                                              model=self._resolve_ollama_model(organization_id),
+                                              organization_id=organization_id)
+        elif provider == 'openai_compatible':
+            return self._generate_openai_compatible_sync(user_prompt, system_prompt=system_prompt,
+                                                         organization_id=organization_id)
 
         return None
 
@@ -556,10 +616,11 @@ Provide prioritized recommendations with specific technical steps."""
         sections.append(self._format_iocs(iocs))
         return "\n".join(sections)
 
-    def _generate_report_openai(self, system_prompt: str, user_prompt: str) -> Optional[str]:
+    def _generate_report_openai(self, system_prompt: str, user_prompt: str,
+                                organization_id: Optional[str] = None) -> Optional[str]:
         """Generate report using OpenAI."""
         try:
-            response = self.openai_client.chat.completions.create(
+            response = self.openai_client(organization_id).chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -573,17 +634,32 @@ Provide prioritized recommendations with specific technical steps."""
             current_app.logger.error(f"OpenAI report generation error: {e}")
             return None
 
-    def _generate_report_google(self, system_prompt: str, user_prompt: str) -> Optional[str]:
+    def _generate_report_google(self, system_prompt: str, user_prompt: str,
+                                organization_id: Optional[str] = None) -> Optional[str]:
         """Generate report using Google Gemini."""
         try:
             full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}\n\n---\n\nGenerate the report now."
-            response = self.google_client.generate_content(full_prompt)
+            response = self.google_client(organization_id).generate_content(full_prompt)
             return response.text
         except Exception as e:
             current_app.logger.error(f"Google AI report generation error: {e}")
             return None
 
     # ── Legacy summary generation (backward compatible) ──────────────
+
+    def _summary_prompt(self, incident_data, timeline_events, compromised_assets, iocs, summary_type):
+        if summary_type == 'technical':
+            prompt_template = self.TECHNICAL_SUMMARY_PROMPT
+        elif summary_type == 'recommendations':
+            prompt_template = self.RECOMMENDATIONS_PROMPT
+        else:
+            prompt_template = self.EXECUTIVE_SUMMARY_PROMPT
+        return prompt_template.format(
+            incident_data=self._format_incident(incident_data),
+            timeline_events=self._format_timeline(timeline_events),
+            compromised_assets=self._format_assets(compromised_assets),
+            iocs=self._format_iocs(iocs)
+        )
 
     async def generate_summary(
         self,
@@ -592,55 +668,14 @@ Provide prioritized recommendations with specific technical steps."""
         compromised_assets: Dict[str, list],
         iocs: Dict[str, list],
         summary_type: str = 'executive',
-        provider: str = None
+        provider: str = None,
+        organization_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate an AI summary for an incident.
-
-        Args:
-            incident_data: Incident details
-            timeline_events: List of timeline events
-            compromised_assets: Dict with 'hosts' and 'accounts' lists
-            iocs: Dict with 'network', 'host', and 'malware' lists
-            summary_type: 'executive', 'technical', or 'recommendations'
-            provider: 'openai' or 'google', or None for auto-select
-
-        Returns:
-            Generated summary text or None
-        """
-        # Select provider
-        if provider is None:
-            providers = self.get_available_providers()
-            if not providers:
-                return None
-            provider = providers[0]
-
-        # Select prompt template
-        if summary_type == 'executive':
-            prompt_template = self.EXECUTIVE_SUMMARY_PROMPT
-        elif summary_type == 'technical':
-            prompt_template = self.TECHNICAL_SUMMARY_PROMPT
-        elif summary_type == 'recommendations':
-            prompt_template = self.RECOMMENDATIONS_PROMPT
-        else:
-            prompt_template = self.EXECUTIVE_SUMMARY_PROMPT
-
-        # Format prompt
-        prompt = prompt_template.format(
-            incident_data=self._format_incident(incident_data),
-            timeline_events=self._format_timeline(timeline_events),
-            compromised_assets=self._format_assets(compromised_assets),
-            iocs=self._format_iocs(iocs)
+        """Async wrapper of generate_summary_sync (kept for compatibility)."""
+        return self.generate_summary_sync(
+            incident_data, timeline_events, compromised_assets, iocs,
+            summary_type=summary_type, provider=provider, organization_id=organization_id,
         )
-
-        # Generate with selected provider
-        if provider == 'openai':
-            return await self._generate_openai(prompt)
-        elif provider == 'google':
-            return await self._generate_google(prompt)
-        elif provider == 'ollama':
-            return self._generate_ollama_sync(prompt)
-
-        return None
 
     def generate_summary_sync(
         self,
@@ -649,58 +684,47 @@ Provide prioritized recommendations with specific technical steps."""
         compromised_assets: Dict[str, list],
         iocs: Dict[str, list],
         summary_type: str = 'executive',
-        provider: str = None
+        provider: str = None,
+        organization_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Synchronous version of generate_summary."""
-        # Select provider
+        """Generate an AI summary ('executive', 'technical', 'recommendations')."""
         if provider is None:
-            providers = self.get_available_providers()
+            providers = self.get_available_providers(organization_id)
             if not providers:
                 return None
             provider = providers[0]
 
-        # Select prompt template
-        if summary_type == 'executive':
-            prompt_template = self.EXECUTIVE_SUMMARY_PROMPT
-        elif summary_type == 'technical':
-            prompt_template = self.TECHNICAL_SUMMARY_PROMPT
-        elif summary_type == 'recommendations':
-            prompt_template = self.RECOMMENDATIONS_PROMPT
-        else:
-            prompt_template = self.EXECUTIVE_SUMMARY_PROMPT
+        prompt = self._summary_prompt(incident_data, timeline_events, compromised_assets, iocs, summary_type)
 
-        # Format prompt
-        prompt = prompt_template.format(
-            incident_data=self._format_incident(incident_data),
-            timeline_events=self._format_timeline(timeline_events),
-            compromised_assets=self._format_assets(compromised_assets),
-            iocs=self._format_iocs(iocs)
-        )
-
-        # Generate with selected provider
         if provider == 'openai':
-            return self._generate_openai_sync(prompt)
+            return self._generate_openai_sync(prompt, organization_id)
         elif provider == 'google':
-            return self._generate_google_sync(prompt)
+            return self._generate_google_sync(prompt, organization_id)
         elif provider == 'ollama':
-            return self._generate_ollama_sync(prompt)
+            return self._generate_ollama_sync(prompt, model=self._resolve_ollama_model(organization_id),
+                                              organization_id=organization_id)
+        elif provider == 'openai_compatible':
+            return self._generate_openai_compatible_sync(prompt, organization_id=organization_id)
 
         return None
 
-    def _generate_ollama_sync(self, prompt: str, model: str = None) -> Optional[str]:
-        """Generate text using a local Ollama instance."""
+    def _generate_ollama_sync(self, prompt: str, model: str = None,
+                              organization_id: Optional[str] = None) -> Optional[str]:
+        """Generate text using the org's (or the operator's) Ollama instance."""
         import requests
-        base = self.ollama_base_url
+        base = self.ollama_base_url(organization_id)
         if not base:
             return None
         if model is None:
-            models = self.list_ollama_models()
+            model = self._resolve_ollama_model(organization_id)
+        if model is None:
+            models = self.list_ollama_models(organization_id)
             model = models[0] if models else 'llama3'
         try:
             resp = requests.post(
                 f"{base}/api/generate",
                 json={'model': model, 'prompt': prompt, 'stream': False},
-                timeout=120,
+                timeout=current_app.config.get('LOCAL_LLM_TIMEOUT', 120),
             )
             resp.raise_for_status()
             return resp.json().get('response')
@@ -708,27 +732,10 @@ Provide prioritized recommendations with specific technical steps."""
             current_app.logger.error(f"Ollama generation error: {e}")
             return None
 
-    async def _generate_openai(self, prompt: str) -> Optional[str]:
-        """Generate text using OpenAI."""
-        try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are an expert cybersecurity incident response analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=2000,
-                temperature=0.7
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            current_app.logger.error(f"OpenAI generation error: {e}")
-            return None
-
-    def _generate_openai_sync(self, prompt: str) -> Optional[str]:
+    def _generate_openai_sync(self, prompt: str, organization_id: Optional[str] = None) -> Optional[str]:
         """Generate text using OpenAI (sync)."""
         try:
-            response = self.openai_client.chat.completions.create(
+            response = self.openai_client(organization_id).chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "system", "content": "You are an expert cybersecurity incident response analyst."},
@@ -742,19 +749,10 @@ Provide prioritized recommendations with specific technical steps."""
             current_app.logger.error(f"OpenAI generation error: {e}")
             return None
 
-    async def _generate_google(self, prompt: str) -> Optional[str]:
-        """Generate text using Google Gemini."""
-        try:
-            response = await self.google_client.generate_content_async(prompt)
-            return response.text
-        except Exception as e:
-            current_app.logger.error(f"Google AI generation error: {e}")
-            return None
-
-    def _generate_google_sync(self, prompt: str) -> Optional[str]:
+    def _generate_google_sync(self, prompt: str, organization_id: Optional[str] = None) -> Optional[str]:
         """Generate text using Google Gemini (sync)."""
         try:
-            response = self.google_client.generate_content(prompt)
+            response = self.google_client(organization_id).generate_content(prompt)
             return response.text
         except Exception as e:
             current_app.logger.error(f"Google AI generation error: {e}")

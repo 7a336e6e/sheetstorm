@@ -2,18 +2,41 @@
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
-from sheetstorm_mcp.server import mcp, get_client
+from sheetstorm_mcp.server import get_client, mcp
+
+
+def _parse_evidence_refs(raw: Optional[str]) -> list | None:
+    """Parse the evidence_refs JSON argument; raises ValueError when malformed."""
+    if raw is None:
+        return None
+    refs = json.loads(raw) if raw.strip() else []
+    if not isinstance(refs, list) or not all(isinstance(r, dict) for r in refs):
+        raise ValueError("evidence_refs must be a JSON array of objects")
+    return refs
 
 
 def _format_task(t: dict) -> str:
     """Format a task."""
     parts = [
         f"**{t.get('title', 'Untitled')}** (ID: {t.get('id', 'N/A')})",
-        f"  Status: {t.get('status', 'N/A')} | Priority: {t.get('priority', 'N/A')}",
+        f"  Status: {t.get('status', 'N/A')} | Priority: {t.get('priority', 'N/A')} | "
+        f"Type: {t.get('task_type') or 'action_item'}",
     ]
+    if t.get("lead_outcome"):
+        parts.append(f"  Lead outcome: {t['lead_outcome']}")
+    if t.get("investigation_direction"):
+        parts.append(f"  Investigation direction: {t['investigation_direction']}")
+    refs = t.get("evidence_refs") or []
+    if refs:
+        rendered = ", ".join(
+            f"{r.get('evidence_type', '?')}:{r.get('evidence_id', '?')}" if isinstance(r, dict) else str(r)
+            for r in refs
+        )
+        parts.append(f"  Evidence: {rendered}")
     assignee = t.get("assignee")
     if isinstance(assignee, dict):
         parts.append(f"  Assignee: {assignee.get('name', assignee.get('email', 'Unknown'))}")
@@ -37,24 +60,37 @@ async def sheetstorm_list_tasks(
     incident_id: str,
     status: Optional[str] = None,
     assignee_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    phase: Optional[int] = None,
+    task_type: Optional[str] = None,
 ) -> str:
-    """List tasks for an incident.
+    """List tasks for an incident, including DFIR fields (task type, lead outcome,
+    investigation direction, evidence references).
 
     Args:
         incident_id: UUID of the incident
-        status: Filter by status (pending, in_progress, completed)
+        status: Filter by status (pending, in_progress, completed, blocked, cancelled)
         assignee_id: Filter by assignee UUID
+        priority: Filter by priority (low, medium, high, critical)
+        phase: Filter by IR phase (1-6)
+        task_type: Only show this task type (action_item, investigative_lead, verification, documentation, reporting)
     """
     client = get_client()
     try:
-        params: dict = {}
+        params: dict = {"per_page": 200}
         if status:
             params["status"] = status
         if assignee_id:
             params["assignee_id"] = assignee_id
+        if priority:
+            params["priority"] = priority
+        if phase is not None:
+            params["phase"] = phase
 
         data = await client.get(f"/incidents/{incident_id}/tasks", params=params)
         items = data if isinstance(data, list) else data.get("items", data.get("tasks", []))
+        if task_type:
+            items = [t for t in items if (t.get("task_type") or "action_item") == task_type]
 
         if not items:
             return "No tasks found."
@@ -77,8 +113,13 @@ async def sheetstorm_create_task(
     assignee_id: Optional[str] = None,
     due_date: Optional[str] = None,
     phase: Optional[int] = None,
+    task_type: Optional[str] = None,
+    lead_outcome: Optional[str] = None,
+    investigation_direction: Optional[str] = None,
+    evidence_refs: Optional[str] = None,
 ) -> str:
-    """Create a new task for an incident.
+    """Create a new task for an incident. Use task_type="investigative_lead" to track
+    an investigative lead (hypothesis to prove/disprove) and record its outcome later.
 
     Args:
         incident_id: UUID of the incident
@@ -88,10 +129,26 @@ async def sheetstorm_create_task(
         assignee_id: UUID of the user to assign
         due_date: Due date in ISO format (YYYY-MM-DD)
         phase: IR phase (1-6)
+        task_type: One of: action_item (default), investigative_lead, verification, documentation, reporting
+        lead_outcome: For leads — one of: false_positive, confirmed_malicious, inconclusive, resolved
+        investigation_direction: Free text: what this lead/task is trying to establish
+        evidence_refs: JSON array linking evidence, e.g. [{"evidence_type": "artifact", "evidence_id": "<uuid>"}]
     """
     client = get_client()
     try:
+        try:
+            refs = _parse_evidence_refs(evidence_refs)
+        except ValueError as exc:
+            return f"✗ Error: invalid evidence_refs — {exc}"
         payload: dict = {"title": title, "priority": priority}
+        if task_type:
+            payload["task_type"] = task_type
+        if lead_outcome:
+            payload["lead_outcome"] = lead_outcome
+        if investigation_direction:
+            payload["investigation_direction"] = investigation_direction
+        if refs is not None:
+            payload["evidence_refs"] = refs
         if description:
             payload["description"] = description
         if assignee_id:
@@ -117,22 +174,38 @@ async def sheetstorm_update_task(
     priority: Optional[str] = None,
     assignee_id: Optional[str] = None,
     due_date: Optional[str] = None,
+    phase: Optional[int] = None,
+    task_type: Optional[str] = None,
+    lead_outcome: Optional[str] = None,
+    investigation_direction: Optional[str] = None,
+    evidence_refs: Optional[str] = None,
 ) -> str:
-    """Update an existing task.
+    """Update an existing task (including its DFIR lead fields).
 
     Args:
         incident_id: UUID of the incident
         task_id: UUID of the task
         title: New title
         description: New description
-        status: New status (pending, in_progress, completed)
-        priority: New priority
+        status: New status (pending, in_progress, completed, blocked, cancelled)
+        priority: New priority (low, medium, high, critical)
         assignee_id: New assignee UUID
-        due_date: New due date
+        due_date: New due date (YYYY-MM-DD)
+        phase: New IR phase (1-6)
+        task_type: One of: action_item, investigative_lead, verification, documentation, reporting
+        lead_outcome: One of: false_positive, confirmed_malicious, inconclusive, resolved
+        investigation_direction: What this lead/task is trying to establish
+        evidence_refs: JSON array replacing the evidence links, e.g. [{"evidence_type": "artifact", "evidence_id": "<uuid>"}]
     """
     client = get_client()
     try:
+        try:
+            refs = _parse_evidence_refs(evidence_refs)
+        except ValueError as exc:
+            return f"✗ Error: invalid evidence_refs — {exc}"
         payload: dict = {}
+        if refs is not None:
+            payload["evidence_refs"] = refs
         for field, value in [
             ("title", title),
             ("description", description),
@@ -140,6 +213,10 @@ async def sheetstorm_update_task(
             ("priority", priority),
             ("assignee_id", assignee_id),
             ("due_date", due_date),
+            ("phase", phase),
+            ("task_type", task_type),
+            ("lead_outcome", lead_outcome),
+            ("investigation_direction", investigation_direction),
         ]:
             if value is not None:
                 payload[field] = value

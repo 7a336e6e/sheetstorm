@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuthStore } from '@/lib/store'
 import api from '@/lib/api'
+import QRCode from 'qrcode'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -62,6 +63,9 @@ export default function ProfilePage() {
   // MFA state
   const [mfaEnabled, setMfaEnabled] = useState(false)
   const [setupData, setSetupData] = useState<MFASetupData | null>(null)
+  // QR rendered locally — the provisioning URI contains the TOTP secret and
+  // must never be sent to a third-party QR service.
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [showSetupDialog, setShowSetupDialog] = useState(false)
   const [showDisableDialog, setShowDisableDialog] = useState(false)
   const [showBackupCodes, setShowBackupCodes] = useState(false)
@@ -129,6 +133,7 @@ export default function ProfilePage() {
     try {
       const data = await api.post<MFASetupData>('/auth/mfa/setup', {})
       setSetupData(data)
+      setQrDataUrl(await QRCode.toDataURL(data.provisioning_uri, { width: 200, margin: 0 }).catch(() => null))
       setShowSetupDialog(true)
     } catch (error) {
       toast({
@@ -506,13 +511,12 @@ export default function ProfilePage() {
               <div className="space-y-6">
                 <div className="flex justify-center">
                   <div className="bg-white p-4 rounded-lg">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(setupData.provisioning_uri)}`}
-                      alt="MFA QR Code"
-                      width={200}
-                      height={200}
-                    />
+                    {qrDataUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={qrDataUrl} alt="MFA QR Code" width={200} height={200} />
+                    ) : (
+                      <div className="h-[200px] w-[200px]" />
+                    )}
                   </div>
                 </div>
                 <div className="space-y-2">

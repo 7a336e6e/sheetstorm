@@ -1,17 +1,22 @@
 /**
- * Storage tab — S3/MinIO configuration + storage analytics (usage, breakdown by type).
+ * Storage tab — evidence storage backends (S3/MinIO + Google Drive) and
+ * storage analytics (usage, breakdown by type).
  */
 
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Database, Loader2, Plus, Trash2, Zap, HardDrive, BarChart3, Server } from 'lucide-react'
+import {
+  Database, Loader2, Plus, Trash2, Zap, HardDrive, BarChart3, Server,
+  Cloud, Link2, Unlink, FolderOpen, Folder, ChevronRight,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -23,6 +28,11 @@ import {
 interface Integration {
   id: string; type: string; name: string; is_enabled: boolean
   config: Record<string, any>; has_credentials?: boolean
+}
+
+interface DriveStatus {
+  configured?: boolean; connected?: boolean; email?: string
+  root_folder_id?: string; root_folder_name?: string; message?: string
 }
 
 interface StorageStats {
@@ -43,7 +53,6 @@ const FIELD_LABELS: Record<string, string> = {
   bucket_name: 'Bucket Name', region: 'Region', endpoint_url: 'Endpoint URL',
   access_key: 'Access Key', secret_key: 'Secret Key',
 }
-const SECRET_FIELDS = new Set(['access_key', 'secret_key'])
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -53,9 +62,18 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+const DRIVE_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: 'Google Drive access was denied.',
+  no_code: 'Google did not return an authorization code.',
+  invalid_state: 'The Google Drive authorization request expired or was invalid. Please try again.',
+  token_exchange_failed: 'Could not complete the Google Drive authorization.',
+}
+
 export function StorageTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [stats, setStats] = useState<StorageStats | null>(null)
@@ -63,12 +81,17 @@ export function StorageTab() {
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null)
 
-  // Modal
+  // S3 modal
   const [showModal, setShowModal] = useState(false)
   const [editingIntegration, setEditingIntegration] = useState<Integration | null>(null)
   const [form, setForm] = useState({ name: '', config: {} as any, credentials: {} as any, is_enabled: true })
 
-  useEffect(() => { loadData() }, [])
+  // Google Drive
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null)
+  const [driveLoading, setDriveLoading] = useState(false)
+  const [showFolderPicker, setShowFolderPicker] = useState(false)
+  const [driveFolders, setDriveFolders] = useState<{ id: string; name: string }[]>([])
+  const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([{ id: 'root', name: 'My Drive' }])
 
   const loadData = async () => {
     try {
@@ -82,6 +105,36 @@ export function StorageTab() {
     finally { setLoading(false) }
   }
 
+  const loadDriveStatus = useCallback(async () => {
+    try { const res = await api.get<DriveStatus>('/google-drive/status'); setDriveStatus(res) }
+    catch { setDriveStatus(null) }
+  }, [])
+
+  useEffect(() => { loadData(); loadDriveStatus() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle the OAuth return from Google. The backend completes the token
+  // exchange server-side and redirects here with only a status flag
+  // (`drive=connected`) or an error code (`drive_error=<code>`). Tokens are
+  // never passed through the URL.
+  useEffect(() => {
+    const driveResult = searchParams.get('drive')
+    const driveError = searchParams.get('drive_error')
+    if (!driveResult && !driveError) return
+    if (driveError) {
+      toast({
+        title: 'Google Drive Error',
+        description: DRIVE_ERROR_MESSAGES[driveError] || 'Google Drive connection failed.',
+        variant: 'destructive',
+      })
+    } else if (driveResult === 'connected') {
+      toast({ title: 'Google Drive Connected' })
+      loadDriveStatus()
+      openFolderPicker()
+    }
+    router.replace('/dashboard/admin/settings?tab=storage')
+  }, [searchParams])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- S3 ----
   const openModal = (int?: Integration) => {
     if (int) {
       setEditingIntegration(int)
@@ -122,6 +175,33 @@ export function StorageTab() {
     finally { setTesting(null) }
   }
 
+  // ---- Google Drive ----
+  const handleDriveConnect = async () => {
+    setDriveLoading(true)
+    try { const res = await api.post<{ auth_url: string }>('/google-drive/auth'); window.location.href = res.auth_url }
+    catch { toast({ title: 'Error', description: 'Could not start Google Drive OAuth. Ensure the OAuth app credentials are configured.', variant: 'destructive' }); setDriveLoading(false) }
+  }
+
+  const handleDriveDisconnect = async () => {
+    const ok = await confirm({ title: 'Disconnect Google Drive', description: 'Existing files in Drive will not be deleted.', confirmLabel: 'Disconnect', variant: 'destructive' })
+    if (!ok) return
+    try { await api.post('/google-drive/disconnect'); toast({ title: 'Disconnected' }); loadDriveStatus() }
+    catch { toast({ title: 'Error', variant: 'destructive' }) }
+  }
+
+  const loadDriveFolders = async (parentId: string) => {
+    try { const res = await api.get<{ folders: { id: string; name: string }[] }>(`/google-drive/folders?parent_id=${parentId}`); setDriveFolders(res.folders || []) }
+    catch { toast({ title: 'Error', description: 'Could not load folders', variant: 'destructive' }) }
+  }
+  const openFolderPicker = () => { setFolderStack([{ id: 'root', name: 'My Drive' }]); setDriveFolders([]); setShowFolderPicker(true); loadDriveFolders('root') }
+  const navigateToFolder = (f: { id: string; name: string }) => { setFolderStack(prev => [...prev, f]); loadDriveFolders(f.id) }
+  const navigateBack = (i: number) => { const s = folderStack.slice(0, i + 1); setFolderStack(s); loadDriveFolders(s[s.length - 1].id) }
+  const selectCurrentFolder = async () => {
+    const c = folderStack[folderStack.length - 1]
+    try { await api.post('/google-drive/set-root', { folder_id: c.id, folder_name: c.name }); toast({ title: 'Root Folder Set', description: c.name }); setShowFolderPicker(false); loadDriveStatus() }
+    catch { toast({ title: 'Error', variant: 'destructive' }) }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
   }
@@ -131,7 +211,7 @@ export function StorageTab() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h3 className="text-lg font-medium">Storage</h3>
-          <p className="text-sm text-muted-foreground">S3-compatible storage for evidence artifacts</p>
+          <p className="text-sm text-muted-foreground">Evidence storage backends — S3-compatible object storage and Google Drive</p>
         </div>
         <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add S3 Configuration</Button>
       </div>
@@ -229,6 +309,53 @@ export function StorageTab() {
         </Card>
       )}
 
+      {/* Google Drive */}
+      <Card>
+        <CardContent className="flex items-center justify-between p-5">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+              <Cloud className="h-5 w-5 text-cyan-400" />
+            </div>
+            <div>
+              <h4 className="font-medium flex items-center gap-2">
+                Google Drive
+                {driveStatus?.connected
+                  ? <Badge variant="outline" className="text-green-400 border-green-500/30 text-xs">Connected</Badge>
+                  : <Badge variant="outline" className="text-muted-foreground text-xs">Not connected</Badge>}
+              </h4>
+              <p className="text-sm text-muted-foreground">
+                {driveStatus?.connected
+                  ? <>Case artifacts are stored in Google Drive{driveStatus.root_folder_name ? <> · Root: {driveStatus.root_folder_name}</> : null}</>
+                  : driveStatus && driveStatus.configured === false
+                    ? (driveStatus.message || 'Google Drive OAuth app is not configured.')
+                    : 'Store case artifacts in Google Drive (CASE-xxxx folders).'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {driveStatus?.connected ? (
+              <>
+                <Button variant="outline" size="sm" onClick={openFolderPicker}>
+                  <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
+                  {driveStatus.root_folder_id && driveStatus.root_folder_id !== 'root' ? 'Change Folder' : 'Set Folder'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleDriveDisconnect} className="text-destructive border-destructive/30 hover:bg-destructive/10">
+                  <Unlink className="mr-1.5 h-3.5 w-3.5" />Disconnect
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline" size="sm" onClick={handleDriveConnect}
+                disabled={driveLoading || (driveStatus?.configured === false)}
+                className="text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10"
+              >
+                {driveLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Link2 className="mr-1.5 h-3.5 w-3.5" />}Connect
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* S3 Configurations */}
       {integrations.length === 0 ? (
         <Card className="border-dashed">
@@ -276,7 +403,7 @@ export function StorageTab() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* S3 Modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -308,6 +435,45 @@ export function StorageTab() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{editingIntegration ? 'Update' : 'Create'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Drive Folder Picker */}
+      <Dialog open={showFolderPicker} onOpenChange={setShowFolderPicker}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Choose Google Drive Folder</DialogTitle>
+            <DialogDescription>Choose the folder where SheetStorm will create CASE-xxxx directories.</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-3">
+            <div className="flex items-center gap-1 text-sm flex-wrap">
+              {folderStack.map((f, i) => (
+                <span key={f.id} className="flex items-center gap-1">
+                  {i > 0 && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                  <button className="hover:underline text-cyan-400" onClick={() => navigateBack(i)}>{f.name}</button>
+                </span>
+              ))}
+            </div>
+            <div className="border rounded-md max-h-64 overflow-y-auto divide-y divide-border">
+              {driveFolders.length === 0 ? (
+                <p className="text-sm text-muted-foreground p-4 text-center">No subfolders here.</p>
+              ) : (
+                driveFolders.map(folder => (
+                  <button
+                    key={folder.id}
+                    onClick={() => navigateToFolder(folder)}
+                    className="w-full flex items-center gap-2 p-2.5 text-sm hover:bg-muted text-left"
+                  >
+                    <Folder className="h-4 w-4 text-cyan-400" /> {folder.name}
+                  </button>
+                ))
+              )}
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowFolderPicker(false)}>Cancel</Button>
+            <Button onClick={selectCurrentFolder}>Use "{folderStack[folderStack.length - 1]?.name}"</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

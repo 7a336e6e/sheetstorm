@@ -9,9 +9,13 @@ from app.models import AuditLog
 
 logger = logging.getLogger(__name__)
 
-# Fields to always strip from logged request bodies
+# Fields to always strip from logged request bodies / query params.
+# Substring match (no anchors), so e.g. "secret" also covers client_secret,
+# api_secret, secret_key, mfa_secret; "token" covers refresh_token/access_token.
 _SENSITIVE_KEYS = re.compile(
-    r'(password|secret|token|api_key|authorization|credit_card|ssn|fernet)',
+    r'(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|'
+    r'private[_-]?key|authorization|credential|credit_card|card_number|'
+    r'cvv|ssn|fernet|mfa_secret|backup_code|otp_secret)',
     re.IGNORECASE,
 )
 
@@ -21,8 +25,29 @@ _BROADCAST_EVENT_TYPES = {
 }
 
 
+# Detail keys never broadcast over WebSocket (evidence hashes, legal-hold
+# reasons, raw request args). The full record stays in the audit log.
+_PRIVATE_DETAIL_KEYS = {
+    'hashes', 'computed_hashes', 'stored_hashes', 'md5', 'sha1', 'sha256', 'sha512',
+    'reason', 'args', 'purpose',
+}
+
+
+def public_activity_details(details):
+    """Strip sensitive keys from audit details before they leave the server."""
+    if not isinstance(details, dict):
+        return {}
+    return {k: v for k, v in details.items() if k not in _PRIVATE_DETAIL_KEYS}
+
+
 def _broadcast_activity(log_entry):
-    """Emit a WebSocket event for the activity feed."""
+    """Emit a WebSocket event for the activity feed.
+
+    Incident-scoped events go only to that incident's room (whose members
+    passed an incident access check on join). Org-wide events go to the org
+    room, except admin actions which go only to the org's administrators.
+    Sensitive detail keys are never broadcast.
+    """
     if not log_entry or not log_entry.organization_id:
         return
     if log_entry.event_type not in _BROADCAST_EVENT_TYPES:
@@ -39,10 +64,24 @@ def _broadcast_activity(log_entry):
             'user_email': log_entry.user_email,
             'user_id': str(log_entry.user_id) if log_entry.user_id else None,
             'created_at': log_entry.created_at.isoformat() if log_entry.created_at else None,
-            'details': log_entry.details,
+            'details': public_activity_details(log_entry.details),
         }
-        room = f'org_{log_entry.organization_id}'
-        socketio.emit('activity:new', payload, room=room)
+        if log_entry.incident_id:
+            socketio.emit('activity:new', payload, room=f'incident_{log_entry.incident_id}')
+        elif log_entry.event_type == 'admin_action':
+            from app.models import User, UserRole, Role
+            admin_ids = [
+                uid for (uid,) in db.session.query(User.id)
+                .join(UserRole, UserRole.user_id == User.id)
+                .join(Role, Role.id == UserRole.role_id)
+                .filter(User.organization_id == log_entry.organization_id,
+                        Role.name == 'Administrator', User.is_active.is_(True))
+                .all()
+            ]
+            for uid in admin_ids:
+                socketio.emit('activity:new', payload, room=f'user_{uid}')
+        else:
+            socketio.emit('activity:new', payload, room=f'org_{log_entry.organization_id}')
     except Exception:
         logger.debug('Activity broadcast skipped', exc_info=True)
 

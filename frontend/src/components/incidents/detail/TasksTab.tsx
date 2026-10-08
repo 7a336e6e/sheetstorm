@@ -70,14 +70,21 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Task form
-  const [taskForm, setTaskForm] = useState({
+  const [taskForm, setTaskForm] = useState<{
+    title: string; description: string; priority: string;
+    task_type: string; lead_outcome: string;
+    assignee_id: string; due_date: string; phase: string;
+    linked_entities: { type: string; id: string; label: string }[];
+  }>({
     title: '',
     description: '',
     priority: 'medium',
+    task_type: 'action_item',
+    lead_outcome: '',
     assignee_id: '',
     due_date: '',
     phase: '',
-    linked_entities: [] as { type: string; id: string; label: string }[],
+    linked_entities: [],
   })
 
   // Entity data for task linking
@@ -135,6 +142,7 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
     setEditingTask(null)
     setTaskForm({
       title: '', description: '', priority: 'medium',
+      task_type: 'action_item', lead_outcome: '',
       assignee_id: '', due_date: '', phase: '', linked_entities: [],
     })
     setLinkEntityType('')
@@ -148,6 +156,8 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
       title: task.title,
       description: task.description || '',
       priority: task.priority,
+      task_type: task.task_type || 'action_item',
+      lead_outcome: task.lead_outcome || '',
       assignee_id: task.assignee?.id || '',
       due_date: task.due_date || '',
       phase: task.phase?.toString() || '',
@@ -182,6 +192,8 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
         title: taskForm.title,
         description: taskForm.description,
         priority: taskForm.priority,
+        task_type: taskForm.task_type,
+        lead_outcome: taskForm.task_type === 'investigative_lead' ? (taskForm.lead_outcome || null) : null,
         assignee_id: taskForm.assignee_id || null,
         due_date: taskForm.due_date || null,
         phase: taskForm.phase ? parseInt(taskForm.phase) : null,
@@ -556,6 +568,8 @@ interface TaskFormModalProps {
     title: string
     description: string
     priority: string
+    task_type: string
+    lead_outcome: string
     assignee_id: string
     due_date: string
     phase: string
@@ -614,6 +628,36 @@ function TaskFormModal({
           <div className="space-y-2">
             <Label>Description</Label>
             <Textarea value={taskForm.description} onChange={e => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Describe the task..." />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Select value={taskForm.task_type} onValueChange={v => setTaskForm({ ...taskForm, task_type: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="action_item">Action Item</SelectItem>
+                  <SelectItem value="investigative_lead">Investigative Lead</SelectItem>
+                  <SelectItem value="verification">Verification</SelectItem>
+                  <SelectItem value="documentation">Documentation</SelectItem>
+                  <SelectItem value="reporting">Reporting</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {taskForm.task_type === 'investigative_lead' && (
+              <div className="space-y-2">
+                <Label>Lead Outcome</Label>
+                <Select value={taskForm.lead_outcome || 'open'} onValueChange={v => setTaskForm({ ...taskForm, lead_outcome: v === 'open' ? '' : v })}>
+                  <SelectTrigger><SelectValue placeholder="Open / unresolved" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Open / unresolved</SelectItem>
+                    <SelectItem value="false_positive">False Positive</SelectItem>
+                    <SelectItem value="confirmed_malicious">Confirmed Malicious</SelectItem>
+                    <SelectItem value="inconclusive">Inconclusive</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">

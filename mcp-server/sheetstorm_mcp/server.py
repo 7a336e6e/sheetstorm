@@ -10,13 +10,12 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
 
 from sheetstorm_mcp import __version__
-from sheetstorm_mcp.client import SheetStormClient, _request_jwt
-from sheetstorm_mcp.config import Config, get_config
+from sheetstorm_mcp.client import Grant, SheetStormClient, _request_grant
+from sheetstorm_mcp.config import get_config
 from sheetstorm_mcp.oauth_provider import SheetStormOAuthProvider
 
 logger = logging.getLogger("sheetstorm_mcp.server")
@@ -29,24 +28,50 @@ _client: SheetStormClient | None = None
 _provider: SheetStormOAuthProvider | None = None
 
 
-def get_client() -> SheetStormClient:
-    """Return the shared API client, injecting the per-request JWT from OAuth context.
+def _current_mcp_token() -> str | None:
+    """Bearer token of the MCP HTTP request currently being served.
 
-    This is called from every tool handler.  When OAuth is active the SDK
-    populates ``auth_context_var`` before invoking the tool, so we can pull
-    the MCP opaque token, look up the real SheetStorm JWT, and set the
-    ``_request_jwt`` ContextVar that the HTTP client reads.
+    Read from the request's own ``scope["user"]`` (set by the SDK's bearer
+    auth middleware on *every* HTTP request) rather than the auth ContextVar:
+    on SSE and Streamable HTTP sessions tools run in the session task, whose
+    ContextVar still holds the token used when the session was opened — which
+    is revoked/expired after the client's hourly token refresh.
+    """
+    try:
+        request = mcp.get_context().request_context.request
+    except (LookupError, ValueError, AttributeError):
+        request = None
+    if request is not None:
+        user = getattr(request, "scope", {}).get("user")
+        access_token = getattr(user, "access_token", None)
+        if access_token is not None:
+            return access_token.token
+    # Fallback for transports without a per-message request object.
+    from mcp.server.auth.middleware.auth_context import get_access_token
+
+    access_token = get_access_token()
+    return access_token.token if access_token else None
+
+
+def current_grant() -> Grant | None:
+    """The OAuth grant (user session) of the current MCP request, if any."""
+    if _provider is None:
+        return None
+    token = _current_mcp_token()
+    return _provider.get_grant(token) if token else None
+
+
+def get_client() -> SheetStormClient:
+    """Return the shared API client bound to the current request's user.
+
+    Called from every tool handler. Resolves the OAuth grant of the current
+    MCP request and stores it in the ``_request_grant`` ContextVar that the
+    HTTP client reads. The ContextVar is always reset so a grant can never
+    leak from one request into the next.
     """
     if _client is None:
         raise RuntimeError("SheetStorm client not initialised — server not started yet.")
-
-    # Inject the per-user JWT into the request-scoped ContextVar
-    access_token = get_access_token()
-    if access_token and _provider:
-        jwt = _provider.get_sheetstorm_jwt(access_token.token)
-        if jwt:
-            _request_jwt.set(jwt)
-
+    _request_grant.set(current_grant())
     return _client
 
 
@@ -122,24 +147,27 @@ mcp = FastMCP(
 
 def _register_all_tools() -> None:
     """Import every tool module so their @mcp.tool decorators execute."""
-    from sheetstorm_mcp.tools import auth  # noqa: F401
-    from sheetstorm_mcp.tools import incidents  # noqa: F401
-    from sheetstorm_mcp.tools import timeline  # noqa: F401
-    from sheetstorm_mcp.tools import tasks  # noqa: F401
-    from sheetstorm_mcp.tools import assets  # noqa: F401
-    from sheetstorm_mcp.tools import iocs  # noqa: F401
-    from sheetstorm_mcp.tools import artifacts  # noqa: F401
-    from sheetstorm_mcp.tools import attack_graph  # noqa: F401
-    from sheetstorm_mcp.tools import reports  # noqa: F401
-    from sheetstorm_mcp.tools import admin  # noqa: F401
-    from sheetstorm_mcp.tools import resources  # noqa: F401
-    from sheetstorm_mcp.tools import case_notes  # noqa: F401
-    from sheetstorm_mcp.tools import threat_intel  # noqa: F401
-    from sheetstorm_mcp.tools import knowledge_base  # noqa: F401
-    from sheetstorm_mcp.tools import defang  # noqa: F401
-    from sheetstorm_mcp.tools import prompts  # noqa: F401
-    from sheetstorm_mcp.tools import advanced_analysis  # noqa: F401
-    from sheetstorm_mcp.tools import assignments  # noqa: F401
+    from sheetstorm_mcp.tools import (
+        admin,  # noqa: F401
+        advanced_analysis,  # noqa: F401
+        artifacts,  # noqa: F401
+        assets,  # noqa: F401
+        assignments,  # noqa: F401
+        attack_graph,  # noqa: F401
+        auth,  # noqa: F401
+        case_notes,  # noqa: F401
+        defang,  # noqa: F401
+        incidents,  # noqa: F401
+        iocs,  # noqa: F401
+        knowledge_base,  # noqa: F401
+        playbooks,  # noqa: F401
+        prompts,  # noqa: F401
+        reports,  # noqa: F401
+        resources,  # noqa: F401
+        tasks,  # noqa: F401
+        threat_intel,  # noqa: F401
+        timeline,  # noqa: F401
+    )
 
 
 _register_all_tools()

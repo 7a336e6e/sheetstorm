@@ -1,296 +1,332 @@
-"""Threat intelligence tools — VirusTotal, MISP, CVE, reputation lookups, ransomware."""
+"""Threat intelligence tools — VirusTotal, MISP, CVE, IP/Domain/Email reputation, Ransomware lookups."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from sheetstorm_bridge.client import SheetStormAPIError
-from sheetstorm_bridge.server import mcp, get_client
+from sheetstorm_bridge.server import get_client, mcp
 
+# ---------------------------------------------------------------------------
+# VirusTotal
+# ---------------------------------------------------------------------------
 
 @mcp.tool()
 async def sheetstorm_virustotal_lookup(
-    indicator: str,
-    indicator_type: Optional[str] = None,
+    lookup_type: str,
+    value: str,
 ) -> str:
-    """Look up an indicator in VirusTotal (hash, IP, domain, or URL).
+    """Look up a hash, URL, domain, or IP address on VirusTotal.
+
+    Requires VirusTotal integration to be configured in your organisation.
 
     Args:
-        indicator: The indicator to look up
-        indicator_type: Type hint (hash, ip, domain, url). Auto-detected if omitted.
+        lookup_type: Type of lookup — one of: hash, url, domain, ip
+        value: The IOC value to look up (hash, URL, domain, or IP address)
     """
     client = get_client()
     try:
-        payload: dict = {"indicator": indicator}
-        if indicator_type:
-            payload["indicator_type"] = indicator_type
-        data = await client.post("/threat-intel/virustotal/lookup", json=payload)
+        data = await client.post(
+            "/threat-intel/virustotal/lookup",
+            json={"type": lookup_type, "value": value},
+        )
 
-        parts = [f"**VirusTotal Lookup**: {indicator}\n"]
+        if not data.get("found"):
+            return f"Not found in VirusTotal: {value} (type: {lookup_type})"
 
-        if data.get("error"):
-            return f"✗ VirusTotal error: {data['error']}"
+        parts = [f"**VirusTotal — {lookup_type.upper()} Lookup**: {value}\n"]
 
-        # Detection stats
-        stats = data.get("last_analysis_stats", data.get("stats", {}))
-        if stats:
+        if data.get("detection_ratio"):
+            parts.append(f"Detection Ratio: **{data['detection_ratio']}**")
+        if data.get("malicious") is not None:
             parts.append(
-                f"  Detections: {stats.get('malicious', 0)}/{stats.get('malicious', 0) + stats.get('undetected', 0)}"
+                f"Malicious: {data['malicious']} | Suspicious: {data.get('suspicious', 0)} | "
+                f"Harmless: {data.get('harmless', 0)} | Undetected: {data.get('undetected', 0)}"
             )
-        if data.get("reputation") is not None:
-            parts.append(f"  Reputation: {data['reputation']}")
-
-        # File-specific info
+        if data.get("file_type"):
+            parts.append(f"File Type: {data['file_type']}")
+        if data.get("file_name"):
+            parts.append(f"File Name: {data['file_name']}")
         if data.get("sha256"):
-            parts.append(f"  SHA256: {data['sha256']}")
-        if data.get("meaningful_name") or data.get("name"):
-            parts.append(f"  Name: {data.get('meaningful_name', data.get('name'))}")
-        if data.get("type_description"):
-            parts.append(f"  Type: {data['type_description']}")
-        if data.get("size"):
-            parts.append(f"  Size: {data['size']} bytes")
-
-        # Network-specific
-        if data.get("country"):
-            parts.append(f"  Country: {data['country']}")
-        if data.get("as_owner"):
-            parts.append(f"  AS Owner: {data['as_owner']}")
-
-        # Tags/categories
+            parts.append(f"SHA256: {data['sha256']}")
+        if data.get("reputation") is not None:
+            parts.append(f"Reputation Score: {data['reputation']}")
         if data.get("tags"):
-            parts.append(f"  Tags: {', '.join(data['tags'])}")
-        if data.get("categories"):
-            cats = data["categories"]
-            if isinstance(cats, dict):
-                unique = set(cats.values())
-                parts.append(f"  Categories: {', '.join(unique)}")
-            else:
-                parts.append(f"  Categories: {cats}")
+            parts.append(f"Tags: {', '.join(data['tags'])}")
+        if data.get("popular_threat_names"):
+            parts.append(f"Threat Names: {', '.join(data['popular_threat_names'])}")
+        if data.get("country"):
+            parts.append(f"Country: {data['country']}")
+        if data.get("as_owner"):
+            parts.append(f"AS Owner: {data['as_owner']}")
 
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# MISP
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
 async def sheetstorm_misp_push_iocs(
     incident_id: str,
-    ioc_types: Optional[str] = None,
+    iocs: list[dict],
+    event_info: Optional[str] = None,
 ) -> str:
-    """Push incident IOCs to MISP threat intelligence platform.
+    """Push IOCs from an incident to MISP as a new event.
+
+    Requires MISP integration to be configured in your organisation.
 
     Args:
-        incident_id: UUID of the incident
-        ioc_types: Comma-separated IOC types to push (network, host, malware). Defaults to all.
+        incident_id: UUID of the incident the IOCs belong to
+        iocs: List of IOC dicts, each with 'type' (MISP attribute type, e.g. ip-dst, md5), 'value', and optional 'comment'
+        event_info: Optional MISP event title (defaults to auto-generated)
     """
     client = get_client()
     try:
-        payload: dict = {"incident_id": incident_id}
-        if ioc_types:
-            payload["ioc_types"] = [t.strip() for t in ioc_types.split(",")]
+        payload: dict = {"incident_id": incident_id, "iocs": iocs}
+        if event_info:
+            payload["event_info"] = event_info
+
         data = await client.post("/threat-intel/misp/push", json=payload)
-        pushed = data.get("pushed", data.get("count", 0))
-        event_id = data.get("event_id", data.get("misp_event_id", "N/A"))
-        return (
-            f"✓ Pushed {pushed} IOCs to MISP\n"
-            f"  MISP Event ID: {event_id}\n"
-            f"  URL: {data.get('event_url', 'N/A')}"
-        )
+
+        if data.get("success"):
+            return (
+                f"✓ Pushed {data.get('attributes_pushed', 0)} IOCs to MISP\n"
+                f"  Event ID: {data.get('misp_event_id')}\n"
+                f"  Event UUID: {data.get('misp_event_uuid')}"
+            )
+        return f"✗ MISP push failed: {data.get('message', 'unknown error')}"
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# CVE Lookup
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
-async def sheetstorm_cve_lookup(cve_id: str) -> str:
-    """Look up a CVE by ID (e.g. CVE-2024-1234).
+async def sheetstorm_cve_lookup(
+    cve_id: str,
+) -> str:
+    """Look up a CVE by ID using NVD and CISA Known Exploited Vulnerabilities catalog.
+
+    No API key required — uses free public endpoints.
 
     Args:
         cve_id: CVE identifier (e.g. CVE-2024-1234)
     """
     client = get_client()
     try:
-        data = await client.post("/threat-intel/cve/lookup", json={"cve_id": cve_id})
-        if data.get("error"):
-            return f"✗ CVE lookup error: {data['error']}"
+        data = await client.post(
+            "/threat-intel/cve/lookup",
+            json={"cve_id": cve_id},
+        )
 
-        parts = [f"**{data.get('id', cve_id)}**: {data.get('description', 'No description')}\n"]
+        if not data.get("found"):
+            return f"CVE not found: {cve_id}"
 
-        if data.get("cvss_score") is not None or data.get("cvss"):
-            score = data.get("cvss_score", data.get("cvss", {}).get("score", "N/A"))
-            severity = data.get("severity", data.get("cvss", {}).get("severity", "N/A"))
-            parts.append(f"  CVSS: {score} ({severity})")
-        if data.get("published"):
-            parts.append(f"  Published: {data['published']}")
-        if data.get("references"):
-            refs = data["references"]
-            if isinstance(refs, list):
-                parts.append(f"  References: {len(refs)} linked")
-                for r in refs[:5]:
-                    url = r.get("url", r) if isinstance(r, dict) else r
-                    parts.append(f"    - {url}")
-        if data.get("affected_products") or data.get("cpe"):
-            products = data.get("affected_products", data.get("cpe", []))
-            if isinstance(products, list):
-                parts.append(f"  Affected products: {len(products)}")
-                for p in products[:5]:
-                    parts.append(f"    - {p}")
+        parts = [f"**{cve_id}**\n"]
+
+        nvd = data.get("nvd")
+        if nvd:
+            parts.append(f"**Description**: {nvd.get('description', 'N/A')}")
+            if nvd.get("cvss_score"):
+                parts.append(f"**CVSS**: {nvd['cvss_score']} ({nvd.get('cvss_severity', 'N/A')})")
+            if nvd.get("cvss_vector"):
+                parts.append(f"**Vector**: {nvd['cvss_vector']}")
+            if nvd.get("cwes"):
+                parts.append(f"**CWEs**: {', '.join(nvd['cwes'])}")
+            parts.append(f"**Published**: {nvd.get('published', 'N/A')}")
+
+        kev = data.get("kev")
+        if kev:
+            parts.append("\n**⚠ CISA Known Exploited Vulnerability**")
+            parts.append(f"  Vendor: {kev.get('vendor')} — {kev.get('product')}")
+            parts.append(f"  Name: {kev.get('vulnerability_name')}")
+            parts.append(f"  Date Added: {kev.get('date_added')}")
+            parts.append(f"  Due Date: {kev.get('due_date')}")
+            parts.append(f"  Required Action: {kev.get('required_action')}")
+            if kev.get("known_ransomware_use") and kev["known_ransomware_use"] != "Unknown":
+                parts.append(f"  Ransomware Use: {kev['known_ransomware_use']}")
 
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# IP Reputation
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
-async def sheetstorm_ip_reputation(ip_address: str) -> str:
-    """Check reputation of an IP address.
+async def sheetstorm_ip_reputation(
+    ip: str,
+) -> str:
+    """Look up IP reputation using AbuseIPDB, VirusTotal, and free geo data.
+
+    AbuseIPDB and VirusTotal require integrations; geo lookup is always available.
 
     Args:
-        ip_address: IP address to look up
+        ip: IP address to look up
     """
     client = get_client()
     try:
-        data = await client.post("/threat-intel/ip/lookup", json={"ip": ip_address})
-        if data.get("error"):
-            return f"✗ IP reputation error: {data['error']}"
+        data = await client.post("/threat-intel/ip/lookup", json={"ip": ip})
 
-        parts = [f"**IP Reputation**: {ip_address}\n"]
-        if data.get("risk_score") is not None:
-            parts.append(f"  Risk Score: {data['risk_score']}")
-        if data.get("country"):
-            parts.append(f"  Country: {data['country']}")
-        if data.get("isp") or data.get("as_owner"):
-            parts.append(f"  ISP/AS: {data.get('isp', data.get('as_owner', 'N/A'))}")
-        if data.get("is_tor") is not None:
-            parts.append(f"  Tor Exit: {'Yes' if data['is_tor'] else 'No'}")
-        if data.get("is_vpn") is not None:
-            parts.append(f"  VPN: {'Yes' if data['is_vpn'] else 'No'}")
-        if data.get("abuse_reports") is not None:
-            parts.append(f"  Abuse Reports: {data['abuse_reports']}")
-        if data.get("tags"):
-            parts.append(f"  Tags: {', '.join(data['tags'])}")
+        parts = [f"**IP Reputation**: {data.get('ip', ip)}\n"]
+        sources = data.get("sources", {})
+
+        abuse = sources.get("abuseipdb")
+        if abuse:
+            parts.append("**AbuseIPDB**:")
+            parts.append(f"  Confidence Score: {abuse.get('abuse_confidence_score')}%")
+            parts.append(f"  Total Reports: {abuse.get('total_reports')}")
+            parts.append(f"  ISP: {abuse.get('isp')}")
+            if abuse.get("is_tor"):
+                parts.append("  ⚠ Tor Exit Node")
+
+        vt = sources.get("virustotal")
+        if vt:
+            parts.append("**VirusTotal**:")
+            parts.append(
+                f"  Malicious: {vt.get('malicious')} | Suspicious: {vt.get('suspicious')} | "
+                f"Harmless: {vt.get('harmless')}"
+            )
+            parts.append(f"  Reputation: {vt.get('reputation')}")
+
+        geo = sources.get("geo")
+        if geo:
+            parts.append("**Geolocation**:")
+            parts.append(f"  {geo.get('city', '?')}, {geo.get('region', '?')}, {geo.get('country', '?')}")
+            parts.append(f"  ISP: {geo.get('isp')} | Org: {geo.get('org')}")
+            parts.append(f"  AS: {geo.get('as')}")
+
+        if not sources:
+            parts.append("No enrichment data available (no integrations configured).")
 
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Domain Reputation
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
-async def sheetstorm_domain_reputation(domain: str) -> str:
-    """Check reputation of a domain.
+async def sheetstorm_domain_reputation(
+    domain: str,
+) -> str:
+    """Look up domain reputation via VirusTotal.
+
+    Requires VirusTotal integration to be configured.
 
     Args:
-        domain: Domain name to look up
+        domain: Domain name to look up (e.g. evil.com)
     """
     client = get_client()
     try:
         data = await client.post("/threat-intel/domain/lookup", json={"domain": domain})
-        if data.get("error"):
-            return f"✗ Domain reputation error: {data['error']}"
 
-        parts = [f"**Domain Reputation**: {domain}\n"]
-        if data.get("risk_score") is not None:
-            parts.append(f"  Risk Score: {data['risk_score']}")
-        if data.get("category"):
-            parts.append(f"  Category: {data['category']}")
-        if data.get("registrar"):
-            parts.append(f"  Registrar: {data['registrar']}")
-        if data.get("creation_date"):
-            parts.append(f"  Created: {data['creation_date']}")
-        if data.get("dns_records"):
-            records = data["dns_records"]
-            if isinstance(records, list):
-                parts.append(f"  DNS Records: {len(records)}")
-                for r in records[:5]:
-                    parts.append(f"    - {r}")
-        if data.get("tags"):
-            parts.append(f"  Tags: {', '.join(data['tags'])}")
+        parts = [f"**Domain Reputation**: {data.get('domain', domain)}\n"]
+        sources = data.get("sources", {})
+
+        vt = sources.get("virustotal")
+        if vt:
+            parts.append(
+                f"Malicious: {vt.get('malicious')} | Suspicious: {vt.get('suspicious')} | "
+                f"Harmless: {vt.get('harmless')} | Undetected: {vt.get('undetected')}"
+            )
+            parts.append(f"Reputation: {vt.get('reputation')}")
+            if vt.get("registrar"):
+                parts.append(f"Registrar: {vt['registrar']}")
+            if vt.get("creation_date"):
+                parts.append(f"Created: {vt['creation_date']}")
+            if vt.get("categories"):
+                cats = ", ".join(f"{k}: {v}" for k, v in vt["categories"].items())
+                parts.append(f"Categories: {cats}")
+        else:
+            parts.append("No enrichment data (VirusTotal integration not configured).")
 
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Email Reputation
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
-async def sheetstorm_email_reputation(email: str) -> str:
-    """Check reputation of an email address.
+async def sheetstorm_email_reputation(
+    email: str,
+) -> str:
+    """Look up email address in breach databases (Have I Been Pwned).
+
+    Requires HIBP integration to be configured.
 
     Args:
-        email: Email address to look up
+        email: Email address to check
     """
     client = get_client()
     try:
         data = await client.post("/threat-intel/email/lookup", json={"email": email})
-        if data.get("error"):
-            return f"✗ Email reputation error: {data['error']}"
 
-        parts = [f"**Email Reputation**: {email}\n"]
-        if data.get("risk_score") is not None:
-            parts.append(f"  Risk Score: {data['risk_score']}")
-        if data.get("disposable") is not None:
-            parts.append(f"  Disposable: {'Yes' if data['disposable'] else 'No'}")
-        if data.get("deliverable") is not None:
-            parts.append(f"  Deliverable: {'Yes' if data['deliverable'] else 'No'}")
-        if data.get("breach_count") is not None:
-            parts.append(f"  Known Breaches: {data['breach_count']}")
-        if data.get("domain_reputation") is not None:
-            parts.append(f"  Domain Rep: {data['domain_reputation']}")
-        if data.get("tags"):
-            parts.append(f"  Tags: {', '.join(data['tags'])}")
+        parts = [f"**Email Reputation**: {data.get('email', email)}\n"]
+        sources = data.get("sources", {})
+
+        hibp = sources.get("hibp")
+        if hibp:
+            count = hibp.get("breach_count", 0)
+            parts.append(f"Breaches Found: **{count}**")
+            for b in hibp.get("breaches", [])[:10]:
+                parts.append(
+                    f"  • {b.get('name')} ({b.get('breach_date', 'N/A')}) — "
+                    f"{b.get('pwn_count', 0):,} accounts, "
+                    f"data: {', '.join(b.get('data_classes', [])[:5])}"
+                )
+        else:
+            parts.append("No enrichment data (HIBP integration not configured).")
 
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Ransomware Victim Lookup
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
 async def sheetstorm_ransomware_lookup(
-    name: Optional[str] = None,
-    extension: Optional[str] = None,
+    query: str,
 ) -> str:
-    """Look up ransomware by name or file extension.
+    """Search ransomware.live for victim postings by company/organisation name.
+
+    No API key required — uses public API.
 
     Args:
-        name: Ransomware family name (e.g. LockBit, BlackCat)
-        extension: Encrypted file extension (e.g. .lockbit, .encrypted)
+        query: Company or organisation name to search (minimum 3 characters)
     """
     client = get_client()
     try:
-        payload: dict = {}
-        if name:
-            payload["name"] = name
-        if extension:
-            payload["extension"] = extension
-        if not payload:
-            return "Provide at least a ransomware name or file extension."
+        data = await client.post("/threat-intel/ransomware/lookup", json={"query": query})
 
-        data = await client.post("/threat-intel/ransomware/lookup", json=payload)
-        if data.get("error"):
-            return f"✗ Ransomware lookup error: {data['error']}"
+        if not data.get("found"):
+            return f"No ransomware victim postings found for: {query}"
 
-        results = data.get("results", [data] if data.get("name") else [])
-        if not results:
-            return "No ransomware information found."
-
-        parts = [f"**Ransomware Lookup** ({len(results)} results)\n"]
-        for r in results:
-            parts.append(f"**{r.get('name', 'Unknown')}**")
-            if r.get("extensions"):
-                exts = r["extensions"]
-                if isinstance(exts, list):
-                    parts.append(f"  Extensions: {', '.join(exts)}")
-                else:
-                    parts.append(f"  Extensions: {exts}")
-            if r.get("ransom_note"):
-                parts.append(f"  Ransom Note: {r['ransom_note']}")
-            if r.get("decryptor_available") is not None:
-                parts.append(f"  Decryptor Available: {'Yes' if r['decryptor_available'] else 'No'}")
-            if r.get("references"):
-                refs = r["references"]
-                if isinstance(refs, list):
-                    for ref in refs[:3]:
-                        parts.append(f"    - {ref}")
-            parts.append("")
-
+        items = data.get("items", [])
+        parts = [f"**Ransomware Victims** matching \"{query}\" ({data.get('total', 0)} results)\n"]
+        for v in items[:20]:
+            parts.append(
+                f"• **{v.get('victim', 'Unknown')}** — Group: {v.get('group', '?')} | "
+                f"Discovered: {v.get('discovered', 'N/A')}"
+            )
+            if v.get("country"):
+                parts[-1] += f" | Country: {v['country']}"
         return "\n".join(parts)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"

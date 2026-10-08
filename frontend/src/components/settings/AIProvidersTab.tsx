@@ -38,7 +38,7 @@ interface OllamaModel {
   name: string; size: number; modified_at: string
 }
 
-const AI_TYPES = new Set(['openai', 'google_ai', 'ollama'])
+const AI_TYPES = new Set(['openai', 'google_ai', 'ollama', 'openai_compatible'])
 
 const FIELD_LABELS: Record<string, string> = {
   api_key: 'API Key', model: 'Model', base_url: 'Base URL',
@@ -139,6 +139,7 @@ export function AIProvidersTab() {
       case 'openai': return '🤖'
       case 'google_ai': return '✨'
       case 'ollama': return '🦙'
+      case 'openai_compatible': return '🖥️'
       default: return '⚡'
     }
   }

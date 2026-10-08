@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, ReactNode } from 'react'
 import { useAuthStore } from '@/lib/store'
 import { useRouter, usePathname } from 'next/navigation'
+import { isPublicPath } from '@/lib/api'
 
 interface AuthContextType {
   isAuthenticated: boolean
@@ -17,8 +18,6 @@ const AuthContext = createContext<AuthContextType>({
 export function useAuth() {
   return useContext(AuthContext)
 }
-
-const publicPaths = ['/', '/login', '/register']
 
 /**
  * Route-level authorization rules.
@@ -52,9 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isLoading) {
-      const isPublicPath = publicPaths.includes(pathname)
-
-      if (!isAuthenticated && !isPublicPath) {
+      if (!isAuthenticated && !isPublicPath(pathname)) {
         router.push('/login')
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/register')) {
         router.push('/dashboard')

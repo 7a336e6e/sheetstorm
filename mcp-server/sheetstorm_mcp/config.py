@@ -40,6 +40,10 @@ class Config:
         default_factory=lambda: os.getenv("REDIS_URL")
     )
 
+    # Local sandbox directory for artifact upload/download paths on the remote
+    # server (ignored for the stdio bridge, which runs on the user's machine).
+    artifact_dir: str = field(default_factory=lambda: os.getenv("ARTIFACT_DIR", "/tmp/sheetstorm-artifacts"))
+
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
 

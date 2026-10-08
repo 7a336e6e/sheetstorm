@@ -1,0 +1,58 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets / local env (config is injected via compose environment, never baked in)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+client_secret*.json
+*service-account*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Agent / scratch notes
+tasks.md
+
+# Test/dev caches (tests/ kept so they can run inside the container)
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# Local runtime artifacts (evidence storage is a runtime volume, not build context)
+artifacts/
+uploads/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

@@ -311,26 +311,10 @@ export function ReportModal({
       description: `AI is generating ${typeName}...`,
     })
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
-      const token = api.getToken()
-      const response = await fetch(
-        `${API_URL}/incidents/${incidentId}/reports/generate-pdf`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ report_type: selectedType }),
-        }
+      const pdfBlob = await api.postForBlob(
+        `/incidents/${incidentId}/reports/generate-pdf`,
+        { report_type: selectedType }
       )
-      if (!response.ok) {
-        const errData = await response
-          .json()
-          .catch(() => ({ message: 'Generation failed' }))
-        throw new Error(errData.message || 'Report generation failed')
-      }
-      const pdfBlob = await response.blob()
       const url = URL.createObjectURL(pdfBlob)
       const a = document.createElement('a')
       a.href = url

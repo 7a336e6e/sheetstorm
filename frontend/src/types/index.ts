@@ -103,9 +103,24 @@ export interface TimelineEvent {
   phase?: number
   is_key_event: boolean
   is_ioc: boolean
+  /** When the activity was detected (vs `timestamp`, when it occurred). */
+  detection_time?: string | null
+  confidence_level?: ConfidenceLevel | null
   metadata?: Record<string, unknown>
   creator?: { id: string; name: string }
   created_at: string
+}
+
+export type ConfidenceLevel = 'low' | 'medium' | 'high' | 'certain'
+
+export type TriageStatus = 'clean' | 'compromised' | 'under_analysis' | 'suspicious'
+
+export interface AcquisitionStatus {
+  disk_imaged?: boolean
+  memory_captured?: boolean
+  logs_collected?: boolean
+  forensically_sound?: boolean
+  acquired_at?: string
 }
 
 export interface CompromisedHost {
@@ -120,6 +135,8 @@ export interface CompromisedHost {
   first_seen?: string
   last_seen?: string
   containment_status: 'active' | 'isolated' | 'reimaged' | 'decommissioned'
+  triage_status?: TriageStatus | null
+  acquisition_status?: AcquisitionStatus | null
   notes?: string
   metadata?: Record<string, unknown>
   creator?: { id: string; name: string }
@@ -229,6 +246,13 @@ export interface Artifact {
   collected_at?: string
   is_verified: boolean
   verification_status: 'verified' | 'mismatch' | 'pending'
+  acquired_at?: string | null
+  acquisition_method?: string | null
+  acquisition_tool?: string | null
+  source_host?: string | null
+  legal_hold_until?: string | null
+  is_locked?: boolean
+  under_legal_hold?: boolean
   uploader?: { id: string; name: string }
   extra_data?: {
     google_drive_file_id?: string
@@ -250,12 +274,83 @@ export interface Task {
   checklist?: { item: string; completed: boolean }[]
   checklist_progress?: { completed: number; total: number; percentage: number }
   phase?: number
+  task_type?: TaskType
+  /** null = lead still open */
+  lead_outcome?: LeadOutcome | null
+  investigation_direction?: string | null
+  evidence_refs?: { evidence_type: string; evidence_id: string }[]
   extra_data?: {
     linked_entities?: { type: string; id: string; label: string }[]
     [key: string]: unknown
   }
   creator?: { id: string; name: string }
   created_at: string
+}
+
+export type TaskType = 'action_item' | 'investigative_lead' | 'verification' | 'documentation' | 'reporting'
+
+export type LeadOutcome = 'false_positive' | 'confirmed_malicious' | 'inconclusive' | 'resolved'
+
+export interface PlaybookAction {
+  key: string
+  type: 'enrich_iocs' | 'generate_summary' | 'suggest_mitre' | 'create_task' | string
+  name: string
+  auto_run?: boolean
+}
+
+export interface PlaybookPhaseTask {
+  title: string
+  owner_role?: string
+}
+
+export interface PlaybookPhase {
+  phase: number
+  name: string
+  tasks?: PlaybookPhaseTask[]
+  actions?: PlaybookAction[]
+}
+
+export interface PlaybookDefinition {
+  phases?: PlaybookPhase[]
+}
+
+/** Reusable playbook template (org-scoped). */
+export interface Playbook {
+  id: string
+  name: string
+  description?: string
+  incident_type?: string
+  definition: PlaybookDefinition
+  is_template?: boolean
+  creator?: { id: string; name: string } | null
+  created_at: string
+  updated_at?: string
+}
+
+export interface PlaybookActionRun {
+  key?: string
+  name?: string
+  type?: string
+  result?: { status?: string; message?: string }
+}
+
+/** A playbook activated on an incident, with its progress. */
+export interface IncidentPlaybook {
+  id: string
+  incident_id: string
+  playbook_id?: string | null
+  name: string
+  definition: PlaybookDefinition
+  current_phase: number
+  state: {
+    tasks?: Record<string, boolean>
+    action_runs?: PlaybookActionRun[]
+  }
+  activated_at?: string
+  completed_at?: string | null
+  creator?: { id: string; name: string } | null
+  created_at: string
+  updated_at?: string
 }
 
 export interface AttackGraphNode {

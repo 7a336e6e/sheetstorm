@@ -44,7 +44,7 @@ def _run_sse_with_oauth(cfg, logger) -> None:
     import uvicorn
 
     from sheetstorm_mcp.login_routes import create_login_routes
-    from sheetstorm_mcp.server import mcp, _oauth_provider
+    from sheetstorm_mcp.server import _oauth_provider, mcp
 
     # Use the Streamable HTTP app as the primary — its lifespan runs
     # session_manager.run() which creates the required task group.

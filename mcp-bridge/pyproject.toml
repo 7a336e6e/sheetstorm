@@ -13,9 +13,18 @@ authors = [
     {name = "SheetStorm Team"},
 ]
 dependencies = [
-    "mcp[cli]>=1.2.0",
-    "httpx>=0.27",
-    "python-dotenv>=1.0",
+    # mcp 2.x removed mcp.server.fastmcp — stay on the tested 1.x line.
+    "mcp[cli]>=1.30,<2",
+    "httpx>=0.27.1,<1",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10",
+    "pytest-asyncio>=0.23,<2",
+    "respx>=0.21,<1",
+    "ruff>=0.4",
 ]
 
 [project.scripts]
@@ -23,3 +32,14 @@ sheetstorm-bridge = "sheetstorm_bridge.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["sheetstorm_bridge*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

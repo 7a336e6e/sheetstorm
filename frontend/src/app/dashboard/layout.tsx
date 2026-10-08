@@ -17,10 +17,12 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { isLoading } = useAuth()
+  const { isLoading, isAuthenticated } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  if (isLoading) {
+  // Don't mount pages (and their data fetches / socket) until the session is
+  // confirmed; AuthProvider redirects unauthenticated users to /login.
+  if (isLoading || !isAuthenticated) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

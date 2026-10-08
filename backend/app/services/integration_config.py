@@ -19,20 +19,24 @@ class IntegrationConfigResolver:
     def get_credentials(integration_type: str, org_id: str = None) -> Optional[Dict[str, Any]]:
         """Get decrypted credentials for an integration type.
 
-        Checks database first, falls back to environment config.
+        Checks the organization's DB integration first, falls back to
+        environment config. Without org_id only env config is consulted —
+        never another organization's integration.
 
         Args:
             integration_type: e.g. 'openai', 'slack', 's3', 'oauth_github'
-            org_id: Organization ID (optional, uses first enabled if not set)
+            org_id: Organization ID whose integration may be used
 
         Returns:
             Dict of credentials or None
         """
         from flask import current_app
         try:
-            return IntegrationConfigResolver._resolve_from_db(integration_type, org_id)
+            creds = IntegrationConfigResolver._resolve_from_db(integration_type, org_id)
+            if creds:
+                return creds
         except Exception:
-            pass
+            current_app.logger.debug(f'{integration_type} DB credential lookup failed', exc_info=True)
 
         # Fallback to .env / Flask config
         return IntegrationConfigResolver._resolve_from_env(integration_type, current_app)
@@ -40,12 +44,13 @@ class IntegrationConfigResolver:
     @staticmethod
     def get_config(integration_type: str, org_id: str = None) -> Optional[Dict[str, Any]]:
         """Get non-secret config for an integration type."""
+        if not org_id:
+            return {}
         try:
             from app.models.integration import Integration
-            query = Integration.query.filter_by(type=integration_type, is_enabled=True)
-            if org_id:
-                query = query.filter_by(organization_id=org_id)
-            integration = query.first()
+            integration = Integration.query.filter_by(
+                type=integration_type, is_enabled=True, organization_id=org_id
+            ).first()
             if integration:
                 return integration.config or {}
         except Exception:
@@ -64,10 +69,11 @@ class IntegrationConfigResolver:
         from app.models.integration import Integration
         from app.services.encryption_service import encryption_service
 
-        query = Integration.query.filter_by(type=integration_type, is_enabled=True)
-        if org_id:
-            query = query.filter_by(organization_id=org_id)
-        integration = query.first()
+        if not org_id:
+            return None
+        integration = Integration.query.filter_by(
+            type=integration_type, is_enabled=True, organization_id=org_id
+        ).first()
 
         if not integration or not integration.credentials_encrypted:
             return None

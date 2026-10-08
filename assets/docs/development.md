@@ -7,7 +7,9 @@ git clone <repo-url> && cd SheetStorm
 chmod +x start.sh && ./start.sh
 ```
 
-This auto-generates secrets, builds all 4 containers, runs migrations, and seeds the admin user.
+This auto-generates secrets, builds all 6 containers, runs migrations (the backend entrypoint applies them on every start and fails loudly if they cannot be applied), and seeds the admin user.
+
+See [Configuration](configuration.md) for environment variables, HTTPS/cookie requirements and `CORS_ORIGINS` when not using localhost.
 
 ## Manual Setup
 
@@ -15,14 +17,14 @@ This auto-generates secrets, builds all 4 containers, runs migrations, and seeds
 # Backend
 cd backend
 python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes --no-deps -r requirements-dev.lock   # hash-locked runtime + test deps
 flask db upgrade
 python -c "from app.seed import seed_all; seed_all()"
 flask run --debug
 
-# Frontend
+# Frontend (lockfile-only install; scripts are disabled by .npmrc)
 cd frontend
-npm install
+npm ci --legacy-peer-deps
 npm run dev
 ```
 
@@ -68,9 +70,30 @@ gunicorn --worker-class eventlet -w 1 wsgi:app
 
 ## Testing
 
-> ⚠️ Test suites are not yet implemented.
+### Backend (pytest)
 
-**Planned Stack**:
-- Backend: pytest + pytest-flask + factory_boy
-- Frontend: Vitest + @testing-library/react + MSW
-- E2E: Playwright
+Backend tests live in `backend/tests/`. Test-only dependencies (pytest, pytest-cov) are in `requirements-dev.txt` / `requirements-dev.lock` and are installed only in the backend Dockerfile's `test` stage, not in the production image. Run the tests inside that image so the Python version and system libraries match production:
+
+```bash
+# Builds the `test` stage, starts throwaway Postgres + Redis, runs pytest
+./backend/tests/run_in_docker.sh
+./backend/tests/run_in_docker.sh -k custody -x   # extra args go to pytest
+```
+
+Tests must not need real secrets: the testing config uses throwaway keys. Never point tests at a production database.
+
+### Frontend and E2E
+
+> Not yet implemented. Planned stack: Vitest + @testing-library/react + MSW, and Playwright for E2E.
+
+## Docker images
+
+| Service | Base image |
+|---------|------------|
+| backend | `python:3.12-slim-bookworm` (hash-locked `pip install --require-hashes`, wheels only) |
+| mcp-server | `python:3.12-slim-bookworm` (same) |
+| frontend | `node:22-alpine` (build uses `npm ci --legacy-peer-deps`) |
+| proxy | `nginx:1.28-alpine` |
+| ollama (optional profile) | `ollama/ollama` pinned to a specific version tag |
+
+Shell scripts must keep LF line endings (enforced by `.gitattributes`) and `backend/entrypoint.sh` must be committed executable.

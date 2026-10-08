@@ -2,13 +2,15 @@
 import io
 import json
 import os
+import html
 import mimetypes
+from datetime import datetime, timezone
 from flask import jsonify, request, g, send_file, current_app
 from flask_jwt_extended import jwt_required
 from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
 from app import db
-from app.models import Artifact, Incident, Integration
+from app.models import Artifact, Incident, Integration, ChainOfCustody
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
@@ -125,6 +127,10 @@ def upload_artifact(incident_id):
         description=request.form.get('description'),
         source=request.form.get('source'),
         collected_at=parse_date(request.form.get('collected_at')) if request.form.get('collected_at') else None,
+        acquired_at=parse_date(request.form.get('acquired_at')) if request.form.get('acquired_at') else None,
+        acquisition_method=request.form.get('acquisition_method'),
+        acquisition_tool=request.form.get('acquisition_tool'),
+        source_host=request.form.get('source_host'),
         uploaded_by=user.id,
         extra_data=extra_data,
     )
@@ -173,15 +179,16 @@ def download_artifact(incident_id, artifact_id):
     if not file_obj:
         return jsonify({'error': 'not_found', 'message': 'File not found in storage'}), 404
 
-    # Verify integrity
+    # Verify integrity across ALL recorded hashes, not just SHA256.
     computed_hashes = HashService.compute_hashes(file_obj)
-    verification_result = 'match'
-
-    if computed_hashes['sha256'] != artifact.sha256:
-        verification_result = 'mismatch'
+    mismatched = [
+        alg for alg in ('md5', 'sha256', 'sha512')
+        if computed_hashes.get(alg) != getattr(artifact, alg)
+    ]
+    verification_result = 'match' if not mismatched else 'mismatch'
+    if mismatched:
         current_app.logger.warning(
-            f"Artifact integrity mismatch for {artifact.id}: "
-            f"stored={artifact.sha256}, computed={computed_hashes['sha256']}"
+            f"Artifact integrity mismatch for {artifact.id} on {','.join(mismatched)}"
         )
 
     # Log download with verification result
@@ -267,6 +274,200 @@ def get_custody_chain(incident_id, artifact_id):
     }), 200
 
 
+@api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>/legal-hold', methods=['POST'])
+@jwt_required()
+@require_incident_access('artifacts:delete')
+@audit_log('admin_action', 'legal_hold', 'artifact')
+def set_legal_hold(incident_id, artifact_id):
+    """Place or release a legal hold / preservation lock on an artifact."""
+    incident = g.incident
+    user = get_current_user()
+    artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
+    if not artifact:
+        return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    hold = data.get('hold', True)
+    if not isinstance(hold, bool):
+        return jsonify({'error': 'bad_request', 'message': 'hold must be a boolean'}), 400
+    until = data.get('until')
+    until_dt = None
+    if hold and until not in (None, ''):
+        try:
+            until_dt = parse_date(until) if isinstance(until, str) else None
+        except (ValueError, OverflowError):
+            until_dt = None
+        if until_dt is None:
+            return jsonify({'error': 'bad_request', 'message': 'until must be an ISO-8601 datetime'}), 400
+        if until_dt.tzinfo is None:
+            until_dt = until_dt.replace(tzinfo=timezone.utc)
+        if until_dt <= datetime.now(timezone.utc):
+            return jsonify({'error': 'bad_request', 'message': 'until must be in the future'}), 400
+    # A hold with an `until` date expires on its own (time-bound preservation);
+    # a hold without one is an indefinite lock until explicitly released.
+    artifact.is_locked = hold and until_dt is None
+    artifact.legal_hold_until = until_dt if hold else None
+    db.session.commit()
+
+    ChainOfCustodyService.log_legal_hold(artifact, str(user.id), hold, data.get('reason'))
+    return jsonify(artifact.to_dict()), 200
+
+
+# Human-readable signature verdicts for custody exports.
+_SIGNATURE_LABELS = {
+    ChainOfCustody.SIG_VALID: '✓ valid',
+    ChainOfCustody.SIG_UNSIGNED_LEGACY: 'unsigned (pre-dates signing)',
+    ChainOfCustody.SIG_KEY_MISMATCH: '? signed with a different key (key rotated)',
+    ChainOfCustody.SIG_INVALID: '✗ TAMPERED',
+}
+
+
+def _csv_safe(value):
+    """Neutralise spreadsheet formula injection (CWE-1236) in CSV cells."""
+    if value is None:
+        return ''
+    text = str(value)
+    if text and text[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + text
+    return text
+
+
+def _render_custody_html(report: dict) -> str:
+    """Render a court-defensible chain-of-custody report as escaped HTML."""
+    a = report['artifact']
+    e = html.escape
+    rows = []
+    for c in report['custody_entries']:
+        performer = (c.get('performer') or {}).get('name') if isinstance(c.get('performer'), dict) else c.get('performed_by')
+        recipient = (c.get('recipient') or {}).get('name') if isinstance(c.get('recipient'), dict) else ''
+        valid = _SIGNATURE_LABELS.get(c.get('signature_status'), '✗ INVALID')
+        rows.append(
+            '<tr>'
+            f'<td>{e(str(c.get("created_at", "")))}</td>'
+            f'<td>{e(str(c.get("action", "")))}</td>'
+            f'<td>{e(str(performer or ""))}</td>'
+            f'<td>{e(str(recipient or ""))}</td>'
+            f'<td>{e(str(c.get("purpose") or ""))}</td>'
+            f'<td>{e(str(c.get("verification_result") or ""))}</td>'
+            f'<td>{e(str(c.get("ip_address") or ""))}</td>'
+            f'<td>{valid}</td>'
+            '</tr>'
+        )
+    integrity = {
+        'intact': 'INTACT',
+        'intact_with_unsigned_legacy': 'INTACT (includes unsigned entries that pre-date signing)',
+        'unverifiable': 'UNVERIFIABLE (entries signed with a different key)',
+    }.get(report.get('chain_integrity_status'), 'COMPROMISED')
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{{font-family:Arial,sans-serif;font-size:12px;color:#111}}
+h1{{font-size:18px}} table{{border-collapse:collapse;width:100%}}
+th,td{{border:1px solid #999;padding:4px;text-align:left;vertical-align:top}}
+th{{background:#eee}} .meta td{{border:none;padding:2px}}
+</style></head><body>
+<h1>Chain of Custody Report</h1>
+<table class="meta">
+<tr><td><b>Artifact</b></td><td>{e(str(a.get('original_filename', '')))} (ID {e(str(a.get('id', '')))})</td></tr>
+<tr><td><b>Size</b></td><td>{e(str(a.get('file_size', '')))} bytes</td></tr>
+<tr><td><b>MD5</b></td><td>{e(str(a.get('md5', '')))}</td></tr>
+<tr><td><b>SHA256</b></td><td>{e(str(a.get('sha256', '')))}</td></tr>
+<tr><td><b>SHA512</b></td><td>{e(str(a.get('sha512', '')))}</td></tr>
+<tr><td><b>Acquired</b></td><td>{e(str(a.get('acquired_at') or ''))} via {e(str(a.get('acquisition_method') or 'n/a'))} ({e(str(a.get('acquisition_tool') or 'n/a'))}) from {e(str(a.get('source_host') or 'n/a'))}</td></tr>
+<tr><td><b>Legal hold</b></td><td>{'YES' if a.get('under_legal_hold') else 'no'}</td></tr>
+<tr><td><b>Generated</b></td><td>{e(str(report.get('generated_at', '')))}</td></tr>
+<tr><td><b>Chain integrity</b></td><td><b>{integrity}</b></td></tr>
+</table>
+<h3>Custody Events</h3>
+<table><thead><tr><th>Timestamp</th><th>Action</th><th>By</th><th>Recipient</th><th>Purpose</th><th>Verify</th><th>IP</th><th>Signature</th></tr></thead>
+<tbody>{''.join(rows)}</tbody></table>
+</body></html>"""
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>/custody/export', methods=['GET'])
+@jwt_required()
+@require_incident_access('artifacts:read')
+def export_custody(incident_id, artifact_id):
+    """Export a court-defensible chain-of-custody report (json|csv|pdf)."""
+    incident = g.incident
+    artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
+    if not artifact:
+        return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
+
+    fmt = request.args.get('format', 'json').lower()
+    from app.models.artifact import custody_signing_key, custody_key_id
+    secret = custody_signing_key()
+    legacy_secret = current_app.config.get('SECRET_KEY', '')
+    entries = ChainOfCustody.query.filter_by(artifact_id=artifact.id).order_by(ChainOfCustody.created_at.asc()).all()
+    rows = []
+    for ent in entries:
+        d = ent.to_dict()
+        d['signature_status'] = ent.signature_status(secret, legacy_secret=legacy_secret)
+        d['signature_valid'] = d['signature_status'] == ChainOfCustody.SIG_VALID
+        rows.append(d)
+    statuses = {r['signature_status'] for r in rows}
+    if ChainOfCustody.SIG_INVALID in statuses:
+        integrity_status = 'compromised'
+    elif ChainOfCustody.SIG_KEY_MISMATCH in statuses:
+        integrity_status = 'unverifiable'
+    elif ChainOfCustody.SIG_UNSIGNED_LEGACY in statuses:
+        integrity_status = 'intact_with_unsigned_legacy'
+    else:
+        integrity_status = 'intact'
+
+    report = {
+        'artifact': {
+            'id': str(artifact.id),
+            'original_filename': artifact.original_filename,
+            'file_size': artifact.file_size,
+            'md5': artifact.md5, 'sha256': artifact.sha256, 'sha512': artifact.sha512,
+            'storage_type': artifact.storage_type,
+            'acquired_at': artifact.acquired_at.isoformat() if artifact.acquired_at else None,
+            'acquisition_method': artifact.acquisition_method,
+            'acquisition_tool': artifact.acquisition_tool,
+            'source_host': artifact.source_host,
+            'under_legal_hold': artifact.under_legal_hold,
+        },
+        'incident_id': str(incident.id),
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'custody_entries': rows,
+        # True unless some entry is provably altered (legacy unsigned rows
+        # cannot be verified but are not evidence of tampering).
+        'chain_integrity': integrity_status in ('intact', 'intact_with_unsigned_legacy'),
+        'chain_integrity_status': integrity_status,
+        'signing_key_id': custody_key_id(secret),
+    }
+
+    if fmt == 'json':
+        return jsonify(report), 200
+    if fmt == 'csv':
+        import csv
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(['timestamp', 'action', 'performed_by', 'recipient', 'purpose',
+                    'verification_result', 'ip_address', 'signature_status'])
+        for r in rows:
+            performer = (r.get('performer') or {}).get('name') if isinstance(r.get('performer'), dict) else r.get('performed_by')
+            recipient = (r.get('recipient') or {}).get('name') if isinstance(r.get('recipient'), dict) else ''
+            w.writerow([_csv_safe(v) for v in (
+                r.get('created_at'), r.get('action'), performer, recipient,
+                r.get('purpose'), r.get('verification_result'), r.get('ip_address'),
+                _SIGNATURE_LABELS.get(r.get('signature_status'), r.get('signature_status')),
+            )])
+        return current_app.response_class(
+            buf.getvalue(), mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=custody_{artifact.id}.csv'})
+    if fmt == 'pdf':
+        try:
+            from weasyprint import HTML
+            pdf = HTML(string=_render_custody_html(report)).write_pdf()
+            return current_app.response_class(
+                pdf, mimetype='application/pdf',
+                headers={'Content-Disposition': f'attachment; filename=custody_{artifact.id}.pdf'})
+        except Exception:
+            current_app.logger.exception('Custody PDF generation failed')
+            return jsonify({'error': 'server_error', 'message': 'PDF generation failed'}), 500
+    return jsonify({'error': 'bad_request', 'message': 'format must be json, csv, or pdf'}), 400
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>', methods=['DELETE'])
 @jwt_required()
 @require_incident_access('artifacts:delete')
@@ -279,6 +480,31 @@ def delete_artifact(incident_id, artifact_id):
     artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
     if not artifact:
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
+
+    # Forensic preservation: refuse to delete evidence under legal hold.
+    if artifact.under_legal_hold:
+        return jsonify({
+            'error': 'forbidden',
+            'message': 'Artifact is under legal hold and cannot be deleted'
+        }), 403
+
+    # Record an immutable deletion record BEFORE removing the artifact. The
+    # chain_of_custody rows cascade-delete with the artifact, so the defensible
+    # record lives in the (non-cascading) security audit log.
+    from app.middleware.audit import log_security_event
+    log_security_event(
+        action='artifact_delete',
+        resource_type='artifact',
+        resource_id=artifact.id,
+        incident_id=artifact.incident_id,
+        details={
+            'filename': artifact.original_filename,
+            'file_size': artifact.file_size,
+            'hashes': {'md5': artifact.md5, 'sha256': artifact.sha256, 'sha512': artifact.sha512},
+            'storage_type': artifact.storage_type,
+            'deleted_by': str(user.id),
+        }
+    )
 
     # Delete from Google Drive if stored there
     extra = artifact.extra_data or {}
@@ -314,7 +540,7 @@ def _get_drive_credentials(user):
         from app.services.google_drive_service import google_drive_service
         from app.services.encryption_service import encryption_service
 
-        if not google_drive_service.is_configured():
+        if not google_drive_service.is_configured(str(user.organization_id)):
             return None, None
 
         integration = Integration.query.filter_by(
@@ -422,7 +648,8 @@ def _get_drive_access_token(user):
             return None
 
         # Always refresh to ensure we have a valid token
-        new_tokens = google_drive_service.refresh_access_token(creds['refresh_token'])
+        new_tokens = google_drive_service.refresh_access_token(
+            creds['refresh_token'], org_id=str(integration.organization_id))
         access_token = new_tokens['access_token']
         creds['access_token'] = access_token
         integration.credentials_encrypted = encryption_service.encrypt(json.dumps(creds))
@@ -449,7 +676,8 @@ def _try_google_drive_primary(file, incident, user, original_filename, mime_type
             return None
 
         # Always refresh to get a valid token
-        new_tokens = google_drive_service.refresh_access_token(creds['refresh_token'])
+        new_tokens = google_drive_service.refresh_access_token(
+            creds['refresh_token'], org_id=str(integration.organization_id))
         access_token = new_tokens['access_token']
         creds['access_token'] = access_token
         integration.credentials_encrypted = encryption_service.encrypt(json.dumps(creds))

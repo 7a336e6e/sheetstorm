@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sheetstorm_bridge.client import SheetStormAPIError
-from sheetstorm_bridge.server import mcp, get_client
+from sheetstorm_bridge.server import get_client, mcp
 
 
 @mcp.tool()
@@ -28,7 +28,9 @@ async def sheetstorm_get_current_user() -> str:
 
 @mcp.tool()
 async def sheetstorm_logout() -> str:
-    """End the current SheetStorm session."""
+    """End the current SheetStorm session (revokes the backend access and refresh
+    tokens). The bridge logs in again automatically on the next tool call when
+    credentials are configured."""
     client = get_client()
     try:
         await client.logout()

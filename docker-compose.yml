@@ -39,7 +39,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sheetstorm-backend
-    environment:
+    # Anchored so the `jobs` service runs with exactly the same settings.
+    environment: &backend-env
       DATABASE_URL: postgresql://${POSTGRES_USER:-sheetstorm}:${POSTGRES_PASSWORD:-changeme}@database:5432/${POSTGRES_DB:-sheetstorm}
       REDIS_URL: redis://redis:6379/0
       EVENTLET_NO_GREENDNS: 1
@@ -103,6 +104,30 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
+
+  # Periodic maintenance (`flask sheetstorm run-jobs`: retention, reminders,
+  # session pruning, ...). Same image and settings as the backend; no ports,
+  # no migrations (entrypoint bypassed: it starts after the backend is healthy).
+  # Without this service, run the command from host cron instead.
+  jobs:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sheetstorm-jobs
+    entrypoint: []
+    command: ["sh", "-c", "while true; do flask sheetstorm run-jobs; sleep \"$${JOBS_INTERVAL_SECONDS:-300}\"; done"]
+    environment:
+      <<: *backend-env
+      FLASK_APP: app:create_app
+      JOBS_INTERVAL_SECONDS: ${JOBS_INTERVAL_SECONDS:-300}
+    volumes:
+      - artifacts_data:/app/artifacts
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:

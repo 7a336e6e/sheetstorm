@@ -6,4 +6,4 @@ respx==0.23.1
 iniconfig==2.3.0
 pluggy==1.6.0
 packaging==26.3
-ruff==0.16.9
+ruff==0.16.10

@@ -7,4 +7,4 @@ pathspec==1.1.1
 trove-classifiers==2026.9.21.13
 packaging==26.3
 pluggy==1.6.0
-editables==0.5
+editables==0.6

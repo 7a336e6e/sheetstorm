@@ -183,7 +183,14 @@ function LoginPageInner() {
         {/* Abstract Background Elements */}
         <div className="absolute top-[-10%] -left-10 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
         <div className="absolute bottom-[-10%] -right-10 w-96 h-96 bg-secondary/10 rounded-full blur-3xl" />
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
+        {/* Carbon-fibre texture as a CSS pattern (no third-party image request) */}
+        <div
+          className="absolute inset-0 opacity-10"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0 1px, transparent 1px 4px), repeating-linear-gradient(-45deg, rgba(0,0,0,0.6) 0 1px, transparent 1px 4px)',
+          }}
+        />
         
         <div className="relative z-10 max-w-xl">
           <div className="flex items-center gap-3 mb-8">

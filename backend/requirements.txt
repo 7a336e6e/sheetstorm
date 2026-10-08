@@ -13,7 +13,7 @@ flask-jwt-extended==4.6.0
 
 # Async server
 eventlet==0.41.2
-dnspython<2.7.0
+dnspython<2.9.0
 
 # Database
 SQLAlchemy==2.0.23

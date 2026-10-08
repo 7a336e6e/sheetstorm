@@ -46,7 +46,7 @@ brotli==1.2.0
 zopfli==0.4.3
 
 # AI - use compatible versions
-openai==1.12.0
+openai==3.19.2
 google-generativeai==0.8.6
 
 # Supabase - use newer version with relaxed httpx requirement

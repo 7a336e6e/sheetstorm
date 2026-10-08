@@ -24,7 +24,7 @@ alembic==1.13.1
 redis==5.0.1
 
 # Security
-bcrypt==4.1.2
+bcrypt==5.0.0
 cryptography==50.0.2
 PyJWT==2.15.1
 pyotp==2.9.0

@@ -3,12 +3,12 @@
 Provides full-text search across all incident data (timeline events,
 IOCs, hosts, accounts, notes) and cross-incident IOC correlation.
 """
-from flask import jsonify, request
+from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_, func, text, cast, String
 from app.api.v1 import api_bp
 from app.middleware.rbac import require_permission
-from app import db
+from app import db, limiter
 from app.models.incident import Incident
 from app.models.timeline import TimelineEvent
 from app.models.compromised import CompromisedHost, CompromisedAccount
@@ -18,17 +18,15 @@ from app.models.user import User
 
 
 def _user_incident_ids(user_id):
-    """Return incident IDs accessible by the user (org-scoped)."""
+    """Return incident IDs accessible by the user (org + role/team/assignment
+    scoped), matching list_incidents so cross-incident search/correlation can
+    never leak incidents the user is not entitled to see.
+    """
     user = db.session.get(User, user_id)
     if not user:
         return []
-    return [
-        r[0] for r in db.session.query(Incident.id)
-        .filter(
-            Incident.organization_id == user.organization_id,
-            Incident.is_archived.is_(False),
-        ).all()
-    ]
+    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    return [r[0] for r in accessible_incidents_query(user).with_entities(Incident.id).all()]
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +399,7 @@ def correlate_iocs():
 # ---------------------------------------------------------------------------
 
 @api_bp.route('/bulk-enrich', methods=['POST'])
+@limiter.limit("10 per minute")
 @jwt_required()
 @require_permission('incidents:read')
 def bulk_enrich():
@@ -456,12 +455,13 @@ def bulk_enrich():
                 'status': 'success',
                 'enrichment': enrichment_result or {},
             })
-        except Exception as e:
+        except Exception:
+            current_app.logger.exception('IOC enrichment failed for a bulk item')
             results.append({
                 'value': value,
                 'type': ioc_type,
                 'status': 'error',
-                'error': str(e),
+                'error': 'enrichment failed',
             })
 
     return jsonify({
@@ -476,7 +476,7 @@ def bulk_enrich():
 # STIX 2.1 Export
 # ---------------------------------------------------------------------------
 
-@api_bp.route('/incidents/<incident_id>/export/stix', methods=['GET'])
+@api_bp.route('/incidents/<uuid:incident_id>/export/stix', methods=['GET'])
 @jwt_required()
 @require_permission('incidents:read')
 def export_incident_stix(incident_id):
@@ -498,14 +498,14 @@ def export_incident_stix(incident_id):
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    incident = db.session.query(Incident).filter(
-        Incident.id == incident_id,
-        Incident.organization_id == user.organization_id,
-        Incident.is_archived.is_(False),
-    ).first()
-
-    if not incident:
-        return jsonify({'error': 'Incident not found'}), 404
+    # Enforce incident-level access (assignment/team/TLP), not just org scope —
+    # otherwise a Viewer could STIX-export any incident in the org.
+    from app.middleware.rbac import check_incident_access
+    allowed, incident = check_incident_access(user, incident_id)
+    if not incident or incident.is_archived:
+        return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
+    if not allowed:
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     stix_objects = []
@@ -624,7 +624,7 @@ def export_incident_stix(incident_id):
             'created': now,
             'modified': now,
             'name': host.hostname,
-            'description': f"IP: {host.ip_address or 'N/A'} | OS: {host.os or 'N/A'}",
+            'description': f"IP: {host.ip_address or 'N/A'} | OS: {host.os_version or 'N/A'}",
             'infrastructure_types': ['workstation'] if host.system_type == 'workstation' else ['server'],
         })
         ref_ids.append(infra_id)

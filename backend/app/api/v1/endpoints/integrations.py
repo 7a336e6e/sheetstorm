@@ -1,5 +1,5 @@
 """Integration configuration endpoints"""
-from flask import jsonify, request, g
+from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db, limiter
@@ -154,6 +154,37 @@ def delete_integration(integration_id):
     return jsonify({'message': 'Integration deleted'}), 200
 
 
+# Self-hosted integrations that may legitimately live on a private network:
+# private targets are allowed only when the host is on OUTBOUND_URL_ALLOWLIST
+# (link-local / metadata is always refused). Everything else must be public.
+SELF_HOSTED_INTEGRATION_TYPES = (
+    'misp', 'velociraptor', 'thehive', 'cortex', 'elastic', 'splunk',
+    's3', 'ollama', 'openai_compatible',
+)
+
+
+def _outbound_test_url(integration_type, config, credentials):
+    """Return the user-controlled outbound URL a connection test would call.
+
+    Used to apply the SSRF allowlist BEFORE any server-side request is made.
+    Returns None for vendor-fixed endpoints (OpenAI, VirusTotal, ...), which
+    carry no user-supplied URL.
+    """
+    config = config or {}
+    credentials = credentials or {}
+    if integration_type in ('misp', 'velociraptor', 'thehive', 'cortex',
+                             'jira', 'splunk', 'elastic', 'webhook'):
+        return (config.get('url') or config.get('api_url') or credentials.get('url')
+                or credentials.get('api_url'))
+    if integration_type == 'slack':
+        return credentials.get('webhook_url') or config.get('webhook_url')
+    if integration_type == 's3':
+        return config.get('endpoint') or config.get('endpoint_url')
+    if integration_type in ('ollama', 'openai_compatible'):
+        return config.get('base_url')
+    return None
+
+
 @api_bp.route('/integrations/<uuid:integration_id>/test', methods=['POST'])
 @jwt_required()
 @require_permission('integrations:update')
@@ -176,6 +207,18 @@ def test_integration(integration_id):
         decrypted = encryption_service.decrypt(integration.credentials_encrypted)
         if decrypted:
             credentials = json.loads(decrypted)
+
+    # SSRF guard: validate any user-controlled outbound URL before a test
+    # issues a server-side request (covers every integration that targets a
+    # user-supplied endpoint, not just webhooks).
+    outbound_url = _outbound_test_url(integration.type, integration.config, credentials)
+    if outbound_url:
+        is_valid_url, reason = validate_outbound_url(
+            outbound_url,
+            allow_allowlisted_private=integration.type in SELF_HOSTED_INTEGRATION_TYPES,
+        )
+        if not is_valid_url:
+            return jsonify({'error': 'invalid_url', 'message': f'Outbound URL blocked: {reason}'}), 400
 
     success = False
     message = 'Unknown integration type'
@@ -208,19 +251,20 @@ def test_integration(integration_id):
         elif integration.type == 'elastic':
             success, message = _test_elastic(integration.config, credentials)
         elif integration.type == 'webhook':
-            url = integration.config.get('url') or (credentials.get('url') if credentials else '')
-            is_valid_url, reason = validate_outbound_url(url)
-            if not is_valid_url:
-                return jsonify({'error': 'invalid_url', 'message': f'Outbound URL blocked: {reason}'}), 400
             success, message = _test_webhook(integration.config, credentials)
         elif integration.type == 'google_drive':
             success, message = _test_google_drive(integration.config, credentials)
         elif integration.type in ('oauth_github', 'oauth_google', 'oauth_azure'):
             success, message = _test_oauth(integration.type, integration.config, credentials)
+        elif integration.type == 'openai_compatible':
+            success, message = _test_openai_compatible(integration.config, credentials)
+        elif integration.type == 'ollama':
+            success, message = _test_ollama(integration.config)
         else:
             message = f'Testing not implemented for {integration.type}'
-    except Exception as e:
-        message = str(e)
+    except Exception:
+        current_app.logger.exception('Integration test failed')
+        message = 'Connection test failed'
 
     # Update last used/error
     from datetime import datetime, timezone
@@ -294,6 +338,49 @@ def _test_google_ai(credentials):
         return False, f'Google AI test failed: {str(e)}'
 
 
+def _test_openai_compatible(config, credentials):
+    """Test an OpenAI-compatible endpoint (vLLM, LM Studio, llama.cpp, LocalAI, Ollama /v1).
+
+    Local LLM endpoints are usually private, so (like other self-hosted
+    integrations) their host must be on OUTBOUND_URL_ALLOWLIST; this is
+    enforced by test_integration before this function runs.
+    """
+    import requests
+    base = (config or {}).get('base_url', '').rstrip('/')
+    if not base:
+        return False, 'base_url is required'
+    api_key = (credentials or {}).get('api_key') or 'sk-local'
+    try:
+        resp = requests.get(f'{base}/models', headers={'Authorization': f'Bearer {api_key}'}, timeout=10)
+        if resp.status_code == 200:
+            try:
+                models = [m.get('id') for m in resp.json().get('data', [])]
+            except Exception:
+                models = []
+            listed = ', '.join(filter(None, models))
+            return True, f'Connected. Models: {listed or "n/a"}'
+        return False, f'Endpoint returned status {resp.status_code}'
+    except Exception as e:
+        return False, f'Connection failed: {str(e)}'
+
+
+def _test_ollama(config):
+    """Test a native Ollama endpoint via /api/tags."""
+    import requests
+    base = (config or {}).get('base_url', '').rstrip('/')
+    if not base:
+        return False, 'base_url is required'
+    try:
+        resp = requests.get(f'{base}/api/tags', timeout=10)
+        if resp.status_code == 200:
+            models = [m.get('name') for m in resp.json().get('models', [])]
+            listed = ', '.join(filter(None, models))
+            return True, f'Ollama connected. Models: {listed or "none"}'
+        return False, f'Ollama returned status {resp.status_code}'
+    except Exception as e:
+        return False, f'Ollama connection failed: {str(e)}'
+
+
 @api_bp.route('/integrations/ollama/models', methods=['GET'])
 @jwt_required()
 @require_permission('integrations:read')
@@ -301,7 +388,8 @@ def _test_google_ai(credentials):
 def list_ollama_models():
     """Discover locally available Ollama models."""
     from app.services.ai_service import ai_service
-    models = ai_service.list_ollama_models()
+    user = get_current_user()
+    models = ai_service.list_ollama_models(organization_id=str(user.organization_id))
     return jsonify({'models': models}), 200
 
 
@@ -328,6 +416,9 @@ def list_integration_types():
             {'id': 'ollama', 'name': 'Ollama', 'description': 'Self-hosted open-source LLMs via Ollama for private AI analysis', 'category': 'ai',
              'config_fields': ['base_url', 'model'], 'credential_fields': [],
              'doc_url': 'https://ollama.com/docs'},
+            {'id': 'openai_compatible', 'name': 'Local / OpenAI-Compatible', 'description': 'Any OpenAI-compatible LLM endpoint (vLLM, LM Studio, llama.cpp, LocalAI, Ollama /v1) for fully local/air-gapped AI', 'category': 'ai',
+             'config_fields': ['base_url', 'model'], 'credential_fields': ['api_key'],
+             'doc_url': ''},
             # Notification
             {'id': 'slack', 'name': 'Slack', 'description': 'Send incident notifications and alerts to Slack channels', 'category': 'notification',
              'config_fields': [], 'credential_fields': ['webhook_url'],

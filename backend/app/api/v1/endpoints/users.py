@@ -59,13 +59,31 @@ def list_users():
 def create_user():
     """Create a new user."""
     current = get_current_user()
-    data = request.get_json()
+    data = request.get_json() or {}
 
     if not data.get('email') or not data.get('name') or not data.get('password'):
         return jsonify({'error': 'bad_request', 'message': 'Email, name, and password are required'}), 400
 
+    # Admin-created accounts must still meet email/password policy.
+    from app.api.v1.endpoints.auth import validate_password, validate_email
+    if not validate_email(data['email']):
+        return jsonify({'error': 'bad_request', 'message': 'Invalid email address'}), 400
+    valid, message = validate_password(data['password'])
+    if not valid:
+        return jsonify({'error': 'bad_request', 'message': message}), 400
+
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'conflict', 'message': 'Email already exists'}), 409
+
+    # Assigning roles requires the stronger roles:manage permission — a holder
+    # of users:manage alone must not be able to mint privileged (e.g.
+    # Administrator) accounts via the create-user path.
+    role_names = data.get('roles') or ([data['role']] if data.get('role') else [])
+    if role_names and not current.has_permission('roles:manage'):
+        return jsonify({
+            'error': 'forbidden',
+            'message': 'roles:manage permission is required to assign roles'
+        }), 403
 
     user = User(
         email=data['email'],
@@ -79,10 +97,9 @@ def create_user():
     db.session.add(user)
     db.session.commit()
 
-    # Assign roles — accept array or single string
-    role_names = data.get('roles', [])
+    # Default to least privilege (Viewer) when no explicit role is assigned.
     if not role_names:
-        role_names = [data.get('role', 'Analyst')]
+        role_names = ['Viewer']
     for role_name in role_names:
         role = Role.query.filter_by(name=role_name).first()
         if role:
@@ -124,21 +141,35 @@ def update_user(user_id):
     if not user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    from app.api.v1.endpoints.auth import validate_password, _bump_token_epoch
+    revoke_sessions = False
 
     # Update allowed fields
     if 'name' in data:
         user.name = data['name'].strip()
     if 'is_active' in data and current.has_permission('users:manage'):
+        if not isinstance(data['is_active'], bool):
+            return jsonify({'error': 'bad_request', 'message': 'is_active must be a boolean'}), 400
+        if user.is_active and not data['is_active']:
+            revoke_sessions = True  # disabling: kill outstanding tokens
         user.is_active = data['is_active']
     if 'organizational_role' in data:
         user.organizational_role = data['organizational_role'].strip() if data['organizational_role'] else None
 
-    # Password update (admin only)
+    # Password update (admin only) — same policy as self-service changes, and
+    # all of the user's existing sessions are revoked.
     if 'password' in data and current.has_permission('users:manage'):
+        valid, message = validate_password(data['password'] or '')
+        if not valid:
+            return jsonify({'error': 'bad_request', 'message': message}), 400
         user.set_password(data['password'])
+        revoke_sessions = True
 
     db.session.commit()
+
+    if revoke_sessions:
+        _bump_token_epoch(str(user.id))
 
     return jsonify(user.to_dict()), 200
 

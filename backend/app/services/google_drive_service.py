@@ -29,11 +29,13 @@ class GoogleDriveService:
         self._credentials_cache: Dict[str, Any] = {}
 
     @staticmethod
-    def _get_db_credentials() -> Optional[Dict[str, str]]:
-        """Try to load Google Drive credentials from the DB integration record."""
+    def _get_db_credentials(org_id: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """Load the organization's Google Drive OAuth app credentials (DB)."""
+        if not org_id:
+            return None
         try:
-            from app.services.integration_config import config_resolver
-            resolved = config_resolver.get_credentials('google_drive')
+            from app.services.integration_config import IntegrationConfigResolver
+            resolved = IntegrationConfigResolver._resolve_from_db('google_drive', str(org_id))
             if resolved and resolved.get('client_id') and resolved.get('client_secret'):
                 return resolved
         except Exception:
@@ -41,10 +43,11 @@ class GoogleDriveService:
         return None
 
     @staticmethod
-    def get_oauth_config() -> Dict[str, str]:
-        """Get Google OAuth2 configuration — DB integration first, env fallback."""
+    def get_oauth_config(org_id: Optional[str] = None) -> Dict[str, str]:
+        """Get Google OAuth2 configuration — the org's DB integration first,
+        env fallback."""
         # Try DB-stored integration credentials first
-        db_creds = GoogleDriveService._get_db_credentials()
+        db_creds = GoogleDriveService._get_db_credentials(org_id)
         if db_creds:
             return {
                 'client_id': db_creds.get('client_id', ''),
@@ -69,9 +72,9 @@ class GoogleDriveService:
         }
 
     @staticmethod
-    def is_configured() -> bool:
-        """Check if Google Drive OAuth is configured (DB or env)."""
-        db_creds = GoogleDriveService._get_db_credentials()
+    def is_configured(org_id: Optional[str] = None) -> bool:
+        """Check if Google Drive OAuth is configured for the org (DB or env)."""
+        db_creds = GoogleDriveService._get_db_credentials(org_id)
         if db_creds:
             return True
         return bool(
@@ -79,7 +82,7 @@ class GoogleDriveService:
             and current_app.config.get('GOOGLE_DRIVE_CLIENT_SECRET')
         )
 
-    def get_auth_url(self, state: str = '') -> str:
+    def get_auth_url(self, state: str = '', org_id: Optional[str] = None) -> str:
         """Generate Google OAuth2 authorization URL.
 
         Args:
@@ -88,7 +91,7 @@ class GoogleDriveService:
         Returns:
             Authorization URL string
         """
-        config = self.get_oauth_config()
+        config = self.get_oauth_config(org_id)
         from urllib.parse import urlencode
 
         params = {
@@ -103,7 +106,7 @@ class GoogleDriveService:
 
         return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
-    def exchange_code(self, code: str) -> Dict[str, Any]:
+    def exchange_code(self, code: str, org_id: Optional[str] = None) -> Dict[str, Any]:
         """Exchange authorization code for tokens.
 
         Args:
@@ -113,10 +116,11 @@ class GoogleDriveService:
             Dict with access_token, refresh_token, expires_in
         """
         import requests
-        config = self.get_oauth_config()
+        config = self.get_oauth_config(org_id)
 
         response = requests.post(
             'https://oauth2.googleapis.com/token',
+            timeout=15,
             data={
                 'code': code,
                 'client_id': config['client_id'],
@@ -132,7 +136,7 @@ class GoogleDriveService:
 
         return response.json()
 
-    def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+    def refresh_access_token(self, refresh_token: str, org_id: Optional[str] = None) -> Dict[str, Any]:
         """Refresh an expired access token.
 
         Args:
@@ -142,10 +146,11 @@ class GoogleDriveService:
             Dict with new access_token, expires_in
         """
         import requests
-        config = self.get_oauth_config()
+        config = self.get_oauth_config(org_id)
 
         response = requests.post(
             'https://oauth2.googleapis.com/token',
+            timeout=15,
             data={
                 'refresh_token': refresh_token,
                 'client_id': config['client_id'],

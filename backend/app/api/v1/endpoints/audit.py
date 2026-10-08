@@ -132,29 +132,46 @@ def get_activity_feed():
     Query params: limit (int, default 30, max 100), before (ISO datetime cursor).
     """
     user = get_current_user()
-    limit = min(request.args.get('limit', 30, type=int), 100)
+    if not user:
+        return jsonify({'error': 'unauthorized', 'message': 'Authentication required'}), 401
+    limit = max(1, min(request.args.get('limit', 30, type=int), 100))
+    is_admin = user.has_role('Administrator')
 
-    # Only show user-facing event types
-    feed_event_types = ['data_modification', 'data_access', 'admin_action', 'security_event']
+    # Only show user-facing event types; admin actions are admin-only.
+    feed_event_types = ['data_modification', 'data_access', 'security_event']
+    if is_admin:
+        feed_event_types.append('admin_action')
+
+    # Only activity on incidents the user can access (same rules as the
+    # incident list), plus org-level events not tied to any incident.
+    from app.models import Incident
+    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    accessible_ids = accessible_incidents_query(user).with_entities(Incident.id)
 
     query = AuditLog.query.filter(
         AuditLog.organization_id == user.organization_id,
         AuditLog.event_type.in_(feed_event_types),
+        db.or_(AuditLog.incident_id.is_(None), AuditLog.incident_id.in_(accessible_ids)),
     )
 
     before = request.args.get('before')
     if before:
         try:
             query = query.filter(AuditLog.created_at < parse_date(before))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             pass
 
     incident_id = request.args.get('incident_id')
     if incident_id:
-        query = query.filter(AuditLog.incident_id == incident_id)
+        try:
+            from uuid import UUID
+            query = query.filter(AuditLog.incident_id == UUID(incident_id))
+        except ValueError:
+            return jsonify({'error': 'bad_request', 'message': 'invalid incident_id'}), 400
 
     logs = query.order_by(AuditLog.created_at.desc()).limit(limit).all()
 
+    from app.middleware.audit import public_activity_details
     items = []
     for log in logs:
         items.append({
@@ -167,7 +184,7 @@ def get_activity_feed():
             'user_email': log.user_email,
             'user_id': str(log.user_id) if log.user_id else None,
             'created_at': log.created_at.isoformat() if log.created_at else None,
-            'details': log.details,
+            'details': log.details if is_admin else public_activity_details(log.details),
         })
 
     return jsonify({

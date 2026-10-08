@@ -102,11 +102,10 @@ def generate_pdf_report(incident_id):
     ai_markdown = None
     ai_provider_used = None
 
-    if ai_service.is_configured():
-        used_provider = provider
-        if not used_provider:
-            providers = ai_service.get_available_providers()
-            used_provider = providers[0] if providers else None
+    org_id = str(incident.organization_id)
+    available = ai_service.get_available_providers(organization_id=org_id)
+    if available:
+        used_provider = provider if provider in available else available[0]
 
         if used_provider:
             ai_provider_used = used_provider
@@ -117,6 +116,7 @@ def generate_pdf_report(incident_id):
                 compromised_assets=assets_data,
                 iocs=iocs_data,
                 provider=used_provider,
+                organization_id=org_id,
             )
 
     # ── Step 2: Convert to HTML ──────────────────────────────────────
@@ -182,11 +182,15 @@ def generate_ai_summary(incident_id):
     """Generate an AI summary for an incident (returns JSON text, not PDF)."""
     incident = g.incident
     data = request.get_json() or {}
+    org_id = str(incident.organization_id)
 
-    if not ai_service.is_configured():
+    available = ai_service.get_available_providers(organization_id=org_id)
+    if not available:
         return jsonify({'error': 'not_configured', 'message': 'AI service not configured'}), 501
 
     provider = data.get('provider')
+    if provider not in available:
+        provider = available[0]
     summary_type = data.get('summary_type', 'executive')
 
     # Collect data
@@ -210,7 +214,8 @@ def generate_ai_summary(incident_id):
             'malware': [m.to_dict() for m in malware]
         },
         summary_type=summary_type,
-        provider=provider
+        provider=provider,
+        organization_id=org_id,
     )
 
     if not summary:
@@ -219,7 +224,7 @@ def generate_ai_summary(incident_id):
     return jsonify({
         'summary': summary,
         'summary_type': summary_type,
-        'provider': provider or ai_service.get_available_providers()[0]
+        'provider': provider
     }), 200
 
 
@@ -228,8 +233,8 @@ def generate_ai_summary(incident_id):
 @require_incident_access('reports:read')
 def list_report_types(incident_id):
     """List available report types and AI configuration status."""
-    ai_configured = ai_service.is_configured()
-    providers = ai_service.get_available_providers() if ai_configured else []
+    providers = ai_service.get_available_providers(organization_id=str(g.incident.organization_id))
+    ai_configured = bool(providers)
 
     types = []
     for key, val in REPORT_TYPES.items():

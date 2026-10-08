@@ -228,7 +228,7 @@ def misp_push_ioc():
     if not api_key or not api_url:
         return jsonify({'error': 'not_configured', 'message': 'MISP API URL or key missing'}), 400
 
-    is_valid_url, reason = validate_outbound_url(api_url)
+    is_valid_url, reason = validate_outbound_url(api_url, allow_allowlisted_private=True)
     if not is_valid_url:
         return jsonify({'error': 'invalid_url', 'message': f'Outbound URL blocked: {reason}'}), 400
 

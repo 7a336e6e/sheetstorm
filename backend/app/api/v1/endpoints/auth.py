@@ -4,10 +4,11 @@ from datetime import datetime, timezone, timedelta
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import (
     create_access_token, create_refresh_token,
-    jwt_required, get_jwt_identity, get_jwt
+    jwt_required, get_jwt_identity, get_jwt,
+    set_access_cookies, set_refresh_cookies, unset_jwt_cookies
 )
 from app.api.v1 import api_bp
-from app import db, redis_client, limiter
+from app import db, limiter
 from app.models import User, Role, UserRole, Session, Organization
 from app.middleware.audit import log_auth_event
 
@@ -31,6 +32,72 @@ def validate_email(email: str) -> bool:
     """Validate email format."""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return bool(re.match(pattern, email))
+
+
+def _redis():
+    """Current Redis client (resolved at call time, set up by create_app)."""
+    from app import redis_client
+    return redis_client
+
+
+def _current_token_epoch(user_id: str) -> int:
+    """Return the user's current token epoch (advanced on password change)."""
+    redis_client = _redis()
+    if redis_client is None:
+        return 0
+    try:
+        val = redis_client.get(f'token_epoch:{user_id}')
+        return int(val) if val is not None else 0
+    except Exception:
+        return 0
+
+
+def _bump_token_epoch(user_id: str) -> None:
+    """Invalidate all existing tokens for a user by advancing their epoch."""
+    redis_client = _redis()
+    if redis_client is None:
+        return
+    try:
+        redis_client.incr(f'token_epoch:{user_id}')
+    except Exception:
+        pass
+
+
+def _revoke_jti(jti, exp) -> None:
+    """Blocklist a token's jti in Redis until it would naturally expire."""
+    redis_client = _redis()
+    if not jti or redis_client is None:
+        return
+    try:
+        ttl = int((exp or 0) - datetime.now(timezone.utc).timestamp())
+        redis_client.setex(f'revoked_token:{jti}', ttl if ttl > 0 else 60, 'true')
+    except Exception:
+        pass
+
+
+def issue_tokens(user):
+    """Mint an access + refresh token pair stamped with the user's token epoch.
+
+    Centralised so session-invalidation (token epoch) and, later, cookie
+    delivery are applied consistently everywhere tokens are issued.
+    """
+    claims = {'token_epoch': _current_token_epoch(str(user.id))}
+    access = create_access_token(identity=str(user.id), additional_claims=claims)
+    refresh = create_refresh_token(identity=str(user.id), additional_claims=claims)
+    return access, refresh
+
+
+def _auth_cookies(resp, access_token=None, refresh_token=None):
+    """Attach httpOnly JWT cookies to a response for browser auth.
+
+    Tokens are also returned in the JSON body for non-browser clients during
+    the migration; browsers should rely on the httpOnly cookies.
+    """
+    if access_token:
+        set_access_cookies(resp, access_token)
+    if refresh_token:
+        set_refresh_cookies(resp, refresh_token)
+    return resp
 
 
 def _is_registration_enabled() -> bool:
@@ -57,8 +124,8 @@ def register():
     try:
         from app.schemas.auth import UserRegister
         data = UserRegister(**request.get_json())
-    except ValueError as e:
-        return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    except ValueError:
+        return jsonify({'error': 'bad_request', 'message': 'Invalid request data'}), 400
 
     email = data.email.lower().strip()
     
@@ -94,16 +161,16 @@ def register():
     db.session.commit()
 
     # Generate tokens
-    access_token = create_access_token(identity=str(user.id))
-    refresh_token = create_refresh_token(identity=str(user.id))
+    access_token, refresh_token = issue_tokens(user)
 
     log_auth_event('register', user=user, success=True)
 
-    return jsonify({
+    resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
         'user': user.to_dict(include_permissions=True)
-    }), 201
+    })
+    return _auth_cookies(resp, access_token, refresh_token), 201
 
 
 @api_bp.route('/auth/login', methods=['POST'])
@@ -113,8 +180,8 @@ def login():
     try:
         from app.schemas.auth import UserLogin
         data = UserLogin(**request.get_json())
-    except ValueError as e:
-        return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    except ValueError:
+        return jsonify({'error': 'bad_request', 'message': 'Invalid request data'}), 400
 
     email = data.email.lower().strip()
     
@@ -165,54 +232,81 @@ def login():
     db.session.commit()
 
     # Generate tokens
-    access_token = create_access_token(identity=str(user.id))
-    refresh_token = create_refresh_token(identity=str(user.id))
+    access_token, refresh_token = issue_tokens(user)
 
     log_auth_event('login', user=user, success=True)
 
-    return jsonify({
+    resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
         'user': user.to_dict(include_permissions=True)
-    }), 200
+    })
+    return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/refresh', methods=['POST'])
 @limiter.limit("30 per hour")
 @jwt_required(refresh=True)
 def refresh():
-    """Refresh access token."""
+    """Refresh access token, rotating the refresh token."""
     identity = get_jwt_identity()
     user = User.query.get(identity)
 
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Invalid user'}), 401
 
-    access_token = create_access_token(identity=identity)
+    # Rotate: revoke the presented refresh token and issue a fresh pair, so a
+    # leaked refresh token has a bounded lifetime. The first rotation of a
+    # token also opens a short grace window in which that same token is
+    # accepted once more (consumed in the blocklist loader), so concurrent
+    # refreshes from several tabs / the MCP server don't log the user out.
+    current = get_jwt()
+    jti, exp = current.get('jti'), current.get('exp')
+    redis_client = _redis()
+    if jti and redis_client is not None:
+        try:
+            ttl = max(int((exp or 0) - datetime.now(timezone.utc).timestamp()), 60)
+            first_rotation = redis_client.set(f'revoked_token:{jti}', 'true', ex=ttl, nx=True)
+            grace = int(current_app.config.get('JWT_REFRESH_GRACE_SECONDS', 30))
+            if first_rotation and grace > 0:
+                redis_client.setex(f'refresh_grace:{jti}', grace, '1')
+        except Exception:
+            current_app.logger.error('Failed to revoke rotated refresh token')
+            return jsonify({'error': 'server_error', 'message': 'Token rotation failed'}), 503
+    access_token, refresh_token = issue_tokens(user)
 
-    return jsonify({'access_token': access_token}), 200
+    resp = jsonify({'access_token': access_token, 'refresh_token': refresh_token})
+    return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
 @limiter.limit("30 per minute")
 @jwt_required()
 def logout():
-    """Logout and revoke current token."""
-    jti = get_jwt()['jti']
-    exp = get_jwt()['exp']
+    """Logout and revoke the current access token (and refresh token if given)."""
+    jwt_data = get_jwt()
+    _revoke_jti(jwt_data['jti'], jwt_data['exp'])
 
-    # Store revoked token in Redis until it expires
-    if redis_client:
-        ttl = exp - datetime.now(timezone.utc).timestamp()
-        if ttl > 0:
-            redis_client.setex(f'revoked_token:{jti}', int(ttl), 'true')
+    # Also revoke the refresh token when supplied (request body or cookie) so a
+    # stolen refresh token cannot mint new access tokens after logout.
+    body = request.get_json(silent=True) or {}
+    refresh_tok = body.get('refresh_token') or request.cookies.get('refresh_token_cookie')
+    if refresh_tok:
+        try:
+            from flask_jwt_extended import decode_token
+            decoded = decode_token(refresh_tok)
+            _revoke_jti(decoded.get('jti'), decoded.get('exp'))
+        except Exception:
+            pass
 
     identity = get_jwt_identity()
     user = User.query.get(identity)
     if user:
         log_auth_event('logout', user=user, success=True)
 
-    return jsonify({'message': 'Successfully logged out'}), 200
+    resp = jsonify({'message': 'Successfully logged out'})
+    unset_jwt_cookies(resp)
+    return resp, 200
 
 
 @api_bp.route('/auth/me', methods=['GET'])
@@ -223,8 +317,8 @@ def get_current_user():
     identity = get_jwt_identity()
     user = User.query.get(identity)
 
-    if not user:
-        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
+    if not user or not user.is_active:
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     return jsonify(user.to_dict(include_permissions=True)), 200
 
@@ -261,18 +355,29 @@ def change_password():
         return jsonify({'error': 'bad_request', 'message': message}), 400
 
     user.set_password(new_password)
+    # Invalidate every existing session for this user (revokes all outstanding
+    # access + refresh tokens via the token epoch).
+    _bump_token_epoch(identity)
     db.session.commit()
 
     log_auth_event('change_password', user=user, success=True)
 
-    return jsonify({'message': 'Password changed successfully'}), 200
+    # Re-issue tokens for the current session so the user stays logged in here.
+    access_token, refresh_token = issue_tokens(user)
+
+    resp = jsonify({
+        'message': 'Password changed successfully',
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+    })
+    return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/supabase', methods=['POST'])
 @limiter.limit("10 per minute")
 def supabase_auth():
     """Authenticate with Supabase JWT."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     supabase_token = data.get('access_token')
 
     if not supabase_token:
@@ -347,6 +452,10 @@ def supabase_auth():
 
             db.session.commit()
 
+        if not user.is_active:
+            log_auth_event('supabase_login', user=user, success=False, details={'reason': 'account_disabled'})
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
+
         # MFA check: if user has MFA enabled, require code before issuing tokens
         if user.mfa_enabled and user.mfa_secret:
             mfa_code = data.get('mfa_code')
@@ -385,16 +494,16 @@ def supabase_auth():
         db.session.commit()
 
         # Generate our tokens
-        access_token = create_access_token(identity=str(user.id))
-        refresh_token = create_refresh_token(identity=str(user.id))
+        access_token, refresh_token = issue_tokens(user)
 
         log_auth_event('supabase_login', user=user, success=True)
 
-        return jsonify({
+        resp = jsonify({
             'access_token': access_token,
             'refresh_token': refresh_token,
             'user': user.to_dict(include_permissions=True)
-        }), 200
+        })
+        return _auth_cookies(resp, access_token, refresh_token), 200
 
     except Exception as e:
         current_app.logger.error(f"Supabase auth error: {e}")
@@ -409,7 +518,13 @@ def _get_github_credentials():
     from app.services.encryption_service import encryption_service
     import json
 
-    integration = Integration.query.filter_by(type='oauth_github', is_enabled=True).first()
+    # Login happens before any organization context exists, so only the
+    # platform (default) organization's OAuth app may drive the login flow —
+    # never an arbitrary tenant's integration.
+    default_org = Organization.query.filter_by(slug='default').first()
+    integration = Integration.query.filter_by(
+        organization_id=default_org.id, type='oauth_github', is_enabled=True
+    ).first() if default_org else None
     if integration and integration.credentials_encrypted:
         try:
             creds_json = encryption_service.decrypt(integration.credentials_encrypted)
@@ -444,7 +559,7 @@ def github_auth_redirect():
     state = secrets.token_urlsafe(32)
 
     # Store state in Redis with 10-minute expiry
-    redis_client.setex(f'github_oauth_state:{state}', 600, '1')
+    _redis().setex(f'github_oauth_state:{state}', 600, '1')
 
     github_url = (
         f"https://github.com/login/oauth/authorize"
@@ -463,19 +578,16 @@ def github_auth_callback():
     """Exchange GitHub OAuth code for user tokens."""
     import requests as http_requests
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     code = data.get('code')
     state = data.get('state')
 
     if not code:
         return jsonify({'error': 'bad_request', 'message': 'Authorization code is required'}), 400
 
-    # Validate CSRF state
-    if state:
-        stored = redis_client.get(f'github_oauth_state:{state}')
-        if not stored:
-            return jsonify({'error': 'bad_request', 'message': 'Invalid or expired OAuth state'}), 400
-        redis_client.delete(f'github_oauth_state:{state}')
+    # Validate CSRF state (required; single use).
+    if not state or not _redis().delete(f'github_oauth_state:{state}'):
+        return jsonify({'error': 'bad_request', 'message': 'Invalid or expired OAuth state'}), 400
 
     client_id, client_secret = _get_github_credentials()
 
@@ -500,7 +612,7 @@ def github_auth_callback():
         token_data = token_resp.json()
 
         if 'error' in token_data:
-            current_app.logger.error(f"GitHub token error: {token_data}")
+            current_app.logger.error(f"GitHub token exchange failed: {token_data.get('error')}")
             return jsonify({'error': 'oauth_error', 'message': token_data.get('error_description', 'OAuth token exchange failed')}), 400
 
         gh_access_token = token_data.get('access_token')
@@ -579,6 +691,11 @@ def github_auth_callback():
                 user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
                 db.session.add(user_role)
 
+        if not user.is_active:
+            db.session.rollback()
+            log_auth_event('github_login', user=user, success=False, details={'reason': 'account_disabled'})
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
+
         user.last_login = datetime.now(timezone.utc)
         db.session.commit()
 
@@ -616,16 +733,16 @@ def github_auth_callback():
                     return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
         # Generate JWT tokens
-        access_token = create_access_token(identity=str(user.id))
-        refresh_token = create_refresh_token(identity=str(user.id))
+        access_token, refresh_token = issue_tokens(user)
 
         log_auth_event('github_login', user=user, success=True)
 
-        return jsonify({
+        resp = jsonify({
             'access_token': access_token,
             'refresh_token': refresh_token,
             'user': user.to_dict(include_permissions=True),
-        }), 200
+        })
+        return _auth_cookies(resp, access_token, refresh_token), 200
 
     except Exception as e:
         db.session.rollback()
@@ -747,8 +864,8 @@ def mfa_complete_oauth():
         return jsonify({'error': 'unauthorized', 'message': 'Invalid or expired pre-auth token'}), 401
 
     user = User.query.get(user_id)
-    if not user:
-        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
+    if not user or not user.is_active:
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     if not user.mfa_enabled or not user.mfa_secret:
         return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled for this user'}), 400
@@ -771,17 +888,17 @@ def mfa_complete_oauth():
     user.last_login = datetime.now(timezone.utc)
     db.session.commit()
 
-    access_token = create_access_token(identity=str(user.id))
-    refresh_token = create_refresh_token(identity=str(user.id))
+    access_token, refresh_token = issue_tokens(user)
 
     auth_method = decoded.get('auth_method', 'oauth')
     log_auth_event(f'{auth_method}_login_mfa', user=user, success=True)
 
-    return jsonify({
+    resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
         'user': user.to_dict(include_permissions=True),
-    }), 200
+    })
+    return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/mfa/disable', methods=['POST'])

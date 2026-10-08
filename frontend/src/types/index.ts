@@ -461,6 +461,10 @@ export interface PaginatedResponse<T> {
   page: number
   per_page: number
   pages: number
+  /** Effective sort applied by the server, e.g. `-created_at`. */
+  sort?: string
+  /** Present when the request carried `focus`: whether that row was found. */
+  focus_found?: boolean
 }
 
 export interface CaseNote {
@@ -694,3 +698,4 @@ export interface CustomFieldOption {
   created_at: string
 }
 
+export * from './search'

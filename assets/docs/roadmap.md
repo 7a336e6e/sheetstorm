@@ -48,7 +48,7 @@
 | P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
 | P1 | MCP server for AI assistant integration (70+ tools) | ✅ Done |
 | P1 | MITRE ATT&CK pattern model, suggest service & seed data | ✅ Done |
-| P1 | Test suite — pytest · Vitest · Playwright | 🔜 Planned |
+| P1 | Test suite — pytest (started) · Vitest · Playwright | 🚧 In progress |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |
 | P1 | CVE lookup (CISA KEV + NVD) | ✅ Done |
 | P1 | IP / domain / email reputation lookups | ✅ Done |
@@ -60,9 +60,18 @@
 | P1 | Auto-enrichment service with soft fallback | ✅ Done |
 | P2 | MITRE ATT&CK navigator heatmap | 🔜 Planned |
 | P2 | Lateral movement graph visualization | 🔜 Planned |
-| P2 | Incident templates (ransomware, phishing, insider threat) | 🔜 Planned |
+| P1 | Evidence register (incl. non-uploaded evidence) with external custody transfers | 🔜 Planned |
+| P1 | Tamper-evident, signed chain-of-custody ledger | 🔜 Planned |
+| P1 | Investigative questions board linked to findings | 🔜 Planned |
+| P1 | Finding & timestamp provenance (source, tool, timezone, confidence) | 🔜 Planned |
+| P1 | Decision & response-action log | 🔜 Planned |
+| P2 | Case templates (ransomware, BEC, insider threat, cloud compromise) | 🔜 Planned |
 | P3 | VERIS incident classification & reporting | 🔜 Planned |
-| P3 | Dashboard analytics & MTTR charts | 🔜 Planned |
+| P2 | Global search UI across incidents, IOCs, notes, and evidence | 🔜 Planned |
+| P2 | Real-time collaboration (presence, conflict-safe concurrent edits) | 🔜 Planned |
+| P2 | Report builder (section-level templates, reviewer edits) | 🔜 Planned |
+| P2 | Notification-obligation tracker (regulatory/contractual deadlines) | 🔜 Planned |
+| P2 | Admin guardrails: user lifecycle, security policy, API keys, audit governance | 🔜 Planned |
 | P3 | STIX 2.1 export | 🔜 Planned |
 | P3 | Activity distribution plots | 🔜 Planned |
 
@@ -85,36 +94,38 @@ Capabilities mapped to the NIST incident response lifecycle phases across four d
 
 ### Next — Prioritized
 
+SheetStorm is a DFIR **investigation tracker** (the structured replacement for the SANS incident-response spreadsheet), not a SOC alert platform. Roadmap items focus on evidence, findings, decisions, and defensible reporting rather than alert ingestion or triage queues.
+
 | NIST Phase | Capability |
 |------------|------------|
-| Preparation | Runbooks library tied to incident type and NIST phase; playbook automation templates; on-call rotations and escalation ownership. |
-| Identification | SIEM/EDR connectors (Splunk, Elastic, CrowdStrike, Sentinel); alert triage queue; MITRE coverage heatmap based on mapped timeline events and patterns. |
-| Containment | Response action audit trail; SOAR-style orchestration hooks; ticket handoff model for responder tasks. |
-| Eradication | IOC sweep automation against imported indicators; threat-hunting query library mapped to ATT&CK techniques. |
-| Recovery | Restoration checklists; post-containment validation steps; evidence-backed recovery signoff. |
-| Lessons Learned | MTTD/MTTR dashboards from incident timestamps; expanded AI post-incident report workflow with reviewer edits. |
+| Preparation | Case templates (ransomware, BEC, insider threat, cloud compromise) that pre-seed tasks, investigative questions, and evidence checklists; admin guardrails (user lifecycle, security policy, API keys, audit governance). |
+| Identification | Evidence register that also covers non-uploaded evidence (physical media, remote collections, third-party-held data); investigative questions board linking each question to supporting and refuting findings; finding and timestamp provenance (source artifact, tool, timezone, confidence). |
+| Containment | Decision & response-action log (what was decided, by whom, rationale, outcome, rollback); external custody transfers (counsel, vendors, law enforcement) with receipts. |
+| Eradication | Evidence-backed remediation verification per host and account; links from remediation steps to the findings that justify them. |
+| Recovery | Evidence-backed recovery signoff; restoration and validation checklists tied to affected assets. |
+| Lessons Learned | Report builder with section templates and reviewer edits; notification-obligation tracker (regulatory and contractual deadlines, who was notified and when). |
 
 ### Soon — Planned
 
 | NIST Phase | Capability |
 |------------|------------|
-| Preparation | Asset inventory sync (hosts, services, cloud accounts, ownership metadata); tabletop-exercise mode for training incidents. |
-| Identification | Detection-as-code storage and review; normalized alert evidence from connectors; MITRE coverage heatmap gaps by tactic and technique. |
-| Containment | EDR isolation API actions; Jira and ServiceNow ticketing integration; containment approval and rollback records. |
-| Eradication | Sandbox integration for suspicious files and URLs; reusable threat-hunting query packs; recurring IOC sweep jobs. |
-| Recovery | Communications templates (internal, legal, customer, executive); service restoration checklists by asset class. |
-| Lessons Learned | Cross-incident trend analytics; recurring findings, control gaps, and technique frequency summaries. |
+| Preparation | Tamper-evident custody ledger (hash-chained, HMAC-signed entries with verification and export); runbook library tied to incident type and NIST phase. |
+| Identification | Global search UI across incidents, IOCs, notes, timeline events, and evidence; real-time collaboration (presence, conflict-safe concurrent edits). |
+| Containment | Containment approval and rollback records; responder accountability on actions. |
+| Eradication | Reusable hunt-note library mapped to ATT&CK techniques; sandbox verdict attachment to evidence. |
+| Recovery | Communications templates (internal, legal, customer, executive) with an audit trail. |
+| Lessons Learned | Cross-case trend summaries (recurring findings, control gaps, technique frequency). |
 
 ### Later — Enterprise Grade
 
 | NIST Phase | Direction |
 |------------|-----------|
-| Preparation | Mature runbook governance, approval workflows, environment-aware playbooks, asset ownership reconciliation, and exercise scoring. |
-| Identification | High-volume connector ingestion, alert correlation, deduplication, detection coverage reporting, and ATT&CK heatmap rollups across teams. |
-| Containment | SOAR action execution with approvals, responder accountability, EDR isolation workflows, and external ticket lifecycle sync. |
-| Eradication | Fleet-wide IOC sweeps, sandbox verdict ingestion, hunt query execution history, and remediation evidence tracking. |
-| Recovery | Recovery validation evidence, communications audit trail, business service dependency checks, and controlled return-to-service workflows. |
-| Lessons Learned | Executive-ready metrics, MTTD/MTTR baselines, cross-incident trend analytics, and control-improvement tracking. |
+| Preparation | Mature runbook governance, approval workflows, tabletop-exercise mode, and exercise scoring. |
+| Identification | Cross-case technique rollups and ATT&CK heatmaps across teams; provenance verification when importing third-party collections. |
+| Containment | Approval workflows for response actions and external ticket handoff for responder tasks. |
+| Eradication | Remediation evidence tracking across large environments. |
+| Recovery | Recovery validation evidence, communications audit trail, and controlled return-to-service records. |
+| Lessons Learned | Executive-ready case metrics and control-improvement tracking. |
 
 #### Cross-cutting Enterprise
 
@@ -122,7 +133,7 @@ Capabilities mapped to the NIST incident response lifecycle phases across four d
 |------|------------|
 | Identity | SSO/SAML/OIDC, SCIM provisioning, granular RBAC, and custom roles. |
 | Tenant security | Multi-tenant isolation hardening and per-tenant encryption. |
-| Audit | Audit log export to SIEM. |
+| Audit | Audit governance: retention policy, tamper-evident export, and reviewer sign-off. |
 | Compliance | SOC2, ISO 27001, and HIPAA compliance posture. |
 | Availability | HA deployment: HA Postgres, Redis Sentinel, multi-replica API. |
 | Edge security | Rate limiting, WAF, and Vault secrets management. |

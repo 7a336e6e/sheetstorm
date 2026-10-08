@@ -127,8 +127,7 @@ def create_network_ioc(incident_id):
             incident_id=incident.id,
             node_type='ip_address',
             label=dns_ip,
-            description=data.get('description', ''),
-            properties={'ioc_id': str(ioc.id), 'direction': data.get('direction'), 'protocol': data.get('protocol')},
+            extra_data={'ioc_id': str(ioc.id), 'direction': data.get('direction'), 'protocol': data.get('protocol'), 'description': data.get('description', '')},
             created_by=user.id,
         )
         db.session.add(node)

@@ -28,7 +28,7 @@ bcrypt==4.1.2
 cryptography==50.0.2
 PyJWT==2.15.1
 pyotp==2.9.0
-qrcode==7.4.2
+qrcode==8.2
 
 # Validation
 pydantic==2.5.3

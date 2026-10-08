@@ -9,6 +9,7 @@ from app.models import CompromisedHost, CompromisedAccount, TimelineEvent
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
+from app.utils.pagination import list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
 
 
@@ -16,42 +17,30 @@ from app.utils.validation import parse_datetime, check_choice, json_body
 # Compromised Hosts
 # =============================================================================
 
+HOST_SORTABLE = {
+    'first_seen': CompromisedHost.first_seen,
+    'last_seen': CompromisedHost.last_seen,
+    'hostname': CompromisedHost.hostname,
+    'containment_status': CompromisedHost.containment_status,
+    'created_at': CompromisedHost.created_at,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/hosts', methods=['GET'])
 @jwt_required()
 @require_incident_access('hosts:read')
 def list_compromised_hosts(incident_id):
-    """List compromised hosts for an incident."""
+    """List compromised hosts (utils/pagination.py contract; q/search over
+    hostname, IP, system_type, notes; filter containment_status)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = CompromisedHost.query.filter_by(incident_id=incident.id)
-
-    # Filters
-    status = request.args.get('containment_status')
-    if status:
-        query = query.filter(CompromisedHost.containment_status == status)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(
-            db.or_(
-                CompromisedHost.hostname.ilike(f'%{search}%'),
-                CompromisedHost.ip_address.cast(db.String).ilike(f'%{search}%')
-            )
-        )
-
-    pagination = query.order_by(CompromisedHost.first_seen.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [h.to_dict() for h in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=HOST_SORTABLE, default_sort='-first_seen', id_col=CompromisedHost.id,
+        filters={'containment_status': (CompromisedHost.containment_status, 'eq')},
+        search_columns=(CompromisedHost.hostname, CompromisedHost.ip_address,
+                        CompromisedHost.system_type, CompromisedHost.notes),
+        serialize=lambda h: h.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/hosts', methods=['POST'])
@@ -179,45 +168,37 @@ def delete_compromised_host(incident_id, host_id):
 # Compromised Accounts
 # =============================================================================
 
+ACCOUNT_SORTABLE = {
+    'datetime_seen': CompromisedAccount.datetime_seen,
+    'account_name': CompromisedAccount.account_name,
+    'domain': CompromisedAccount.domain,
+    'status': CompromisedAccount.status,
+    'is_privileged': CompromisedAccount.is_privileged,
+    'created_at': CompromisedAccount.created_at,
+}
+ACCOUNT_FILTERS = {
+    'account_type': (CompromisedAccount.account_type, 'eq'),
+    'status': (CompromisedAccount.status, 'eq'),
+    'host_id': (CompromisedAccount.host_id, 'uuid'),
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/accounts', methods=['GET'])
 @jwt_required()
 @require_incident_access('accounts:read')
 def list_compromised_accounts(incident_id):
-    """List compromised accounts for an incident."""
+    """List compromised accounts (utils/pagination.py contract; q/search over
+    account name, domain, host, notes — never the password; filters
+    account_type, status, host_id; `reveal=true` as before)."""
     user = get_current_user()
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
     reveal = request.args.get('reveal', 'false').lower() == 'true'
-
     query = CompromisedAccount.query.filter_by(incident_id=incident.id)
-
-    # Filters
-    account_type = request.args.get('account_type')
-    if account_type:
-        query = query.filter(CompromisedAccount.account_type == account_type)
-
-    status = request.args.get('status')
-    if status:
-        query = query.filter(CompromisedAccount.status == status)
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(CompromisedAccount.host_id == host_id)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(CompromisedAccount.account_name.ilike(f'%{search}%'))
-
-    pagination = query.order_by(CompromisedAccount.datetime_seen.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
 
     # Check permission to reveal passwords
     can_reveal = reveal and user.has_permission('compromised_accounts:reveal')
 
-    items = []
-    for account in pagination.items:
+    def serialize(account):
         decrypted_password = None
         if can_reveal and account.password_encrypted:
             try:
@@ -232,15 +213,15 @@ def list_compromised_accounts(incident_id):
                 )
             except Exception:
                 pass
-        items.append(account.to_dict(reveal_password=can_reveal, decrypted_password=decrypted_password))
+        return account.to_dict(reveal_password=can_reveal, decrypted_password=decrypted_password)
 
-    return jsonify({
-        'items': items,
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=ACCOUNT_SORTABLE, default_sort='-datetime_seen', id_col=CompromisedAccount.id,
+        filters=ACCOUNT_FILTERS,
+        search_columns=(CompromisedAccount.account_name, CompromisedAccount.domain,
+                        CompromisedAccount.host_system, CompromisedAccount.notes),
+        serialize=serialize,
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/accounts/<uuid:account_id>', methods=['GET'])

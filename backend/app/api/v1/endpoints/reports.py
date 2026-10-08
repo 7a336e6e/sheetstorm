@@ -12,6 +12,7 @@ from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.ai_service import ai_service
+from app.utils.pagination import list_response
 
 
 # ── Report type definitions ─────────────────────────────────────────────
@@ -43,14 +44,17 @@ REPORT_TYPES = {
 @jwt_required()
 @require_incident_access('reports:read')
 def list_reports(incident_id):
-    """List generated reports for an incident."""
+    """List generated reports (utils/pagination.py contract; filter
+    report_type)."""
     incident = g.incident
-
-    reports = Report.query.filter_by(incident_id=incident.id).order_by(Report.created_at.desc()).all()
-
-    return jsonify({
-        'items': [r.to_dict() for r in reports]
-    }), 200
+    query = Report.query.filter_by(incident_id=incident.id)
+    return jsonify(list_response(
+        query, sortable={'created_at': Report.created_at, 'report_type': Report.report_type},
+        default_sort='-created_at', id_col=Report.id,
+        filters={'report_type': (Report.report_type, 'eq')},
+        search_columns=(Report.title,),
+        serialize=lambda r: r.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/generate-pdf', methods=['POST'])

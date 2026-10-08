@@ -10,6 +10,7 @@ from app.middleware.rbac import require_permission, require_incident_access, get
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
+from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
 logger = logging.getLogger(__name__)
 
@@ -61,68 +62,56 @@ def accessible_incidents_query(user):
     return query
 
 
+INCIDENT_SEVERITIES = ('critical', 'high', 'medium', 'low')
+INCIDENT_STATUSES = ('open', 'investigating', 'contained', 'eradicated', 'recovered', 'closed')
+INCIDENT_SORTABLE = {
+    'created_at': Incident.created_at,
+    'updated_at': Incident.updated_at,
+    'incident_number': Incident.incident_number,
+    'title': Incident.title,
+    'severity': severity_rank(Incident.severity),
+    'status': Incident.status,
+    'phase': Incident.phase,
+    'detected_at': Incident.detected_at,
+}
+ARCHIVED_SORTABLE = {**INCIDENT_SORTABLE, 'archived_at': Incident.archived_at}
+INCIDENT_FILTERS = {
+    'status': (Incident.status, in_list(INCIDENT_STATUSES)),
+    'severity': (Incident.severity, in_list(INCIDENT_SEVERITIES)),
+    'phase': (Incident.phase, 'int'),
+    'classification': (Incident.classification, 'eq'),
+}
+INCIDENT_SEARCH = (Incident.title, Incident.description, Incident.incident_number)
+
+
 @api_bp.route('/incidents', methods=['GET'])
 @jwt_required()
 @require_permission('incidents:read')
 def list_incidents():
-    """List incidents with filtering and pagination.
-    
+    """List incidents (utils/pagination.py contract: page, per_page, sort,
+    q/search, focus; filters status (comma list), severity (comma list),
+    phase, classification, team_id).
+
     Access rules:
     - Administrators/Managers: see all org incidents
     - Incident Responders/Analysts: see incidents assigned to their teams OR directly to them
     - Operators/Viewers: see only directly assigned incidents
     """
     user = get_current_user()
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)
-
     query = accessible_incidents_query(user)
 
-    # Filter by team_id if provided
+    # Team filter is a subquery, so it stays outside the declarative FILTERS.
     team_id = request.args.get('team_id')
     if team_id:
-        query = query.join(IncidentTeam).filter(IncidentTeam.team_id == team_id)
+        query = query.filter(Incident.id.in_(
+            db.session.query(IncidentTeam.incident_id).filter(
+                IncidentTeam.team_id == parse_uuid('team_id', team_id))))
 
-    # Filters
-    status = request.args.get('status')
-    if status:
-        query = query.filter(Incident.status == status)
-
-    severity = request.args.get('severity')
-    if severity:
-        query = query.filter(Incident.severity == severity)
-
-    phase = request.args.get('phase', type=int)
-    if phase:
-        query = query.filter(Incident.phase == phase)
-
-    classification = request.args.get('classification')
-    if classification:
-        query = query.filter(Incident.classification == classification)
-
-    # Search
-    search = request.args.get('search')
-    if search:
-        # Escape LIKE wildcards to prevent LIKE injection
-        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
-        query = query.filter(
-            db.or_(
-                Incident.title.ilike(f'%{search_escaped}%'),
-                Incident.description.ilike(f'%{search_escaped}%')
-            )
-        )
-
-    pagination = query.order_by(Incident.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict(include_counts=True) for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=INCIDENT_SORTABLE, default_sort='-created_at', id_col=Incident.id,
+        filters=INCIDENT_FILTERS, search_columns=INCIDENT_SEARCH,
+        serialize=lambda i: i.to_dict(include_counts=True),
+    )), 200
 
 
 @api_bp.route('/incidents', methods=['POST'])
@@ -376,32 +365,12 @@ def list_archived_incidents():
     if not user.has_role('Administrator'):
         return jsonify({'error': 'forbidden', 'message': 'Only administrators can view archived incidents'}), 403
 
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)
-
     query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=True)
-
-    search = request.args.get('search')
-    if search:
-        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
-        query = query.filter(
-            db.or_(
-                Incident.title.ilike(f'%{search_escaped}%'),
-                Incident.description.ilike(f'%{search_escaped}%')
-            )
-        )
-
-    pagination = query.order_by(Incident.archived_at.desc().nullslast(), Incident.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict(include_counts=True) for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=ARCHIVED_SORTABLE, default_sort='-archived_at', id_col=Incident.id,
+        filters=INCIDENT_FILTERS, search_columns=INCIDENT_SEARCH,
+        serialize=lambda i: i.to_dict(include_counts=True),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/unarchive', methods=['POST'])

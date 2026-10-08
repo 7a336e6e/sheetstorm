@@ -7,46 +7,43 @@ from app import db, socketio
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool, CompromisedHost, TimelineEvent
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
+from app.utils.pagination import list_response
 
 
 # =============================================================================
 # Network Indicators
 # =============================================================================
 
+NETWORK_IOC_SORTABLE = {
+    'timestamp': NetworkIndicator.timestamp,
+    'dns_ip': NetworkIndicator.dns_ip,
+    'protocol': NetworkIndicator.protocol,
+    'port': NetworkIndicator.port,
+    'direction': NetworkIndicator.direction,
+    'created_at': NetworkIndicator.created_at,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs', methods=['GET'])
 @jwt_required()
 @require_incident_access('network_iocs:read')
 def list_network_iocs(incident_id):
-    """List network indicators for an incident."""
+    """List network indicators (utils/pagination.py contract; q/search over
+    dns_ip, source/destination host, description; filters protocol,
+    direction, host_id)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = NetworkIndicator.query.filter_by(incident_id=incident.id)
-
-    protocol = request.args.get('protocol')
-    if protocol:
-        query = query.filter(NetworkIndicator.protocol == protocol)
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(NetworkIndicator.host_id == host_id)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(NetworkIndicator.dns_ip.ilike(f'%{search}%'))
-
-    pagination = query.order_by(NetworkIndicator.timestamp.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict() for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=NETWORK_IOC_SORTABLE, default_sort='-timestamp', id_col=NetworkIndicator.id,
+        filters={
+            'protocol': (NetworkIndicator.protocol, 'eq'),
+            'direction': (NetworkIndicator.direction, 'eq'),
+            'host_id': (NetworkIndicator.host_id, 'uuid'),
+        },
+        search_columns=(NetworkIndicator.dns_ip, NetworkIndicator.source_host,
+                        NetworkIndicator.destination_host, NetworkIndicator.description),
+        serialize=lambda i: i.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs', methods=['POST'])
@@ -257,45 +254,35 @@ def delete_network_ioc(incident_id, ioc_id):
 # Host-Based Indicators
 # =============================================================================
 
+HOST_IOC_SORTABLE = {
+    'datetime': HostBasedIndicator.datetime,
+    'artifact_type': HostBasedIndicator.artifact_type,
+    'host': HostBasedIndicator.host,
+    'created_at': HostBasedIndicator.created_at,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs', methods=['GET'])
 @jwt_required()
 @require_incident_access('host_iocs:read')
 def list_host_iocs(incident_id):
-    """List host-based indicators for an incident."""
+    """List host-based indicators (utils/pagination.py contract; q/search
+    over value, host, notes; filters artifact_type, host_id, host,
+    from_timeline)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = HostBasedIndicator.query.filter_by(incident_id=incident.id)
-
-    artifact_type = request.args.get('artifact_type')
-    if artifact_type:
-        query = query.filter(HostBasedIndicator.artifact_type == artifact_type)
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(HostBasedIndicator.host_id == host_id)
-
-    # Filter by those linked to timeline events
-    from_timeline = request.args.get('from_timeline')
-    if from_timeline and from_timeline.lower() == 'true':
-        query = query.filter(HostBasedIndicator.timeline_event_id != None)
-
-    host = request.args.get('host')
-    if host:
-        query = query.filter(HostBasedIndicator.host.ilike(f'%{host}%'))
-
-    pagination = query.order_by(HostBasedIndicator.datetime.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict() for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=HOST_IOC_SORTABLE, default_sort='-datetime', id_col=HostBasedIndicator.id,
+        filters={
+            'artifact_type': (HostBasedIndicator.artifact_type, 'eq'),
+            'host_id': (HostBasedIndicator.host_id, 'uuid'),
+            'host': (HostBasedIndicator.host, 'ilike'),
+            # Only those linked to timeline events
+            'from_timeline': (HostBasedIndicator.timeline_event_id.isnot(None), 'flag'),
+        },
+        search_columns=(HostBasedIndicator.artifact_value, HostBasedIndicator.host, HostBasedIndicator.notes),
+        serialize=lambda i: i.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs', methods=['POST'])
@@ -415,46 +402,32 @@ def delete_host_ioc(incident_id, ioc_id):
 # Malware & Tools
 # =============================================================================
 
+MALWARE_SORTABLE = {
+    'created_at': MalwareTool.created_at,
+    'file_name': MalwareTool.file_name,
+    'malware_family': MalwareTool.malware_family,
+    'host': MalwareTool.host,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/malware', methods=['GET'])
 @jwt_required()
 @require_incident_access('malware:read')
 def list_malware(incident_id):
-    """List malware and tools for an incident."""
+    """List malware and tools (utils/pagination.py contract; q/search over
+    file name/path, hashes, family; filters is_tool, host_id)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = MalwareTool.query.filter_by(incident_id=incident.id)
-
-    is_tool = request.args.get('is_tool')
-    if is_tool is not None:
-        query = query.filter(MalwareTool.is_tool == (is_tool.lower() == 'true'))
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(MalwareTool.host_id == host_id)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(
-            db.or_(
-                MalwareTool.file_name.ilike(f'%{search}%'),
-                MalwareTool.sha256.ilike(f'%{search}%'),
-                MalwareTool.md5.ilike(f'%{search}%')
-            )
-        )
-
-    pagination = query.order_by(MalwareTool.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [m.to_dict() for m in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=MALWARE_SORTABLE, default_sort='-created_at', id_col=MalwareTool.id,
+        filters={
+            'is_tool': (MalwareTool.is_tool, 'bool'),
+            'host_id': (MalwareTool.host_id, 'uuid'),
+        },
+        search_columns=(MalwareTool.file_name, MalwareTool.file_path, MalwareTool.sha256,
+                        MalwareTool.md5, MalwareTool.malware_family),
+        serialize=lambda m: m.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/malware', methods=['POST'])

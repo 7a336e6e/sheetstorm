@@ -230,6 +230,33 @@ class ChainOfCustodyService:
         return entry
 
     @staticmethod
+    def log_legal_hold(artifact: Artifact, user_id: str, hold: bool, reason: Optional[str] = None) -> ChainOfCustody:
+        """Log placement or release of a legal hold / preservation lock."""
+        entry = ChainOfCustody(
+            artifact_id=artifact.id,
+            action='legal_hold',
+            performed_by=user_id,
+            ip_address=request.remote_addr if request else None,
+            user_agent=request.headers.get('User-Agent', '')[:500] if request else None,
+            purpose=reason,
+            extra_data={
+                'hold': bool(hold),
+                'legal_hold_until': artifact.legal_hold_until.isoformat() if artifact.legal_hold_until else None,
+            },
+        )
+        db.session.add(entry)
+        db.session.commit()
+
+        log_security_event(
+            action='artifact_legal_hold' if hold else 'artifact_legal_hold_released',
+            resource_type='artifact',
+            resource_id=artifact.id,
+            incident_id=artifact.incident_id,
+            details={'filename': artifact.original_filename, 'hold': bool(hold), 'reason': reason},
+        )
+        return entry
+
+    @staticmethod
     def get_custody_chain(artifact_id: str) -> list:
         """Get the complete chain of custody for an artifact.
 
@@ -239,11 +266,20 @@ class ChainOfCustodyService:
         Returns:
             List of ChainOfCustody records
         """
+        from flask import current_app
+        from app.models.artifact import custody_signing_key
+        secret = custody_signing_key()
+        legacy_secret = current_app.config.get('SECRET_KEY', '')
         entries = ChainOfCustody.query.filter_by(
             artifact_id=artifact_id
         ).order_by(ChainOfCustody.created_at.asc()).all()
 
-        return [entry.to_dict() for entry in entries]
+        result = []
+        for entry in entries:
+            d = entry.to_dict()
+            d['signature_status'] = entry.signature_status(secret, legacy_secret=legacy_secret)
+            result.append(d)
+        return result
 
     @staticmethod
     def get_user_access_history(artifact_id: str, user_id: str) -> list:

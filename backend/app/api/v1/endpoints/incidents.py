@@ -14,6 +14,52 @@ from app.services.import_service import ImportService
 logger = logging.getLogger(__name__)
 
 
+def accessible_incidents_query(user):
+    """Base query of incidents the user may access (org + role/team/assignment
+    scoped). Shared by list_incidents and cross-incident search/correlation so
+    the access rules cannot diverge between them.
+    """
+    from app.middleware.rbac import incident_access_tier
+    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=False)
+    tier = incident_access_tier(user)
+    if tier == 'full':
+        return query
+
+    has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
+        IncidentAssignment.user_id == user.id,
+        IncidentAssignment.removed_at.is_(None)
+    )
+    # Operators: only directly assigned incidents.
+    if tier == 'operator':
+        query = query.filter(Incident.id.in_(has_assignment))
+    # Viewers: directly assigned + all TLP:WHITE incidents in their org.
+    elif tier == 'viewer':
+        query = query.filter(
+            db.or_(
+                Incident.id.in_(has_assignment),
+                Incident.tlp == 'white'
+            )
+        )
+    # Responders/Analysts: team-scoped + directly assigned + org-wide (no team).
+    else:
+        user_team_ids = db.session.query(TeamMember.team_id).filter(
+            TeamMember.user_id == user.id
+        )
+        has_team = db.session.query(IncidentTeam.incident_id).filter(
+            IncidentTeam.team_id.in_(user_team_ids)
+        )
+        no_teams = ~db.session.query(IncidentTeam).filter(
+            IncidentTeam.incident_id == Incident.id
+        ).exists()
+        query = query.filter(
+            db.or_(
+                Incident.id.in_(has_assignment),
+                Incident.id.in_(has_team),
+                no_teams
+            )
+        )
+    return query
+
 
 @api_bp.route('/incidents', methods=['GET'])
 @jwt_required()
@@ -30,57 +76,7 @@ def list_incidents():
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', 20, type=int), 100)
 
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=False)
-
-    # For Operators, only show directly assigned incidents
-    if user.has_role('Operator') and not user.has_role('Viewer'):
-        query = query.join(IncidentAssignment).filter(
-            IncidentAssignment.user_id == user.id,
-            IncidentAssignment.removed_at.is_(None)
-        )
-    # For Viewers, show directly assigned incidents + all TLP:WHITE incidents in their org
-    elif user.has_role('Viewer') and not user.has_role('Administrator') and not user.has_role('Manager'):
-        has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
-            IncidentAssignment.user_id == user.id,
-            IncidentAssignment.removed_at.is_(None)
-        ).subquery()
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(db.session.query(has_assignment)),
-                Incident.tlp == 'white'
-            )
-        )
-    # For Incident Responders/Analysts, show team-scoped + directly assigned
-    elif not user.has_role('Administrator') and not user.has_role('Manager'):
-        # Get user's team IDs
-        user_team_ids = db.session.query(TeamMember.team_id).filter(
-            TeamMember.user_id == user.id
-        ).subquery()
-
-        # Show incidents that are:
-        # 1. Assigned to the user directly, OR
-        # 2. Associated with one of the user's teams, OR
-        # 3. Not associated with any team (org-wide incidents)
-        has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
-            IncidentAssignment.user_id == user.id,
-            IncidentAssignment.removed_at.is_(None)
-        ).subquery()
-
-        has_team = db.session.query(IncidentTeam.incident_id).filter(
-            IncidentTeam.team_id.in_(db.session.query(user_team_ids))
-        ).subquery()
-
-        no_teams = ~db.session.query(IncidentTeam).filter(
-            IncidentTeam.incident_id == Incident.id
-        ).exists()
-
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(db.session.query(has_assignment)),
-                Incident.id.in_(db.session.query(has_team)),
-                no_teams
-            )
-        )
+    query = accessible_incidents_query(user)
 
     # Filter by team_id if provided
     team_id = request.args.get('team_id')
@@ -446,6 +442,17 @@ def permanent_delete_incident(incident_id):
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+
+    # Forensic preservation: never purge evidence that is under legal hold
+    # (the artifacts would cascade-delete with the incident).
+    from app.models import Artifact
+    held = [a for a in Artifact.query.filter_by(incident_id=incident.id).all() if a.under_legal_hold]
+    if held:
+        return jsonify({
+            'error': 'conflict',
+            'message': f'{len(held)} artifact(s) are under legal hold; release the hold(s) before permanently deleting this incident',
+            'held_artifact_ids': [str(a.id) for a in held],
+        }), 409
 
     db.session.delete(incident)
     db.session.commit()

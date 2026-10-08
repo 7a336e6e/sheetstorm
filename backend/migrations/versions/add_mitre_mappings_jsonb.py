@@ -16,13 +16,28 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table, column):
+    insp = sa.inspect(op.get_bind())
+    return column in {c['name'] for c in insp.get_columns(table)}
+
+
+def _index_exists(table, index):
+    insp = sa.inspect(op.get_bind())
+    return index in {i['name'] for i in insp.get_indexes(table)}
+
+
 def upgrade():
-    """Add mitre_mappings JSONB column and migrate existing data."""
+    """Add mitre_mappings JSONB column and migrate existing data.
+
+    Idempotent: database/init/002_schema.sql already creates the column and
+    its GIN index on fresh installs, so only add what is missing.
+    """
 
     # --- timeline_events ---
-    op.add_column('timeline_events', sa.Column(
-        'mitre_mappings', postgresql.JSONB(), nullable=True, server_default='[]'
-    ))
+    if not _column_exists('timeline_events', 'mitre_mappings'):
+        op.add_column('timeline_events', sa.Column(
+            'mitre_mappings', postgresql.JSONB(), nullable=True, server_default='[]'
+        ))
 
     # Migrate existing single-value rows into the new JSONB array
     op.execute("""
@@ -40,12 +55,13 @@ def upgrade():
     """)
 
     # GIN index for JSONB containment queries
-    op.create_index(
-        'idx_timeline_mitre_mappings',
-        'timeline_events',
-        ['mitre_mappings'],
-        postgresql_using='gin'
-    )
+    if not _index_exists('timeline_events', 'idx_timeline_mitre_mappings'):
+        op.create_index(
+            'idx_timeline_mitre_mappings',
+            'timeline_events',
+            ['mitre_mappings'],
+            postgresql_using='gin'
+        )
 
 
 def downgrade():

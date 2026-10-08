@@ -9,6 +9,7 @@ from app.models import Task, TaskComment
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_task_assigned
+from app.utils.validation import parse_datetime, check_choice, json_body
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/tasks', methods=['GET'])
@@ -59,18 +60,18 @@ def create_task(incident_id):
     """Create a new task."""
     user = get_current_user()
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
-    if not data:
-        return jsonify({'error': 'bad_request', 'message': 'No data provided'}), 400
-
-    title = data.get('title', '').strip()
+    title = (data.get('title') or '').strip() if isinstance(data.get('title') or '', str) else ''
     if not title:
         return jsonify({'error': 'bad_request', 'message': 'title is required'}), 400
 
-    priority = data.get('priority', 'medium')
+    priority = data.get('priority') or 'medium'
     if priority not in Task.PRIORITIES:
         return jsonify({'error': 'bad_request', 'message': 'Invalid priority'}), 400
+    task_type = check_choice(data.get('task_type') or 'action_item', Task.TASK_TYPES, 'task_type')
+    lead_outcome = check_choice(data.get('lead_outcome') or None, Task.LEAD_OUTCOMES, 'lead_outcome', allow_none=True)
+    due_date = parse_datetime(data.get('due_date'), 'due_date')
 
     # Convert empty strings to None for UUID fields
     assignee_id = data.get('assignee_id') or None
@@ -83,12 +84,16 @@ def create_task(incident_id):
         status='pending',
         priority=priority,
         assignee_id=assignee_id,
-        due_date=parse_date(data['due_date']) if data.get('due_date') else None,
-        checklist=data.get('checklist', []),
+        due_date=due_date,
+        checklist=data.get('checklist') or [],
         phase=data.get('phase'),
         parent_task_id=parent_task_id,
         order_index=data.get('order_index', 0),
-        extra_data=data.get('extra_data', {}),
+        task_type=task_type,
+        lead_outcome=lead_outcome,
+        investigation_direction=data.get('investigation_direction'),
+        evidence_refs=data.get('evidence_refs') or [],
+        extra_data=data.get('extra_data') or {},
         created_by=user.id
     )
 
@@ -125,13 +130,27 @@ def get_task(incident_id, task_id):
 def update_task(incident_id, task_id):
     """Update a task."""
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
     task = Task.query.filter_by(id=task_id, incident_id=incident.id).first()
     if not task:
         return jsonify({'error': 'not_found', 'message': 'Task not found'}), 404
 
     old_assignee = task.assignee_id
+
+    # Validate before mutating anything.
+    if 'title' in data and (not isinstance(data['title'], str) or not data['title'].strip()):
+        return jsonify({'error': 'bad_request', 'message': 'title must be a non-empty string'}), 400
+    if 'priority' in data:
+        check_choice(data['priority'], Task.PRIORITIES, 'priority')
+    if 'task_type' in data:
+        # Explicit null resets to the default (column is NOT NULL).
+        data['task_type'] = check_choice(data['task_type'] or 'action_item', Task.TASK_TYPES, 'task_type')
+    if 'lead_outcome' in data:
+        data['lead_outcome'] = check_choice(data['lead_outcome'] or None, Task.LEAD_OUTCOMES,
+                                            'lead_outcome', allow_none=True)
+    if 'due_date' in data:
+        data['due_date'] = parse_datetime(data['due_date'], 'due_date')
 
     # Convert empty strings to None for UUID fields
     for uuid_field in ['assignee_id', 'parent_task_id']:
@@ -140,7 +159,8 @@ def update_task(incident_id, task_id):
 
     # Update fields
     for field in ['title', 'description', 'priority', 'assignee_id', 'checklist',
-                  'phase', 'order_index', 'extra_data']:
+                  'phase', 'order_index', 'extra_data',
+                  'task_type', 'lead_outcome', 'investigation_direction', 'evidence_refs']:
         if field in data:
             setattr(task, field, data[field])
 
@@ -153,7 +173,7 @@ def update_task(incident_id, task_id):
             task.completed_at = datetime.now(timezone.utc)
 
     if 'due_date' in data:
-        task.due_date = parse_date(data['due_date']) if data['due_date'] else None
+        task.due_date = data['due_date']
 
     db.session.commit()
 

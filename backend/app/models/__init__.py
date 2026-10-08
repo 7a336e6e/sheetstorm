@@ -16,6 +16,7 @@ from app.models.team import Team, TeamMember
 from app.models.case_note import CaseNote
 from app.models.custom_field import CustomFieldOption
 from app.models.mitre_pattern import MitrePattern
+from app.models.playbook import Playbook, IncidentPlaybook
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
@@ -35,4 +36,5 @@ __all__ = [
     'CaseNote',
     'CustomFieldOption',
     'MitrePattern',
+    'Playbook', 'IncidentPlaybook',
 ]

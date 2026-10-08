@@ -19,6 +19,12 @@ class CompromisedHost(BaseModel):
     first_seen = Column(DateTime(timezone=True))
     last_seen = Column(DateTime(timezone=True))
     containment_status = Column(String(50), default='active')
+    # Investigation triage — distinct from containment (a response action).
+    # clean / compromised / under_analysis / suspicious
+    triage_status = Column(String(50), nullable=False, default='under_analysis', server_default='under_analysis')
+    # Forensic acquisition progress: {disk_imaged, memory_captured,
+    # logs_collected, forensically_sound, acquired_at}
+    acquisition_status = Column(JSONB, default=dict)
     notes = Column(Text)
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
@@ -37,8 +43,9 @@ class CompromisedHost(BaseModel):
     host_indicators = relationship('HostBasedIndicator', back_populates='host_ref', lazy='dynamic')
 
     CONTAINMENT_STATUSES = ['active', 'compromised', 'isolated', 'contained', 'reimaged', 'cleaned', 'decommissioned']
-    SYSTEM_TYPES = ['workstation', 'server', 'domain_controller', 'database', 'web_server', 
+    SYSTEM_TYPES = ['workstation', 'server', 'domain_controller', 'database', 'web_server',
                     'file_server', 'mail_server', 'laptop', 'virtual_machine', 'container', 'other']
+    TRIAGE_STATUSES = ['clean', 'compromised', 'under_analysis', 'suspicious']
 
     def __repr__(self):
         return f'<CompromisedHost {self.hostname}>'

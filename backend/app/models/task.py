@@ -21,6 +21,12 @@ class Task(BaseModel):
     phase = Column(Integer)
     parent_task_id = Column(UUID(as_uuid=True), ForeignKey('tasks.id'))
     order_index = Column(Integer, default=0)
+    # DFIR investigation tracking — distinguishes investigative leads/pivots
+    # (a thing to chase, with an outcome) from generic action items.
+    task_type = Column(String(50), nullable=False, default='action_item', server_default='action_item')
+    lead_outcome = Column(String(50))
+    investigation_direction = Column(Text)
+    evidence_refs = Column(JSONB, default=list)  # [{evidence_type, evidence_id}]
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
@@ -34,6 +40,8 @@ class Task(BaseModel):
 
     STATUSES = ['pending', 'in_progress', 'completed', 'blocked', 'cancelled']
     PRIORITIES = ['low', 'medium', 'high', 'critical']
+    TASK_TYPES = ['action_item', 'investigative_lead', 'verification', 'documentation', 'reporting']
+    LEAD_OUTCOMES = ['false_positive', 'confirmed_malicious', 'inconclusive', 'resolved']
 
     def __repr__(self):
         return f'<Task {self.title}>'

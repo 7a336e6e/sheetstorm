@@ -25,6 +25,10 @@ class TimelineEvent(BaseModel):
     is_key_event = Column(Boolean, default=False)
     is_ioc = Column(Boolean, default=False)  # Flag if marked as IOC
     kill_chain_phase = Column(String(50))  # Lockheed Martin kill chain phase
+    # Dual-dating: `timestamp` is when the activity occurred (event time);
+    # `detection_time` is when the analyst/tooling detected it.
+    detection_time = Column(DateTime(timezone=True))
+    confidence_level = Column(String(20))  # low|medium|high|certain
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
@@ -34,6 +38,8 @@ class TimelineEvent(BaseModel):
     host = relationship('CompromisedHost', back_populates='timeline_events', foreign_keys=[host_id])
     creator = relationship('User')
     host_indicators = relationship('HostBasedIndicator', back_populates='source_event', lazy='dynamic')
+
+    CONFIDENCE_LEVELS = ['low', 'medium', 'high', 'certain']
 
     # MITRE ATT&CK tactics
     MITRE_TACTICS = [

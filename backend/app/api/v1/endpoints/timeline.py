@@ -10,6 +10,7 @@ from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
+from app.utils.validation import parse_datetime, check_choice, json_body
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline', methods=['GET'])
@@ -47,13 +48,13 @@ def list_timeline_events(incident_id):
             TimelineEvent.mitre_mappings.contains([{'tactic': mitre_tactic}])
         ))
 
-    start_date = request.args.get('start_date')
+    start_date = parse_datetime(request.args.get('start_date'), 'start_date')
     if start_date:
-        query = query.filter(TimelineEvent.timestamp >= parse_date(start_date))
+        query = query.filter(TimelineEvent.timestamp >= start_date)
 
-    end_date = request.args.get('end_date')
+    end_date = parse_datetime(request.args.get('end_date'), 'end_date')
     if end_date:
-        query = query.filter(TimelineEvent.timestamp <= parse_date(end_date))
+        query = query.filter(TimelineEvent.timestamp <= end_date)
 
     key_only = request.args.get('key_only')
     if key_only and key_only.lower() == 'true':
@@ -84,16 +85,15 @@ def create_timeline_event(incident_id):
     """Add a timeline event."""
     user = get_current_user()
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
-    if not data:
-        return jsonify({'error': 'bad_request', 'message': 'No data provided'}), 400
+    timestamp = parse_datetime(data.get('timestamp'), 'timestamp', required=True)
+    detection_time = parse_datetime(data.get('detection_time'), 'detection_time')
+    confidence_level = check_choice(data.get('confidence_level') or None,
+                                    TimelineEvent.CONFIDENCE_LEVELS, 'confidence_level', allow_none=True)
 
-    timestamp = data.get('timestamp')
-    if not timestamp:
-        return jsonify({'error': 'bad_request', 'message': 'timestamp is required'}), 400
-
-    activity = data.get('activity', '').strip()
+    activity = data.get('activity') if isinstance(data.get('activity'), str) else ''
+    activity = activity.strip()
     if not activity:
         return jsonify({'error': 'bad_request', 'message': 'activity is required'}), 400
 
@@ -111,7 +111,8 @@ def create_timeline_event(incident_id):
     # Auto-suggest MITRE mappings if none provided
     if not mitre_mappings and activity:
         from app.services.mitre_suggest_service import suggest
-        suggestions = suggest(activity, limit=5, min_score=0.15)
+        suggestions = suggest(activity, limit=5, min_score=0.15,
+                              organization_id=str(incident.organization_id))
         if suggestions:
             mitre_mappings = []
             for s in suggestions:
@@ -124,6 +125,8 @@ def create_timeline_event(incident_id):
                 })
 
     # Validate each mapping entry
+    if not isinstance(mitre_mappings, list) or not all(isinstance(m, dict) for m in mitre_mappings):
+        return jsonify({'error': 'bad_request', 'message': 'mitre_mappings must be a list of objects'}), 400
     for m in mitre_mappings:
         tactic = m.get('tactic', '')
         if tactic and tactic not in TimelineEvent.MITRE_TACTICS:
@@ -144,7 +147,7 @@ def create_timeline_event(incident_id):
 
     event = TimelineEvent(
         incident_id=incident.id,
-        timestamp=parse_date(timestamp) if isinstance(timestamp, str) else timestamp,
+        timestamp=timestamp,
         host_id=host_id,
         hostname=hostname,
         activity=activity,
@@ -155,7 +158,9 @@ def create_timeline_event(incident_id):
         phase=data.get('phase'),
         is_key_event=data.get('is_key_event', False),
         is_ioc=data.get('is_ioc', False),
-        extra_data=data.get('extra_data', {}),
+        detection_time=detection_time,
+        confidence_level=confidence_level,
+        extra_data=data.get('extra_data') or {},
         created_by=user.id
     )
 
@@ -182,15 +187,31 @@ def create_timeline_event(incident_id):
 def update_timeline_event(incident_id, event_id):
     """Update a timeline event."""
     incident = g.incident
-    data = request.get_json()
+    data = json_body()
 
     event = TimelineEvent.query.filter_by(id=event_id, incident_id=incident.id).first()
     if not event:
         return jsonify({'error': 'not_found', 'message': 'Timeline event not found'}), 404
 
+    # Validate before mutating anything.
+    if 'timestamp' in data:
+        data['timestamp'] = parse_datetime(data['timestamp'], 'timestamp', required=True)
+    if 'detection_time' in data:
+        data['detection_time'] = parse_datetime(data['detection_time'], 'detection_time')
+    if 'confidence_level' in data:
+        data['confidence_level'] = check_choice(data['confidence_level'] or None,
+                                                TimelineEvent.CONFIDENCE_LEVELS, 'confidence_level',
+                                                allow_none=True)
+    if 'activity' in data and (not isinstance(data['activity'], str) or not data['activity'].strip()):
+        return jsonify({'error': 'bad_request', 'message': 'activity must be a non-empty string'}), 400
+    if 'mitre_mappings' in data and data['mitre_mappings'] is not None and (
+            not isinstance(data['mitre_mappings'], list)
+            or not all(isinstance(m, dict) for m in data['mitre_mappings'])):
+        return jsonify({'error': 'bad_request', 'message': 'mitre_mappings must be a list of objects'}), 400
+
     # Update fields
     if 'timestamp' in data:
-        event.timestamp = parse_date(data['timestamp']) if isinstance(data['timestamp'], str) else data['timestamp']
+        event.timestamp = data['timestamp']
     if 'host_id' in data:
         if data['host_id']:
             host = CompromisedHost.query.filter_by(id=data['host_id'], incident_id=incident.id).first()
@@ -206,6 +227,10 @@ def update_timeline_event(incident_id, event_id):
         event.activity = data['activity']
     if 'source' in data:
         event.source = data['source']
+    if 'detection_time' in data:
+        event.detection_time = data['detection_time']
+    if 'confidence_level' in data:
+        event.confidence_level = data['confidence_level']
 
     # Handle mitre_mappings: accept new array format or legacy single fields
     if 'mitre_mappings' in data:
@@ -234,7 +259,8 @@ def update_timeline_event(incident_id, event_id):
     current_mappings = event.mitre_mappings or []
     if not current_mappings and not event.mitre_tactic and not event.mitre_technique and event.activity:
         from app.services.mitre_suggest_service import suggest
-        suggestions = suggest(event.activity, limit=5, min_score=0.15)
+        suggestions = suggest(event.activity, limit=5, min_score=0.15,
+                              organization_id=str(incident.organization_id))
         if suggestions:
             new_mappings = []
             for s in suggestions:

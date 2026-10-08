@@ -1,8 +1,103 @@
-"""AI service for generating incident reports and summaries using LLM providers."""
+"""AI service for generating incident reports and summaries using LLM providers.
+
+TLP egress policy (organization setting ``ai_tlp_policy``)
+---------------------------------------------------------
+Every AI call carries the incident's TLP (required ``incident_tlp=`` kwarg) and
+goes through ``_select_provider``, the single enforcement point:
+
+* ``allow``      — any configured provider;
+* ``local_only`` — only ``ollama`` / ``openai_compatible`` whose base URL host
+  is non-public AND on ``OUTBOUND_URL_ALLOWLIST`` (cloud providers refused);
+* ``block``      — no provider.
+
+Defaults (missing / invalid keys fall back to them): ``red`` and
+``amber_strict`` -> ``local_only``; ``amber``, ``green``, ``white`` -> ``allow``.
+A refusal raises ``AIBlockedByTLP`` (403 ``ai_blocked_by_tlp``) and records a
+``security_event / ai_blocked_by_tlp``. Explicit requests surface the 403;
+automatic paths fall back (deterministic report) or skip.
+
+All LLM network calls live in this module (a test enforces it).
+"""
 import json
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 from flask import current_app
 from app.services.encryption_service import EncryptionService
+
+AI_POLICY_MODES = ('allow', 'local_only', 'block')
+AI_TLP_POLICY_DEFAULTS = {
+    'white': 'allow',
+    'green': 'allow',
+    'amber': 'allow',
+    'amber_strict': 'local_only',
+    'red': 'local_only',
+}
+AI_PROVIDERS = ('openai', 'google', 'ollama', 'openai_compatible')
+_LOCAL_CAPABLE_PROVIDERS = ('ollama', 'openai_compatible')
+
+
+class AIBlockedByTLP(Exception):
+    """403 ``ai_blocked_by_tlp``: the incident TLP policy refuses AI egress."""
+    status = 403
+    code = 'ai_blocked_by_tlp'
+
+    def __init__(self, tlp, mode, provider=None, feature=None, explicit=False):
+        self.tlp = tlp
+        self.mode = mode
+        self.provider = provider
+        self.feature = feature
+        # True when a specifically requested (configured) provider was refused.
+        self.explicit = explicit
+        if mode == 'block':
+            msg = f'AI is disabled for TLP:{str(tlp).upper()} incidents by organization policy'
+        elif provider:
+            msg = (f'AI provider "{provider}" may not process TLP:{str(tlp).upper()} data; '
+                   'organization policy allows only internal (local) providers')
+        else:
+            msg = (f'No configured AI provider may process TLP:{str(tlp).upper()} data; '
+                   'organization policy allows only internal (local) providers')
+        self.message = msg
+        super().__init__(msg)
+
+    def to_dict(self):
+        return {'error': self.code, 'message': self.message,
+                'tlp': self.tlp, 'mode': self.mode, 'provider': self.provider}
+
+    def to_response(self):
+        from flask import jsonify
+        return jsonify(self.to_dict()), self.status
+
+
+def effective_ai_tlp_policy(settings) -> dict:
+    """``{tlp: mode}`` for every TLP level: stored values merged over defaults.
+
+    Read defensively: anything that is not a known TLP key with a known mode
+    is ignored (schema validation lives in ``schemas/organization.py``).
+    """
+    policy = dict(AI_TLP_POLICY_DEFAULTS)
+    stored = (settings or {}).get('ai_tlp_policy') if isinstance(settings, dict) else None
+    if isinstance(stored, dict):
+        for tlp, mode in stored.items():
+            if tlp in policy and mode in AI_POLICY_MODES:
+                policy[tlp] = mode
+    return policy
+
+
+def ai_policy_mode(organization_id, incident_tlp) -> str:
+    """Policy mode for this org and TLP. An unknown TLP fails closed (``block``)."""
+    if incident_tlp not in AI_TLP_POLICY_DEFAULTS:
+        return 'block'
+    settings = {}
+    if organization_id:
+        try:
+            import uuid as _uuid
+            from app import db
+            from app.models import Organization
+            org = db.session.get(Organization, _uuid.UUID(str(organization_id)))
+            settings = (org.settings if org else None) or {}
+        except Exception:
+            current_app.logger.warning('Could not load organization AI policy; using defaults')
+    return effective_ai_tlp_policy(settings)[incident_tlp]
 
 
 class AIService:
@@ -526,6 +621,106 @@ Provide prioritized recommendations with specific technical steps."""
         return [p for p in ('openai', 'google', 'ollama', 'openai_compatible')
                 if self.is_configured(p, organization_id)]
 
+    # ── TLP egress policy (single enforcement point) ──────────────────
+
+    def _provider_base_url(self, provider: str, organization_id: Optional[str]) -> Optional[str]:
+        if provider == 'ollama':
+            return self.ollama_base_url(organization_id)
+        if provider == 'openai_compatible':
+            return self._resolve_openai_compatible(organization_id)[0]
+        return None
+
+    def provider_locality(self, provider: str, organization_id: Optional[str]):
+        """``(is_local, reason)``: local = ollama/openai_compatible whose base URL
+        host is non-public AND on OUTBOUND_URL_ALLOWLIST. Fails closed."""
+        if provider not in _LOCAL_CAPABLE_PROVIDERS:
+            return False, 'cloud_provider'
+        base = self._provider_base_url(provider, organization_id)
+        if not base:
+            return False, 'not_configured'
+        import ipaddress
+        import socket
+        from app.utils.url_validator import (_host_allowlisted, _is_always_blocked,
+                                             _is_non_public, _load_allowlist)
+        try:
+            host = urlparse(base).hostname
+        except ValueError:
+            host = None
+        if not host:
+            return False, 'invalid_url'
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            ips = [ipaddress.ip_address(i[4][0].split('%', 1)[0]) for i in infos]
+        except (OSError, UnicodeError, ValueError):
+            return False, 'unresolvable'
+        if not ips or any(_is_always_blocked(ip) for ip in ips):
+            return False, 'unresolvable'
+        if not all(_is_non_public(ip) for ip in ips):
+            return False, 'public_host'
+        if not _host_allowlisted(host, ips, _load_allowlist(None)):
+            return False, 'not_allowlisted'
+        return True, 'local'
+
+    def provider_allowed(self, provider: str, organization_id: Optional[str], mode: str):
+        """``(allowed, reason)`` for one provider under a policy mode."""
+        if mode == 'allow':
+            return True, 'allowed'
+        if mode == 'block':
+            return False, 'policy_block'
+        is_local, reason = self.provider_locality(provider, organization_id)
+        return (True, 'local') if is_local else (False, reason)
+
+    def provider_policy(self, organization_id: Optional[str], *, incident_tlp: str) -> dict:
+        """``{policy_mode, providers:[{name, allowed, reason}]}`` for the UI."""
+        mode = ai_policy_mode(organization_id, incident_tlp)
+        providers = []
+        for name in self.get_available_providers(organization_id):
+            allowed, reason = self.provider_allowed(name, organization_id, mode)
+            providers.append({'name': name, 'allowed': allowed, 'reason': reason})
+        return {'policy_mode': mode, 'providers': providers}
+
+    def _select_provider(self, organization_id: Optional[str], requested: Optional[str], *,
+                         incident_tlp: str, feature: str, incident_id=None) -> Optional[str]:
+        """Choose the provider for an AI call, enforcing the org's TLP policy.
+
+        Returns None when no provider is configured. A configured ``requested``
+        provider that the policy refuses raises ``AIBlockedByTLP(explicit=True)``;
+        otherwise the first allowed configured provider is used, and if none is
+        allowed ``AIBlockedByTLP`` is raised. Every refusal is recorded as
+        ``security_event / ai_blocked_by_tlp``.
+        """
+        available = self.get_available_providers(organization_id)
+        if not available:
+            return None
+        mode = ai_policy_mode(organization_id, incident_tlp)
+        if requested in available:
+            if self.provider_allowed(requested, organization_id, mode)[0]:
+                return requested
+            self._refuse(incident_tlp, mode, requested, feature, incident_id, organization_id, explicit=True)
+        for name in available:
+            if self.provider_allowed(name, organization_id, mode)[0]:
+                return name
+        self._refuse(incident_tlp, mode, None, feature, incident_id, organization_id,
+                     explicit=False, candidates=available)
+
+    @staticmethod
+    def _refuse(tlp, mode, provider, feature, incident_id, organization_id, *, explicit, candidates=None):
+        from app.middleware.audit import log_security_event
+        details = {'feature': feature, 'provider': provider, 'tlp': tlp, 'mode': mode}
+        if candidates:
+            details['candidates'] = list(candidates)
+        log_security_event('ai_blocked_by_tlp', resource_type='incident',
+                           resource_id=incident_id, incident_id=incident_id, details=details,
+                           organization_id=organization_id)
+        raise AIBlockedByTLP(tlp, mode, provider=provider, feature=feature, explicit=explicit)
+
+    def select_provider(self, organization_id: Optional[str], requested: Optional[str] = None, *,
+                        incident_tlp: str, feature: str, incident_id=None) -> Optional[str]:
+        """Public wrapper of ``_select_provider`` (call sites that must know the
+        provider before generating, e.g. to store it on a Report)."""
+        return self._select_provider(organization_id, requested, incident_tlp=incident_tlp,
+                                     feature=feature, incident_id=incident_id)
+
     def list_ollama_models(self, organization_id: Optional[str] = None) -> List[str]:
         """Fetch available model tags from the org's Ollama instance."""
         import requests
@@ -551,6 +746,10 @@ Provide prioritized recommendations with specific technical steps."""
         iocs: Dict[str, list],
         provider: str = None,
         organization_id: Optional[str] = None,
+        *,
+        incident_tlp: str,
+        incident_id=None,
+        feature: str = 'report',
     ) -> Optional[str]:
         """Generate a full AI-powered report in Markdown format.
 
@@ -562,15 +761,19 @@ Provide prioritized recommendations with specific technical steps."""
             iocs: Dict with 'network', 'host', 'malware' lists
             provider: provider name (auto-detected if None)
             organization_id: org whose AI integration to use
+            incident_tlp: the incident's TLP (required; policy enforcement)
+            incident_id: recorded on the ai_blocked_by_tlp security event
 
         Returns:
-            Markdown string or None on failure
+            Markdown string or None on failure / no provider configured
+
+        Raises:
+            AIBlockedByTLP when the org's TLP policy refuses AI for this data
         """
+        provider = self._select_provider(organization_id, provider, incident_tlp=incident_tlp,
+                                         feature=feature, incident_id=incident_id)
         if provider is None:
-            providers = self.get_available_providers(organization_id)
-            if not providers:
-                return None
-            provider = providers[0]
+            return None
 
         # Build the user prompt with all incident data
         user_prompt = self._build_report_user_prompt(
@@ -670,11 +873,16 @@ Provide prioritized recommendations with specific technical steps."""
         summary_type: str = 'executive',
         provider: str = None,
         organization_id: Optional[str] = None,
+        *,
+        incident_tlp: str,
+        incident_id=None,
+        feature: str = 'summary',
     ) -> Optional[str]:
         """Async wrapper of generate_summary_sync (kept for compatibility)."""
         return self.generate_summary_sync(
             incident_data, timeline_events, compromised_assets, iocs,
             summary_type=summary_type, provider=provider, organization_id=organization_id,
+            incident_tlp=incident_tlp, incident_id=incident_id, feature=feature,
         )
 
     def generate_summary_sync(
@@ -686,13 +894,19 @@ Provide prioritized recommendations with specific technical steps."""
         summary_type: str = 'executive',
         provider: str = None,
         organization_id: Optional[str] = None,
+        *,
+        incident_tlp: str,
+        incident_id=None,
+        feature: str = 'summary',
     ) -> Optional[str]:
-        """Generate an AI summary ('executive', 'technical', 'recommendations')."""
+        """Generate an AI summary ('executive', 'technical', 'recommendations').
+
+        Raises AIBlockedByTLP when the org's TLP policy refuses AI for this data.
+        """
+        provider = self._select_provider(organization_id, provider, incident_tlp=incident_tlp,
+                                         feature=feature, incident_id=incident_id)
         if provider is None:
-            providers = self.get_available_providers(organization_id)
-            if not providers:
-                return None
-            provider = providers[0]
+            return None
 
         prompt = self._summary_prompt(incident_data, timeline_events, compromised_assets, iocs, summary_type)
 

@@ -37,12 +37,19 @@ class PlaybookService:
     @staticmethod
     def _enrich_iocs(incident, config):
         from app.services.enrichment_service import EnrichmentService
+        from app.services.egress_policy import enrichment_allowed, filter_values_for_enrichment
         from app.models import NetworkIndicator
+        if not enrichment_allowed(incident):
+            return {'status': 'skipped', 'code': 'tlp_restricted',
+                    'message': f'Enrichment is not allowed for TLP:{incident.tlp.upper()} incidents'}
         iocs = NetworkIndicator.query.filter_by(incident_id=incident.id).all()
+        _, blocked = filter_values_for_enrichment(
+            incident.organization_id, [(i.dns_ip or '').strip() for i in iocs])
+        blocked = {b.lower() for b in blocked}
         enriched = 0
         for ioc in iocs:
             val = (ioc.dns_ip or '').strip()
-            if not val:
+            if not val or val.lower() in blocked:
                 continue
             itype = 'ip-src' if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', val) else 'domain'
             result = EnrichmentService.auto_enrich_ioc(itype, val, str(incident.organization_id))
@@ -80,25 +87,37 @@ class PlaybookService:
     def _generate_summary(incident, config, user):
         """Generate an AI summary and persist it as a Report (downloadable /
         re-renderable from the Reports tab like any AI report)."""
-        from app.services.ai_service import ai_service
+        from app.services.ai_service import ai_service, AIBlockedByTLP
         from app.models import TimelineEvent, CompromisedHost, Report
         org_id = str(incident.organization_id)
-        providers = ai_service.get_available_providers(organization_id=org_id)
-        if not providers:
+        # Automatic path: only a provider the org's AI TLP policy allows; if
+        # none is, skip (the refusal is recorded as a security event).
+        try:
+            provider = ai_service.select_provider(org_id, None, incident_tlp=incident.tlp,
+                                                  feature='playbook_summary', incident_id=incident.id)
+        except AIBlockedByTLP as e:
+            return {'status': 'skipped', 'code': e.code, 'message': e.message}
+        if not provider:
             return {'status': 'skipped', 'message': 'No AI provider configured'}
         report_type = config.get('report_type', 'executive')
         if report_type not in Report.REPORT_TYPES:
             report_type = 'executive'
         events = [e.to_dict() for e in TimelineEvent.query.filter_by(incident_id=incident.id).limit(100).all()]
         hosts = [h.to_dict() for h in CompromisedHost.query.filter_by(incident_id=incident.id).limit(50).all()]
-        markdown = ai_service.generate_report(
-            report_type,
-            incident.to_dict(), events,
-            {'hosts': hosts, 'accounts': []},
-            {'network': [], 'host': [], 'malware': []},
-            provider=providers[0],
-            organization_id=org_id,
-        )
+        try:
+            markdown = ai_service.generate_report(
+                report_type,
+                incident.to_dict(), events,
+                {'hosts': hosts, 'accounts': []},
+                {'network': [], 'host': [], 'malware': []},
+                provider=provider,
+                organization_id=org_id,
+                incident_tlp=incident.tlp,
+                incident_id=incident.id,
+                feature='playbook_summary',
+            )
+        except AIBlockedByTLP as e:
+            return {'status': 'skipped', 'code': e.code, 'message': e.message}
         if not markdown:
             return {'status': 'error', 'message': 'Summary generation returned nothing'}
         report = Report(
@@ -107,7 +126,7 @@ class PlaybookService:
             report_type=report_type,
             format='pdf',
             ai_summary=markdown,
-            ai_provider=providers[0],
+            ai_provider=provider,
             sections=[],
             generated_by=user.id,
         )

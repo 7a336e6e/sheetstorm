@@ -15,6 +15,20 @@ from app.utils.url_validator import validate_outbound_url
 logger = logging.getLogger(__name__)
 
 
+def _tlp_blocked_response(user, value, lookup):
+    """403 ``tlp_restricted`` when ``value`` belongs to a TLP-restricted
+    incident of the user's org (TLP egress block), else None."""
+    from app.services.egress_policy import EgressBlocked, assert_values_allowed
+    from app.middleware.audit import log_security_event
+    try:
+        assert_values_allowed(user.organization_id, [value])
+    except EgressBlocked as e:
+        log_security_event('enrichment_blocked_by_tlp', resource_type='threat_intel_lookup',
+                           details={'lookup': lookup}, user=user)
+        return e.to_response()
+    return None
+
+
 def _extract_threat_labels(classification: dict) -> list[str]:
     """Safely extract popular threat labels from VirusTotal classification data.
 
@@ -62,6 +76,9 @@ def virustotal_lookup():
 
     if not value:
         return jsonify({'error': 'bad_request', 'message': 'Value is required'}), 400
+    blocked = _tlp_blocked_response(user, value, 'virustotal')
+    if blocked:
+        return blocked
 
     # Get VirusTotal API key from integration config
     integration = Integration.query.filter_by(
@@ -453,6 +470,9 @@ def ip_reputation_lookup():
 
     if not ip:
         return jsonify({'error': 'bad_request', 'message': 'IP address required'}), 400
+    blocked = _tlp_blocked_response(user, ip, 'ip')
+    if blocked:
+        return blocked
 
     result = {'ip': ip, 'sources': {}}
 
@@ -558,6 +578,9 @@ def domain_reputation_lookup():
 
     if not domain:
         return jsonify({'error': 'bad_request', 'message': 'Domain required'}), 400
+    blocked = _tlp_blocked_response(user, domain, 'domain')
+    if blocked:
+        return blocked
 
     result = {'domain': domain, 'sources': {}, 'vt_configured': False}
 
@@ -670,6 +693,9 @@ def email_reputation_lookup():
 
     if not email or '@' not in email:
         return jsonify({'error': 'bad_request', 'message': 'Valid email required'}), 400
+    blocked = _tlp_blocked_response(user, email, 'email')
+    if blocked:
+        return blocked
 
     result = {'email': email, 'sources': {}}
 

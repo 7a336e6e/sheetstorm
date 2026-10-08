@@ -11,7 +11,8 @@ from app.models import Report, Incident, TimelineEvent, CompromisedHost, Comprom
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
-from app.services.ai_service import ai_service
+from app.services.ai_service import ai_service, AIBlockedByTLP
+from app.services.pdf_render import html_to_pdf
 
 
 # ── Report type definitions ─────────────────────────────────────────────
@@ -99,16 +100,24 @@ def generate_pdf_report(incident_id):
     }
 
     # ── Step 1: Generate AI content ──────────────────────────────────
+    # The org's AI TLP policy decides which provider (if any) may see this
+    # incident. An explicitly requested provider that is refused -> 403; the
+    # automatic choice falls back to the deterministic data-only report.
     ai_markdown = None
     ai_provider_used = None
+    ai_blocked = None
 
     org_id = str(incident.organization_id)
-    available = ai_service.get_available_providers(organization_id=org_id)
-    if available:
-        used_provider = provider if provider in available else available[0]
+    try:
+        used_provider = ai_service.select_provider(
+            org_id, provider, incident_tlp=incident.tlp, feature='report_pdf', incident_id=incident.id)
+    except AIBlockedByTLP as e:
+        if e.explicit:
+            return e.to_response()
+        used_provider, ai_blocked = None, e
 
-        if used_provider:
-            ai_provider_used = used_provider
+    if used_provider:
+        try:
             ai_markdown = ai_service.generate_report(
                 report_type=report_type,
                 incident_data=incident_data,
@@ -117,7 +126,13 @@ def generate_pdf_report(incident_id):
                 iocs=iocs_data,
                 provider=used_provider,
                 organization_id=org_id,
+                incident_tlp=incident.tlp,
+                incident_id=incident.id,
+                feature='report_pdf',
             )
+            ai_provider_used = used_provider if ai_markdown else None
+        except AIBlockedByTLP as e:
+            ai_blocked = e
 
     # ── Step 2: Convert to HTML ──────────────────────────────────────
     if ai_markdown:
@@ -138,12 +153,14 @@ def generate_pdf_report(incident_id):
             malware=malware,
             sections=sections,
             report_title=report_title,
+            note=(f'AI-powered analysis was not used: organization policy restricts AI providers '
+                  f'for TLP:{incident.tlp.upper()} incidents. This is a data-only report.'
+                  if ai_blocked else None),
         )
 
-    # ── Step 3: HTML → PDF via WeasyPrint ────────────────────────────
+    # ── Step 3: HTML → PDF via WeasyPrint (external fetching disabled) ─
     try:
-        from weasyprint import HTML
-        pdf_bytes = HTML(string=html_content).write_pdf()
+        pdf_bytes = html_to_pdf(html_content)
     except Exception as e:
         current_app.logger.exception('PDF generation failed')
         return jsonify({
@@ -166,12 +183,15 @@ def generate_pdf_report(incident_id):
     db.session.commit()
 
     # ── Step 5: Return PDF ───────────────────────────────────────────
-    return send_file(
+    response = send_file(
         io.BytesIO(pdf_bytes),
         mimetype='application/pdf',
         as_attachment=True,
         download_name=f'incident_{incident.incident_number}_{report_type}_report.pdf',
     )
+    if ai_blocked:
+        response.headers['X-SheetStorm-AI-Status'] = AIBlockedByTLP.code
+    return response
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/ai-generate', methods=['POST'])
@@ -184,13 +204,15 @@ def generate_ai_summary(incident_id):
     data = request.get_json() or {}
     org_id = str(incident.organization_id)
 
-    available = ai_service.get_available_providers(organization_id=org_id)
-    if not available:
+    # Explicit AI feature: a TLP-policy refusal is always a 403.
+    try:
+        provider = ai_service.select_provider(
+            org_id, data.get('provider'), incident_tlp=incident.tlp,
+            feature='ai_summary', incident_id=incident.id)
+    except AIBlockedByTLP as e:
+        return e.to_response()
+    if not provider:
         return jsonify({'error': 'not_configured', 'message': 'AI service not configured'}), 501
-
-    provider = data.get('provider')
-    if provider not in available:
-        provider = available[0]
     summary_type = data.get('summary_type', 'executive')
 
     # Collect data
@@ -201,22 +223,28 @@ def generate_ai_summary(incident_id):
     host_iocs = HostBasedIndicator.query.filter_by(incident_id=incident.id).all()
     malware = MalwareTool.query.filter_by(incident_id=incident.id).all()
 
-    summary = ai_service.generate_summary_sync(
-        incident_data=incident.to_dict(),
-        timeline_events=[e.to_dict() for e in timeline_events],
-        compromised_assets={
-            'hosts': [h.to_dict() for h in hosts],
-            'accounts': [a.to_dict() for a in accounts]
-        },
-        iocs={
-            'network': [i.to_dict() for i in network_iocs],
-            'host': [i.to_dict() for i in host_iocs],
-            'malware': [m.to_dict() for m in malware]
-        },
-        summary_type=summary_type,
-        provider=provider,
-        organization_id=org_id,
-    )
+    try:
+        summary = ai_service.generate_summary_sync(
+            incident_data=incident.to_dict(),
+            timeline_events=[e.to_dict() for e in timeline_events],
+            compromised_assets={
+                'hosts': [h.to_dict() for h in hosts],
+                'accounts': [a.to_dict() for a in accounts]
+            },
+            iocs={
+                'network': [i.to_dict() for i in network_iocs],
+                'host': [i.to_dict() for i in host_iocs],
+                'malware': [m.to_dict() for m in malware]
+            },
+            summary_type=summary_type,
+            provider=provider,
+            organization_id=org_id,
+            incident_tlp=incident.tlp,
+            incident_id=incident.id,
+            feature='ai_summary',
+        )
+    except AIBlockedByTLP as e:
+        return e.to_response()
 
     if not summary:
         return jsonify({'error': 'server_error', 'message': 'AI generation failed'}), 500
@@ -232,9 +260,14 @@ def generate_ai_summary(incident_id):
 @jwt_required()
 @require_incident_access('reports:read')
 def list_report_types(incident_id):
-    """List available report types and AI configuration status."""
-    providers = ai_service.get_available_providers(organization_id=str(g.incident.organization_id))
-    ai_configured = bool(providers)
+    """List available report types and AI availability under the org's TLP policy.
+
+    ``providers`` = [{name, allowed, reason}] for every configured provider;
+    ``ai_providers`` keeps its old meaning of "usable providers" (allowed only).
+    """
+    policy = ai_service.provider_policy(str(g.incident.organization_id), incident_tlp=g.incident.tlp)
+    allowed = [p['name'] for p in policy['providers'] if p['allowed']]
+    ai_configured = bool(policy['providers'])
 
     types = []
     for key, val in REPORT_TYPES.items():
@@ -247,7 +280,11 @@ def list_report_types(incident_id):
     return jsonify({
         'report_types': types,
         'ai_configured': ai_configured,
-        'ai_providers': providers,
+        'ai_allowed': bool(allowed),
+        'ai_providers': allowed,
+        'policy_mode': policy['policy_mode'],
+        'providers': policy['providers'],
+        'tlp': g.incident.tlp,
     }), 200
 
 
@@ -295,8 +332,7 @@ def download_report(incident_id, report_id):
         )
 
     try:
-        from weasyprint import HTML
-        pdf_bytes = HTML(string=html_content).write_pdf()
+        pdf_bytes = html_to_pdf(html_content)
     except Exception as e:
         current_app.logger.error(f"PDF re-generation failed: {e}")
         return jsonify({'error': 'server_error', 'message': f'PDF generation failed: {str(e)}'}), 500
@@ -563,10 +599,13 @@ def _get_report_css() -> str:
 
 def _build_fallback_report_html(
     incident, timeline_events, hosts, accounts, network_iocs,
-    host_iocs, malware, sections, report_title
+    host_iocs, malware, sections, report_title, note=None
 ):
     """Build a basic data-only HTML report when AI is not available."""
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    note = note or ('Note: AI-powered analysis is not configured. This is a data-only report. '
+                    'Configure an OpenAI or Google AI API key in Settings → Integrations to enable '
+                    'AI-generated reports.')
 
     html = f'''<!DOCTYPE html>
 <html>
@@ -586,7 +625,7 @@ def _build_fallback_report_html(
     </div>
 </div>
 <div class="report-body">
-    <p><em>Note: AI-powered analysis is not configured. This is a data-only report. Configure an OpenAI or Google AI API key in Settings → Integrations to enable AI-generated reports.</em></p>
+    <p><em>{html_module.escape(note)}</em></p>
 '''
 
     if 'summary' in sections:

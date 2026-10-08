@@ -1,7 +1,7 @@
 """Attack graph visualization endpoints"""
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db, socketio
 from app.models import AttackGraphNode, AttackGraphEdge, CompromisedHost, CompromisedAccount, TimelineEvent
@@ -252,7 +252,7 @@ def create_graph_edge(incident_id):
         label=data.get('label'),
         mitre_tactic=data.get('mitre_tactic'),
         mitre_technique=data.get('mitre_technique'),
-        timestamp=parse_date(data['timestamp']) if data.get('timestamp') else None,
+        timestamp=parse_datetime(data.get('timestamp'), 'timestamp'),
         description=data.get('description'),
         extra_data=data.get('extra_data', {}),
         created_by=user.id
@@ -303,7 +303,7 @@ def update_graph_edge(incident_id, edge_id):
             setattr(edge, field, data[field])
 
     if 'timestamp' in data:
-        edge.timestamp = parse_date(data['timestamp']) if data['timestamp'] else None
+        edge.timestamp = parse_datetime(data['timestamp'], 'timestamp')
 
     db.session.commit()
 

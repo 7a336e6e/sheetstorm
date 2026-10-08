@@ -7,7 +7,8 @@ import mimetypes
 from datetime import datetime, timezone
 from flask import jsonify, request, g, send_file, current_app
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from werkzeug.exceptions import BadRequest
+from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db
 from app.models import Artifact, Incident, Integration, ChainOfCustody
@@ -94,6 +95,10 @@ def upload_artifact(incident_id):
     # Detect MIME type
     mime_type = mimetypes.guess_type(original_filename)[0] or 'application/octet-stream'
 
+    # Validate timestamps before anything is stored (400, no orphaned file).
+    collected_at = parse_datetime(request.form.get('collected_at'), 'collected_at')
+    acquired_at = parse_datetime(request.form.get('acquired_at'), 'acquired_at')
+
     # Try Google Drive as primary storage
     drive_result = _try_google_drive_primary(file, incident, user, original_filename, mime_type)
 
@@ -126,8 +131,8 @@ def upload_artifact(incident_id):
         sha512=hashes['sha512'],
         description=request.form.get('description'),
         source=request.form.get('source'),
-        collected_at=parse_date(request.form.get('collected_at')) if request.form.get('collected_at') else None,
-        acquired_at=parse_date(request.form.get('acquired_at')) if request.form.get('acquired_at') else None,
+        collected_at=collected_at,
+        acquired_at=acquired_at,
         acquisition_method=request.form.get('acquisition_method'),
         acquisition_tool=request.form.get('acquisition_tool'),
         source_host=request.form.get('source_host'),
@@ -294,13 +299,11 @@ def set_legal_hold(incident_id, artifact_id):
     until_dt = None
     if hold and until not in (None, ''):
         try:
-            until_dt = parse_date(until) if isinstance(until, str) else None
-        except (ValueError, OverflowError):
+            until_dt = parse_datetime(until, 'until') if isinstance(until, str) else None
+        except BadRequest:
             until_dt = None
         if until_dt is None:
             return jsonify({'error': 'bad_request', 'message': 'until must be an ISO-8601 datetime'}), 400
-        if until_dt.tzinfo is None:
-            until_dt = until_dt.replace(tzinfo=timezone.utc)
         if until_dt <= datetime.now(timezone.utc):
             return jsonify({'error': 'bad_request', 'message': 'until must be in the future'}), 400
     # A hold with an `until` date expires on its own (time-bound preservation);

@@ -49,9 +49,11 @@
     "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.2.0",
     "@testing-library/react": "^16.3.3",
+    "@types/jest": "29.5.14",
     "@types/node": "20.10.6",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
@@ -60,6 +62,7 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "16.3.8",
     "jest": "^29.7.0",
+    "jest-environment-jsdom": "29.7.0",
     "postcss": "^8.4.49",
     "tailwindcss": "3.4.1",
     "typescript": "5.3.3"

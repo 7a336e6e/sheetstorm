@@ -57,6 +57,7 @@ import {
     Bug,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
 
 interface HostBasedIOCsTabProps {
     incidentId: string
@@ -359,7 +360,7 @@ export function HostBasedIOCsTab({ incidentId }: HostBasedIOCsTabProps) {
                             </div>
                             <div className="space-y-2">
                                 <Label>Date/Time Observed</Label>
-                                <Input type="datetime-local" value={form.datetime} onChange={e => setForm({ ...form, datetime: e.target.value })} variant="glass" />
+                                <DateTimeInput value={form.datetime} onChange={iso => setForm({ ...form, datetime: iso ?? '' })} variant="glass" />
                             </div>
                         </div>
                         <div className="space-y-2">

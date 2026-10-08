@@ -49,6 +49,7 @@ import {
     MoreHorizontal
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
 
 interface NetworkIOCsTabProps {
     incidentId: string
@@ -296,7 +297,7 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Timestamp</Label>
-                                <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} variant="glass" />
+                                <DateTimeInput value={form.timestamp} onChange={iso => setForm({ ...form, timestamp: iso ?? '' })} variant="glass" />
                             </div>
                             <div className="space-y-2">
                                 <Label>Direction</Label>

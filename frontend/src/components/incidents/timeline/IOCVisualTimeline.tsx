@@ -38,7 +38,6 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import api from '@/lib/api'
-import { formatDateTime } from '@/lib/utils'
 import type { TimelineEvent, CompromisedHost } from '@/types'
 import { useTheme } from '@/components/providers/theme-provider'
 import { useToast } from '@/components/ui/use-toast'
@@ -57,6 +56,8 @@ import {
     ZoomOut,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
 import { TimelineEventNode, type TimelineNodeData } from './TimelineEventNode'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -488,8 +489,8 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                             </span>
                             {events.length > 0 && (
                                 <>
-                                    <span>First: {formatDateTime(events[0].timestamp)}</span>
-                                    <span>Last: {formatDateTime(events[events.length - 1].timestamp)}</span>
+                                    <span>First: <Timestamp value={events[0].timestamp} /></span>
+                                    <span>Last: <Timestamp value={events[events.length - 1].timestamp} /></span>
                                 </>
                             )}
                         </div>
@@ -655,7 +656,7 @@ export function PinnedEventsTable({ events }: { events: TimelineEvent[] }) {
                                 <div className="w-full text-left px-3 py-2 rounded-md hover:bg-white/[0.03] transition-colors">
                                     <div className="flex items-center gap-3 min-w-0">
                                         <span className="shrink-0 text-[11px] font-mono tabular-nums text-muted-foreground w-[130px]">
-                                            {formatDateTime(event.timestamp)}
+                                            <Timestamp value={event.timestamp} />
                                         </span>
 
                                         <span className="truncate text-sm text-foreground/90 flex-1 min-w-0">
@@ -697,8 +698,8 @@ export function PinnedEventsTable({ events }: { events: TimelineEvent[] }) {
                         <span className="flex items-center gap-1"><Star className="h-3 w-3 text-amber-400 fill-amber-400" /> {sorted.length} pinned event{sorted.length !== 1 ? 's' : ''}</span>
                         {sorted.length > 0 && (
                             <>
-                                <span>First: {formatDateTime(sorted[0].timestamp)}</span>
-                                <span>Last: {formatDateTime(sorted[sorted.length - 1].timestamp)}</span>
+                                <span>First: <Timestamp value={sorted[0].timestamp} /></span>
+                                <span>Last: <Timestamp value={sorted[sorted.length - 1].timestamp} /></span>
                             </>
                         )}
                     </div>
@@ -851,10 +852,9 @@ function AddEventDialog({
                 <DialogBody className="space-y-4">
                     <div className="space-y-2">
                         <Label>Timestamp *</Label>
-                        <Input
-                            type="datetime-local"
+                        <DateTimeInput
                             value={form.timestamp}
-                            onChange={e => setForm({ ...form, timestamp: e.target.value })}
+                            onChange={iso => setForm({ ...form, timestamp: iso ?? '' })}
                         />
                     </div>
                     <div className="space-y-2">

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SeverityBadge, StatusBadge, PhaseBadge, TLPBadge } from '@/components/ui/badge'
+import { TimeModeToggle } from '@/components/ui/time-mode-toggle'
 import {
   Tabs,
   TabsContent,
@@ -163,6 +164,7 @@ export default function IncidentDetailPage() {
                 <StatusBadge status={incident.status as any} />
                 <PhaseBadge phase={incident.phase} />
                 <TLPBadge tlp={incident.tlp || 'amber'} />
+                <TimeModeToggle />
               </div>
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{incident.title}</h1>
               {incident.description && (

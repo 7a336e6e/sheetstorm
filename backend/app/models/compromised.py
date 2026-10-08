@@ -1,5 +1,5 @@
 """Compromised assets models"""
-from sqlalchemy import Column, String, Text, Boolean, DateTime, ForeignKey, BigInteger, LargeBinary
+from sqlalchemy import Column, String, Text, Boolean, DateTime, ForeignKey, BigInteger, LargeBinary, Integer
 from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -29,6 +29,10 @@ class CompromisedHost(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='compromised_hosts')
@@ -80,6 +84,10 @@ class CompromisedAccount(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='compromised_accounts')

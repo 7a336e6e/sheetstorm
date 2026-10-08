@@ -29,6 +29,10 @@ class NetworkIndicator(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='network_indicators')
@@ -80,6 +84,10 @@ class HostBasedIndicator(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='host_indicators')
@@ -129,6 +137,10 @@ class MalwareTool(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='malware_tools')

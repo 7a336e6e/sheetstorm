@@ -10,7 +10,9 @@ from flask_jwt_extended import (
 from app.api.v1 import api_bp
 from app import db, limiter
 from app.models import User, Role, UserRole, Session, Organization
-from app.middleware.audit import log_auth_event
+from app.middleware.audit import audit_log, log_auth_event
+from app.middleware.rbac import get_current_user as rbac_current_user
+from app.utils.validation import check_choice, json_body
 
 
 def validate_password(password: str) -> tuple:
@@ -321,6 +323,39 @@ def get_current_user():
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     return jsonify(user.to_dict(include_permissions=True)), 200
+
+
+# Allowlist of users.preferences keys -> allowed values. New preference keys
+# must be added here (and nowhere else); unknown keys are rejected.
+PREFERENCE_KEYS = {
+    'display_timezone': ('utc', 'local'),
+}
+
+
+@api_bp.route('/auth/me/preferences', methods=['PATCH'])
+@limiter.limit("30 per minute")  # rl-group: api_default
+@jwt_required()
+@audit_log('data_modification', 'update_preferences', 'user')
+def update_my_preferences():
+    """Merge allowlisted keys into the caller's own preferences."""
+    user = rbac_current_user()
+    if not user:
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
+
+    data = json_body()
+    unknown = sorted(set(data) - set(PREFERENCE_KEYS))
+    if unknown:
+        return jsonify({'error': 'bad_request', 'message': f'Unknown preference keys: {unknown}'}), 400
+    if not data:
+        return jsonify({'error': 'bad_request', 'message': 'No preferences provided'}), 400
+    for key, value in data.items():
+        check_choice(value, PREFERENCE_KEYS[key], key)
+
+    # Reassign (not mutate) so SQLAlchemy sees the JSONB change.
+    user.preferences = {**(user.preferences or {}), **data}
+    user.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'id': str(user.id), 'preferences': dict(user.preferences)}), 200
 
 
 @api_bp.route('/auth/change-password', methods=['POST'])

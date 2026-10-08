@@ -50,6 +50,9 @@ class User(BaseModel):
     password_changed_at = Column(DateTime(timezone=True))
     organizational_role = Column(String(150))
     updated_at = Column(DateTime(timezone=True))
+    # Per-user UI preferences. Keys are allowlisted by PATCH /auth/me/preferences
+    # (PREFERENCE_KEYS); never store arbitrary client JSON here.
+    preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
 
     # Relationships
     organization = relationship('Organization', back_populates='users')
@@ -144,6 +147,7 @@ class User(BaseModel):
             'organizational_role': self.organizational_role,
             'teams': self.teams,
             'organization_id': str(self.organization_id) if self.organization_id else None,
+            'preferences': dict(self.preferences or {}),
         }
         if include_permissions:
             data['permissions'] = self.permissions

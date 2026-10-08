@@ -1,6 +1,6 @@
-# Exact pins for the SheetStorm MCP bridge. Human-edited input: installs use the
-# hash-locked requirements.lock compiled from this file - after editing, run
-# scripts/lock-python.sh (see assets/docs/supply-chain.md).
+# Exact runtime pins for the sheetstorm-mcp Docker image. Human-edited input:
+# Docker installs the hash-locked requirements.lock compiled from this file -
+# after editing, run scripts/lock-python.sh (see assets/docs/supply-chain.md).
 # Every release was published >=7 days before it was pinned (2026-10-08).
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -28,6 +28,7 @@ Pygments==2.21.0
 PyJWT==2.15.1
 python-dotenv==1.2.3
 python-multipart==0.0.32
+redis==8.1.0
 referencing==0.37.0
 rich==15.0.0
 rpds-py==2026.6.3

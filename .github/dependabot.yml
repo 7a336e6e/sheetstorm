@@ -1,0 +1,106 @@
+# Dependabot - dependency + base-image update PRs with a release-age cooldown.
+# Policy: assets/docs/supply-chain.md
+#  - cooldown: new versions must be >= 7 days old (npm/pip majors >= 14; docker
+#    and actions only support default-days) before a PR is
+#    opened, so freshly-published malicious releases (Shai-Hulud-style worms are
+#    usually unpublished within hours/days) never reach a PR.
+#  - minor/patch updates are grouped per ecosystem to keep review load low.
+#  - Dependabot only proposes PRs; every bump is still reviewed against the
+#    vetting checklist and installed lockfile-only (`npm ci`, hash-locked pip).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    versioning-strategy: "increase"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "frontend"]
+
+  # pip: Dependabot bumps the human-edited inputs (requirements*.txt,
+  # constraints.txt, build-requirements.txt, pyproject.toml). It does not
+  # understand the hash-locked *.lock files: regenerate them in the PR with
+  # scripts/lock-python.sh before merging (the Docker builds fail until the
+  # lock matches the input). See assets/docs/supply-chain.md section 5.
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    open-pull-requests-limit: 10
+    groups:
+      pip-backend-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "backend"]
+
+  - package-ecosystem: "pip"
+    directory: "/mcp-server"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    open-pull-requests-limit: 5
+    groups:
+      pip-mcp-server-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "mcp"]
+
+  - package-ecosystem: "pip"
+    directory: "/mcp-bridge"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    open-pull-requests-limit: 5
+    groups:
+      pip-mcp-bridge-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "mcp"]
+
+  # Digest-pinned base images (FROM image:tag@sha256:...) in every Dockerfile
+  # and the image: lines in docker-compose.yml.
+  - package-ecosystem: "docker"
+    directories:
+      - "/frontend"
+      - "/backend"
+      - "/proxy"
+      - "/database"
+      - "/mcp-server"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docker-base-images:
+        update-types: ["minor", "patch"]
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    labels: ["dependencies", "docker"]
+
+  # No workflows exist yet; this keeps future actions pinned/updated.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    labels: ["dependencies", "ci"]

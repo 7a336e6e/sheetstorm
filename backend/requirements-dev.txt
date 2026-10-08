@@ -1,0 +1,6 @@
+# Human-edited test-only pins, installed on top of the runtime set in the
+# backend image's `test` stage (backend/tests/run_in_docker.sh). Docker installs
+# the hash-locked requirements-dev.lock - after editing, run scripts/lock-python.sh.
+-r requirements.txt
+pytest==9.0.3
+pytest-cov==4.1.0

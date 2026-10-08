@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from './api'
 import { supabase, getSupabase } from './supabase'
+import { isTimeMode, type TimeMode } from './time'
 
 export interface User {
   id: string
@@ -12,6 +13,7 @@ export interface User {
   permissions?: string[]
   organization_id?: string
   mfa_enabled?: boolean
+  preferences?: { display_timezone?: TimeMode }
 }
 
 interface AuthState {
@@ -182,6 +184,59 @@ export const useAuthStore = create<AuthState>()(
 // the cached user so persisted state can't claim we're still logged in.
 api.onUnauthorized(() => {
   useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false })
+})
+
+// Time display preference (UTC / Local). Persisted locally for instant
+// first paint and server-side in users.preferences.display_timezone so it
+// follows the user across browsers. The server value wins when it loads.
+interface TimePrefState {
+  mode: TimeMode
+  setMode: (mode: TimeMode) => void
+  /** Apply a server-side preference (from /auth/me) without writing it back. */
+  hydrate: (mode: unknown) => void
+}
+
+export const useTimePrefStore = create<TimePrefState>()(
+  persist(
+    (set, get) => ({
+      mode: 'local',
+
+      setMode: (mode: TimeMode) => {
+        if (!isTimeMode(mode)) return
+        const previous = get().mode
+        set({ mode })
+        const auth = useAuthStore.getState()
+        if (!auth.isAuthenticated || !auth.user) return
+        // Keep the cached user in sync so the auth subscription below does
+        // not snap back to the old server value.
+        useAuthStore.setState({
+          user: { ...auth.user, preferences: { ...auth.user.preferences, display_timezone: mode } },
+        })
+        api.patch('/auth/me/preferences', { display_timezone: mode }).catch(() => {
+          // Roll back: restoring the cached server value makes the auth
+          // subscription below hydrate the previous mode again.
+          const current = useAuthStore.getState().user
+          if (current) {
+            useAuthStore.setState({
+              user: { ...current, preferences: { ...current.preferences, display_timezone: previous } },
+            })
+          }
+        })
+      },
+
+      hydrate: (mode: unknown) => {
+        if (isTimeMode(mode) && mode !== get().mode) set({ mode })
+      },
+    }),
+    { name: 'sheetstorm-time-pref', partialize: (state) => ({ mode: state.mode }) }
+  )
+)
+
+useAuthStore.subscribe((state, prev) => {
+  const next = state.user?.preferences?.display_timezone
+  if (next !== undefined && next !== prev.user?.preferences?.display_timezone) {
+    useTimePrefStore.getState().hydrate(next)
+  }
 })
 
 // Incident store

@@ -29,7 +29,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
 import { useState, useEffect, useCallback } from 'react'
 import { useSocketEvent } from '@/hooks/use-socket'
 import { NotificationPanel } from '@/components/layout/NotificationPanel'
@@ -205,7 +204,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                 </p>
               </Link>
               <div className="flex items-center gap-1">
-                <ThemeToggle />
                 <Button
                   variant="ghost"
                   size="icon-sm"

@@ -573,7 +573,8 @@ export default function ActivityPage() {
 
             const params: Record<string, any> = { per_page: PER_PAGE, page }
             if (filterEventType) params.event_type = filterEventType
-            if (filterAction) params.action = filterAction
+            // Substring match (e.g. 'create' covers create_user); `action` is exact-match.
+            if (filterAction) params.action_contains = filterAction
 
             const [logsResponse, statsResponse] = await Promise.all([
                 auditLogs.list(params),

@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **121 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
+- **127 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
@@ -128,7 +128,7 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Category | Tools | Description |
 |----------|-------|-------------|
 | Auth | 2 | Get current user, logout |
-| Incidents | 9 | CRUD, status, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
+| Incidents | 10 | CRUD (milestones, lead, overview summary), status, dashboard stats, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
 | Assignments | 3 | Assign / unassign responders |
 | Timeline | 7 | Events (detection time, confidence), mark event as IOC, timeline MITRE lists |
 | Tasks | 7 | Tasks & investigative leads (type, outcome, direction, evidence refs with server-resolved labels), lead queue (`sheetstorm_list_leads`), comments |

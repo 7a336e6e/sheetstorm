@@ -29,7 +29,7 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 
 ## Current Implementation Status
 
-### Implemented Tools (70+)
+### Implemented Tools (127)
 
 The MCP server is fully operational with the following tool modules:
 

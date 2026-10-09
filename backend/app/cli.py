@@ -257,3 +257,73 @@ def _send_due_reminders_job():
 
 
 register_job('send-due-reminders', _send_due_reminders_job, every_seconds=REMINDER_JOB_INTERVAL, lock_ttl=900)
+
+
+@sheetstorm_cli.command('repair-orphans')
+@click.option('--apply', 'apply_changes', is_flag=True, help='Fix the orphans (default: report only).')
+@click.option('--reassign-to', 'reassign_email', default=None,
+              help='E-mail of an existing user that takes over required references to deleted users '
+                   '(e.g. authors of timeline events). Without it those rows are left and reported.')
+@click.option('--report', 'report_path', type=click.Path(dir_okay=False, writable=True), default=None,
+              help='Write the full JSON report, including every deleted row, to this file.')
+def repair_orphans_command(apply_changes, reassign_email, report_path):
+    """Find (and with --apply, repair) rows whose foreign keys point at missing
+    parents. Nullable references are cleared; rows that the schema deletes with
+    their parent (ON DELETE CASCADE) are deleted; required references to
+    deleted users are reassigned only with --reassign-to. Back up first."""
+    import json
+
+    from app import db
+    from app.middleware.audit import log_security_event
+    from app.services import orphan_repair
+
+    reassign_id = None
+    if reassign_email:
+        row = db.session.execute(db.text('SELECT id FROM users WHERE lower(email) = lower(:e)'),
+                                 {'e': reassign_email}).first()
+        if row is None:
+            raise click.ClickException(f'No user with e-mail {reassign_email}')
+        reassign_id = row[0]
+
+    found = orphan_repair.find_orphans()
+    if not found:
+        click.echo('No orphaned rows found.')
+        return
+    verbs = {'set_null': 'clear', 'delete': 'delete', 'reassign': 'reassign (needs --reassign-to)',
+             'manual': 'manual decision', 'keep': 'kept: audit history'}
+    for o in found:
+        click.echo(f"{o['table']}.{o['column']} -> {o['parent']}: {o['count']} orphaned row(s) ({verbs[o['action']]})")
+    if not apply_changes:
+        click.echo('Report only. Back up the database, then rerun with --apply to repair.')
+        return
+    try:
+        result = orphan_repair.repair(reassign_to=reassign_id)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    # Best effort: this command also runs before migrations (old schema), where
+    # the audit writer of the new code cannot insert; the report is the record.
+    from sqlalchemy import inspect as sa_inspect
+    if not sa_inspect(db.engine).has_table('ledger_heads'):
+        click.echo('Note: audit entry skipped (database not migrated yet); keep the report.')
+    else:
+        try:
+            log_security_event('orphan_rows_repaired', resource_type='database', details={
+                'actions': [{k: a[k] for k in ('table', 'column', 'parent', 'action', 'affected')}
+                            for a in result['actions']],
+                'deleted': len(result['deleted_rows']),
+                'reassigned_to': str(reassign_id) if reassign_id else None,
+            }, actor_label='cli')
+        except Exception as exc:  # noqa: BLE001
+            db.session.rollback()
+            click.echo(f'Note: could not write the audit entry ({type(exc).__name__}); keep the report.')
+    if report_path:
+        with open(report_path, 'w', encoding='utf-8') as fh:
+            json.dump(result, fh, indent=2, default=str)
+        click.echo(f'Report written to {report_path}')
+    count = lambda kind: sum(a['affected'] for a in result['actions'] if a['action'] == kind)  # noqa: E731
+    click.echo(f"Repaired: {len(result['deleted_rows'])} row(s) deleted, {count('set_null')} reference(s) "
+               f"cleared, {count('reassign')} reassigned.")
+    for o in result['skipped']:
+        click.echo(f"Left as is: {o['table']}.{o['column']} -> {o['parent']}: {o['count']} row(s) ({verbs[o['action']]})")

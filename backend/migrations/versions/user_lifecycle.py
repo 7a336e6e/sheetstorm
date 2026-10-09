@@ -70,6 +70,12 @@ def _recreate_granted_by_fk(ondelete):
         return
     if fk:
         op.drop_constraint(fk['name'], 'user_roles', type_='foreignkey')
+    # Older installs could hold grants by users that were deleted while no FK
+    # (or no enforced FK) existed; the new FK would refuse them. SET NULL is
+    # exactly what the constraint does on delete, so apply it to the orphans.
+    op.execute(sa.text(
+        'UPDATE user_roles SET granted_by = NULL WHERE granted_by IS NOT NULL '
+        'AND NOT EXISTS (SELECT 1 FROM users WHERE users.id = user_roles.granted_by)'))
     op.create_foreign_key(GRANTED_BY_FK, 'user_roles', 'users', ['granted_by'], ['id'], ondelete=ondelete)
 
 

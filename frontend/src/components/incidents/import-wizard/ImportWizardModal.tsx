@@ -10,17 +10,32 @@ import { MappingStep } from './MappingStep'
 import { PreviewStep } from './PreviewStep'
 import { ParseResponse, ColumnMapping, EntityType } from './types'
 import api from '@/lib/api'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError } from '@/lib/errors'
+import { PermissionGate } from '@/components/auth/permission-gate'
 
 interface ImportWizardModalProps {
     isOpen: boolean
     onOpenChange: (open: boolean) => void
     incidentId: string
-    onComplete: () => void
+    /** Optional extra hook; every list of the incident is refreshed regardless. */
+    onComplete?: () => void
 }
+
+/** Same permission as `POST /incidents/<id>/import/submit` (and /parse). */
+export const IMPORT_PERMISSION = 'incidents:update'
 
 type WizardStep = 'upload' | 'mapping' | 'preview' | 'success'
 
-export function ImportWizardModal({ isOpen, onOpenChange, incidentId, onComplete }: ImportWizardModalProps) {
+export function ImportWizardModal(props: ImportWizardModalProps) {
+    return (
+        <PermissionGate permission={IMPORT_PERMISSION}>
+            <ImportWizard {...props} />
+        </PermissionGate>
+    )
+}
+
+function ImportWizard({ isOpen, onOpenChange, incidentId, onComplete }: ImportWizardModalProps) {
     const [step, setStep] = useState<WizardStep>('upload')
     const [parsedData, setParsedData] = useState<ParseResponse | null>(null)
     const [mapping, setMapping] = useState<ColumnMapping>({})
@@ -41,14 +56,16 @@ export function ImportWizardModal({ isOpen, onOpenChange, incidentId, onComplete
             const res = await api.post<{ results: any }>(`/incidents/${incidentId}/import/submit`, normalizedData)
             setImportResults(res.results)
             setStep('success')
-            onComplete()
+            // Imports touch every entity list of the incident.
+            invalidate(`/incidents/${incidentId}`)
+            onComplete?.()
             setTimeout(() => {
                 onOpenChange(false)
                 resetWizard()
             }, 2000)
         } catch (error) {
-            console.error('Submission failed:', error)
-            // Error handling is managed by global toaster or we could redirect to error step
+            // Stay on the preview step so the analyst can fix and retry.
+            notifyError(error, 'import the data')
         }
     }
 

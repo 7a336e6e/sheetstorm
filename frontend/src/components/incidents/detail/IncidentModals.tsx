@@ -23,16 +23,18 @@ import {
 import { CheckCircle2, Download, Loader2 } from 'lucide-react'
 import { PHASE_INFO, STATUS_OPTIONS } from '@/lib/design-tokens'
 import api from '@/lib/api'
-import { useIncidentStore } from '@/lib/store'
-import { useToast } from '@/components/ui/use-toast'
-import type { Incident } from '@/types'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError, notifySuccess } from '@/lib/errors'
+import { useAiAvailability } from '@/hooks/use-ai-availability'
+import { assignmentsEndpoint } from '@/components/incidents/AssignmentsPanel'
+import type { Incident, Versioned } from '@/types'
 
 // ─── Edit Incident Modal ─────────────────────────────────────────────────
 
 interface EditIncidentModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  incident: Incident
+  incident: Incident & Versioned
   incidentId: string
   onUpdated: () => void
 }
@@ -44,7 +46,6 @@ export function EditIncidentModal({
   incidentId,
   onUpdated,
 }: EditIncidentModalProps) {
-  const { fetchIncident } = useIncidentStore()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [form, setForm] = useState({
     title: incident.title,
@@ -78,12 +79,11 @@ export function EditIncidentModal({
         severity: form.severity,
         classification: form.classification,
         tlp: form.tlp,
-      })
-      await fetchIncident(incidentId)
+      }, { ifMatch: incident.version })
       onOpenChange(false)
       onUpdated()
     } catch (error) {
-      console.error('Failed to update incident:', error)
+      notifyError(error, 'update the incident')
     } finally {
       setIsSubmitting(false)
     }
@@ -168,6 +168,8 @@ interface UpdateStatusModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentStatus: string
+  /** Incident version for If-Match (optimistic concurrency). */
+  incidentVersion?: number
   incidentId: string
   onUpdated: () => void
 }
@@ -176,11 +178,10 @@ export function UpdateStatusModal({
   open,
   onOpenChange,
   currentStatus,
+  incidentVersion,
   incidentId,
   onUpdated,
 }: UpdateStatusModalProps) {
-  const { fetchIncident } = useIncidentStore()
-  const { toast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const statusEntries = Object.entries(STATUS_OPTIONS) as [
@@ -196,21 +197,13 @@ export function UpdateStatusModal({
       await api.patch(`/incidents/${incidentId}/status`, {
         status: newStatus,
         phase: statusOpt.phase,
-      })
-      await fetchIncident(incidentId)
+      }, { ifMatch: incidentVersion })
+      invalidate(assignmentsEndpoint(incidentId))
       onOpenChange(false)
       onUpdated()
-      toast({
-        title: 'Status updated',
-        description: `Moved to Phase ${statusOpt.phase}: ${statusOpt.phaseName}`,
-      })
+      notifySuccess('Status updated', `Moved to Phase ${statusOpt.phase}: ${statusOpt.phaseName}`)
     } catch (error) {
-      console.error('Failed to update status:', error)
-      toast({
-        title: 'Error',
-        description: 'Failed to update incident status.',
-        variant: 'destructive',
-      })
+      notifyError(error, 'update the incident status')
     } finally {
       setIsSubmitting(false)
     }
@@ -298,45 +291,27 @@ export function ReportModal({
   incidentId,
   incidentNumber,
 }: ReportModalProps) {
-  const { toast } = useToast()
   const [selectedType, setSelectedType] = useState('executive')
+  // The PDF report falls back to a data-only report when the org's AI TLP
+  // policy (or missing configuration) rules AI out, so the button is not
+  // gated (C23b); the dialog says what the analyst will get instead.
+  const ai = useAiAvailability(incidentId, { enabled: open })
   const [isGenerating, setIsGenerating] = useState(false)
 
   const handleGenerate = async () => {
     setIsGenerating(true)
     const typeName =
       REPORT_TYPE_OPTIONS.find((r) => r.id === selectedType)?.label || 'Report'
-    toast({
-      title: 'Generating Report',
-      description: `AI is generating ${typeName}...`,
-    })
     try {
-      const pdfBlob = await api.postForBlob(
-        `/incidents/${incidentId}/reports/generate-pdf`,
-        { report_type: selectedType }
-      )
-      const url = URL.createObjectURL(pdfBlob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `incident_${incidentNumber ?? 'report'}_${selectedType}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      toast({
-        title: 'Report Generated',
-        description: `${typeName} has been downloaded.`,
+      await api.downloadTo(`/incidents/${incidentId}/reports/generate-pdf`, {
+        method: 'POST',
+        data: { report_type: selectedType },
+        fallbackName: `incident_${incidentNumber ?? 'report'}_${selectedType}.pdf`,
       })
+      notifySuccess('Report generated', `${typeName} has been downloaded.`)
       onOpenChange(false)
     } catch (err) {
-      toast({
-        title: 'Generation Failed',
-        description:
-          err instanceof Error
-            ? err.message
-            : 'An error occurred while generating the report.',
-        variant: 'destructive',
-      })
+      notifyError(err, 'generate the report')
     } finally {
       setIsGenerating(false)
     }
@@ -380,6 +355,11 @@ export function ReportModal({
               </label>
             ))}
           </div>
+          {!ai.allowed && ai.reason && (
+            <p role="status" className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              {ai.reason} The PDF will contain the incident data without AI-written sections.
+            </p>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button

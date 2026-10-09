@@ -21,33 +21,29 @@ import { StatCard } from './StatCard'
 import { LeadResponderSelector } from './LeadResponderSelector'
 import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
 import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
-import type { TimelineEvent, CompromisedHost, Task, Incident } from '@/types'
+import { useAllPages } from '@/hooks/use-paginated-query'
+import type { TimelineEvent, Task, Incident, Versioned } from '@/types'
 
 // ─── Overview Tab ────────────────────────────────────────────────────────
 
 interface OverviewTabProps {
-  incident: Incident
+  incident: Incident & Versioned
   incidentId: string
-  tasks: Task[]
-  hosts: CompromisedHost[]
-  timeline: TimelineEvent[]
-  assignmentsKey: number
   onViewEvents: () => void
   onIncidentUpdated: () => void
-  onAssignmentsRefresh: () => void
 }
 
 export function OverviewTab({
   incident,
   incidentId,
-  tasks,
-  hosts,
-  timeline,
-  assignmentsKey,
   onViewEvents,
   onIncidentUpdated,
-  onAssignmentsRefresh,
 }: OverviewTabProps) {
+  // Whole-incident datasets, shared (one cached request) with the Events
+  // views, MITRE and the graph; any `invalidate()` of them refreshes this.
+  const { items: tasks } = useAllPages<Task>(`/incidents/${incidentId}/tasks`, { live: 'task' })
+  const { items: timeline } = useAllPages<TimelineEvent>(`/incidents/${incidentId}/timeline`, { live: 'timeline_event' })
+
   const completedTasks = tasks.filter((t) => t.status === 'completed').length
   const pendingTasks = tasks.filter((t) => t.status === 'pending').length
   const inProgressTasks = tasks.filter((t) => t.status === 'in_progress').length
@@ -185,11 +181,9 @@ export function OverviewTab({
               <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Lead Responder</p>
               <LeadResponderSelector
                 incidentId={incidentId}
-                currentLead={incident.lead_responder as any}
-                onUpdated={() => {
-                  onIncidentUpdated()
-                  onAssignmentsRefresh()
-                }}
+                incidentVersion={incident.version}
+                currentLead={incident.lead_responder}
+                onUpdated={onIncidentUpdated}
               />
             </div>
             {incident.teams && incident.teams.length > 0 && (
@@ -232,7 +226,7 @@ export function OverviewTab({
           </CardContent>
         </Card>
 
-        <AssignmentsPanel incidentId={incidentId} refreshKey={assignmentsKey} />
+        <AssignmentsPanel incidentId={incidentId} />
       </div>
     </div>
   )

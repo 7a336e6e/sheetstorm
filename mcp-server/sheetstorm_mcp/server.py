@@ -161,6 +161,7 @@ def _register_all_tools() -> None:
         incidents,  # noqa: F401
         iocs,  # noqa: F401
         knowledge_base,  # noqa: F401
+        metrics,  # noqa: F401
         playbooks,  # noqa: F401
         prompts,  # noqa: F401
         reports,  # noqa: F401

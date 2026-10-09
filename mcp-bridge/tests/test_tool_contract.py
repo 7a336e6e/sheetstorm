@@ -273,6 +273,18 @@ CASES: dict[str, tuple] = {
     "sheetstorm_export_stix": ({"incident_id": I}, "GET", f"/incidents/{I}/export/stix", None, None),
     "sheetstorm_bulk_enrich": ({"ioc_values": "ip:1.2.3.4"}, "POST", "/bulk-enrich",
                                {"ioc_values": [{"type": "ip", "value": "1.2.3.4"}]}, None),
+    # metrics & improvements
+    "sheetstorm_get_incident_metrics": ({"incident_id": I}, "GET", f"/incidents/{I}/metrics", None, None),
+    "sheetstorm_list_improvement_actions": (
+        {"status": "open,blocked", "owner_id": "me", "incident_id": I, "overdue": True, "per_page": 500},
+        "GET", "/improvement-actions", None,
+        {"status": "open,blocked", "owner_id": "me", "incident_id": I, "overdue": "true", "per_page": "100"}),
+    "sheetstorm_add_improvement_action": (
+        {"incident_id": I, "title": "Enable MFA", "owner_id": "u1", "due_date": "2026-04-01", "priority": "high",
+         "category": "technology", "control_framework": "d3fend", "control_ref": "D3-MFA"},
+        "POST", f"/incidents/{I}/improvement-actions",
+        {"title": "Enable MFA", "owner_id": "u1", "due_date": "2026-04-01", "priority": "high",
+         "category": "technology", "control_framework": "d3fend", "control_ref": "D3-MFA"}, None),
     # defang
     "sheetstorm_defang_iocs": ({"values": ["evil.com"]}, "POST", "/tools/defang", {"values": ["evil.com"]}, None),
     "sheetstorm_refang_iocs": ({"text": "evil[.]com"}, "POST", "/tools/refang", {"text": "evil[.]com"}, None),
@@ -298,7 +310,7 @@ def test_tool_names_are_unique(pkg):
 def _tool_fn(name: str):
     for mod in ("auth", "incidents", "assignments", "timeline", "tasks", "assets", "iocs", "artifacts",
                 "attack_graph", "case_notes", "playbooks", "reports", "admin", "threat_intel",
-                "knowledge_base", "advanced_analysis", "defang", "evidence"):
+                "knowledge_base", "advanced_analysis", "defang", "evidence", "metrics"):
         m = importlib.import_module(f"{PKG}.tools.{mod}")
         if hasattr(m, name):
             return getattr(m, name)

@@ -5,61 +5,17 @@ from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db, socketio
-from app.models import Incident, IncidentAssignment, IncidentTeam, User, TeamMember
-from app.middleware.rbac import require_permission, require_incident_access, get_current_user
+from app.models import Incident, IncidentAssignment, IncidentTeam, User
+from app.middleware.rbac import (  # noqa: F401  (accessible_incidents_query re-exported for callers)
+    require_permission, require_incident_access, get_current_user,
+    accessible_incidents_query, user_can_access_incident,
+)
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
 from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
 logger = logging.getLogger(__name__)
-
-
-def accessible_incidents_query(user):
-    """Base query of incidents the user may access (org + role/team/assignment
-    scoped). Shared by list_incidents and cross-incident search/correlation so
-    the access rules cannot diverge between them.
-    """
-    from app.middleware.rbac import incident_access_tier
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=False)
-    tier = incident_access_tier(user)
-    if tier == 'full':
-        return query
-
-    has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
-        IncidentAssignment.user_id == user.id,
-        IncidentAssignment.removed_at.is_(None)
-    )
-    # Operators: only directly assigned incidents.
-    if tier == 'operator':
-        query = query.filter(Incident.id.in_(has_assignment))
-    # Viewers: directly assigned + all TLP:WHITE incidents in their org.
-    elif tier == 'viewer':
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(has_assignment),
-                Incident.tlp == 'white'
-            )
-        )
-    # Responders/Analysts: team-scoped + directly assigned + org-wide (no team).
-    else:
-        user_team_ids = db.session.query(TeamMember.team_id).filter(
-            TeamMember.user_id == user.id
-        )
-        has_team = db.session.query(IncidentTeam.incident_id).filter(
-            IncidentTeam.team_id.in_(user_team_ids)
-        )
-        no_teams = ~db.session.query(IncidentTeam).filter(
-            IncidentTeam.incident_id == Incident.id
-        ).exists()
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(has_assignment),
-                Incident.id.in_(has_team),
-                no_teams
-            )
-        )
-    return query
 
 
 INCIDENT_SEVERITIES = ('critical', 'high', 'medium', 'low')
@@ -92,10 +48,8 @@ def list_incidents():
     q/search, focus; filters status (comma list), severity (comma list),
     phase, classification, team_id).
 
-    Access rules:
-    - Administrators/Managers: see all org incidents
-    - Incident Responders/Analysts: see incidents assigned to their teams OR directly to them
-    - Operators/Viewers: see only directly assigned incidents
+    Visibility: accessible_incidents_query (assigned + the user's
+    incidents:read_all / read_team / read_tlp_white scopes).
     """
     user = get_current_user()
     query = accessible_incidents_query(user)
@@ -334,18 +288,17 @@ def update_incident_status(incident_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/archive', methods=['POST'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:archive')
 @audit_log('data_modification', 'archive', 'incident')
 def archive_incident(incident_id):
-    """Archive an incident (soft-delete). Admin/Manager only."""
+    """Archive an incident (soft-delete) you can see."""
     user = get_current_user()
-    if not user.has_role('Administrator') and not user.has_role('Manager'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators and managers can archive incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=False).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     incident.is_archived = True
     incident.archived_at = datetime.now(timezone.utc)
@@ -358,14 +311,11 @@ def archive_incident(incident_id):
 
 @api_bp.route('/incidents/archived', methods=['GET'])
 @jwt_required()
-@require_permission('incidents:read')
+@require_permission('incidents:archive')
 def list_archived_incidents():
-    """List archived incidents. Admin only."""
+    """List archived incidents the user can see."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can view archived incidents'}), 403
-
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=True)
+    query = accessible_incidents_query(user, archived=True)
     return jsonify(list_response(
         query, sortable=ARCHIVED_SORTABLE, default_sort='-archived_at', id_col=Incident.id,
         filters=INCIDENT_FILTERS, search_columns=INCIDENT_SEARCH,
@@ -375,18 +325,17 @@ def list_archived_incidents():
 
 @api_bp.route('/incidents/<uuid:incident_id>/unarchive', methods=['POST'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:archive')
 @audit_log('data_modification', 'unarchive', 'incident')
 def unarchive_incident(incident_id):
-    """Restore an archived incident. Admin only."""
+    """Restore an archived incident you can see."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can restore archived incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     incident.is_archived = False
     incident.archived_at = None
@@ -399,18 +348,17 @@ def unarchive_incident(incident_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/permanent', methods=['DELETE'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:purge')
 @audit_log('data_modification', 'permanent_delete', 'incident')
 def permanent_delete_incident(incident_id):
-    """Permanently delete an archived incident. Admin only. This action is irreversible."""
+    """Permanently delete an archived incident you can see. Irreversible."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can permanently delete incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     # Forensic preservation: never purge evidence that is under legal hold
     # (the artifacts would cascade-delete with the incident).

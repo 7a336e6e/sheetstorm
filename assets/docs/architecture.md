@@ -113,6 +113,44 @@ SheetStorm/
 
 ---
 
+## RBAC
+
+Authorization is **permission-driven and tenant-scoped**. No decision depends on a role's name.
+
+- **Catalog**: `backend/app/permissions.py` lists every permission key with its group, label,
+  description and flags (`dangerous`, `privileged`, `api_key_grantable`, `platform_only`).
+  `GET /api/v1/permissions` serves it, so the UI and the backend always agree. A test fails when
+  code enforces a key that is not in the catalog, or checks a role name.
+- **Roles**: the six system roles (Administrator, Incident Responder, Analyst, Manager, Operator,
+  Viewer) are global and immutable; clone one to customise it. Custom roles belong to one
+  organization (`roles.organization_id`); names are unique per org (case-insensitive) and cannot
+  shadow a system name. Lookups go through `Role.visible_to(org)` / `Role.resolve(name, org)`,
+  so another tenant's role id answers 404.
+- **Additive rule**: a user's permissions are the union over all of their roles (only system
+  roles and roles of their own org count). No role ever restricts another: to restrict a user,
+  remove a role.
+- **Incident visibility** (`middleware/rbac.py::accessible_incidents_query`, the single source):
+  directly assigned incidents, plus the union of the scopes the user holds:
+  `incidents:read_all` (every incident in the org), `incidents:read_team` (incidents of the
+  user's teams and incidents not restricted to a team), `incidents:read_tlp_white`
+  (every TLP:WHITE incident). A Viewer+Analyst therefore sees team scope + TLP:WHITE.
+- **Guardrails** (`services/rbac_guard.py`), enforced on every role and user mutation:
+  - nobody grants a permission they lack (`403 privilege_escalation {missing}`), including via
+    role create/edit/clone, role assignment, user creation and Supabase sync;
+  - nobody acts on a user holding permissions they lack (`403 insufficient_privilege`);
+  - an organization never loses its last active administrator (`users:manage` + `roles:manage`;
+    `409 last_admin`, serialised with a row lock on the organization);
+  - an admin never strips their own admin permissions (`409 self_lockout`), never disables or
+    deletes themselves (`400 self_action`) and changes their own password only through
+    `/auth/change-password` (`400 use_change_password`).
+  Denials are recorded as `privilege_escalation_blocked` / `last_admin_blocked` security events.
+- **Platform admin**: `system:manage` is only effective for members of the platform
+  organization (`PLATFORM_ORG_SLUG`, default `default`).
+- **Grants**: new permission keys and their role grants are registered once, in the catalog and
+  in the `admin_guardrails_rbac` data migration. Feature migrations never `UPDATE roles`.
+
+---
+
 ## Design System
 
 The **Cyber-Noir** design system uses CSS custom properties with glassmorphism effects.

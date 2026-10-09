@@ -1,4 +1,6 @@
 """User management endpoints"""
+import uuid
+
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
@@ -7,6 +9,11 @@ from app.models import User, Role, UserRole, Organization
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 from app.utils.pagination import list_response
+from app.permissions import with_implied
+from app.services.rbac_guard import (
+    GuardError, guard_error_response, assert_can_grant_roles, assert_can_manage_user,
+    assert_admin_remains, assert_no_self_lockout, emit_permissions_changed,
+)
 
 
 USER_SORTABLE = {
@@ -42,12 +49,16 @@ def list_users():
 
 @api_bp.route('/users', methods=['POST'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('users:create')
 @audit_log('admin_action', 'create_user', 'user')
 def create_user():
-    """Create a new user."""
+    """Create a new user in the caller's org.
+
+    Explicit roles need roles:manage; every role (including the default
+    Viewer) must be within the caller's own permissions.
+    """
     current = get_current_user()
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
 
     if not data.get('email') or not data.get('name') or not data.get('password'):
         return jsonify({'error': 'bad_request', 'message': 'Email, name, and password are required'}), 400
@@ -63,15 +74,30 @@ def create_user():
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'conflict', 'message': 'Email already exists'}), 409
 
-    # Assigning roles requires the stronger roles:manage permission — a holder
-    # of users:manage alone must not be able to mint privileged (e.g.
-    # Administrator) accounts via the create-user path.
     role_names = data.get('roles') or ([data['role']] if data.get('role') else [])
+    if not isinstance(role_names, list) or not all(isinstance(n, str) for n in role_names):
+        return jsonify({'error': 'bad_request', 'message': 'roles must be an array of role names'}), 400
     if role_names and not current.has_permission('roles:manage'):
         return jsonify({
             'error': 'forbidden',
             'message': 'roles:manage permission is required to assign roles'
         }), 403
+
+    # Default to least privilege (Viewer) when no explicit role is given.
+    requested = role_names or ['Viewer']
+    roles, unknown = [], []
+    for role_name in requested:
+        role = Role.resolve(role_name, current.organization_id)
+        if role is None:
+            unknown.append(role_name)
+        elif role not in roles:
+            roles.append(role)
+    if unknown:
+        return jsonify({'error': 'unknown_role', 'message': 'Unknown role(s)', 'unknown': unknown}), 400
+    try:
+        assert_can_grant_roles(current, roles)
+    except GuardError as e:
+        return guard_error_response(e)
 
     user = User(
         email=data['email'],
@@ -83,21 +109,14 @@ def create_user():
     )
     user.set_password(data['password'])
     db.session.add(user)
-    db.session.commit()
-
-    # Default to least privilege (Viewer) when no explicit role is assigned.
-    if not role_names:
-        role_names = ['Viewer']
-    for role_name in role_names:
-        role = Role.query.filter_by(name=role_name).first()
-        if role:
-            user_role = UserRole(
-                user_id=user.id,
-                role_id=role.id,
-                organization_id=current.organization_id,
-                granted_by=current.id
-            )
-            db.session.add(user_role)
+    db.session.flush()
+    for role in roles:
+        db.session.add(UserRole(
+            user_id=user.id,
+            role_id=role.id,
+            organization_id=current.organization_id,
+            granted_by=current.id
+        ))
     db.session.commit()
 
     return jsonify(user.to_dict()), 201
@@ -117,12 +136,20 @@ def get_user(user_id):
     return jsonify(user.to_dict(include_permissions=True)), 200
 
 
+_UPDATABLE_FIELDS = ('name', 'is_active', 'organizational_role', 'password')
+
+
 @api_bp.route('/users/<uuid:user_id>', methods=['PUT'])
 @jwt_required()
 @require_permission('users:update')
 @audit_log('admin_action', 'update_user', 'user')
 def update_user(user_id):
-    """Update a user."""
+    """Update a user.
+
+    Acting on anyone else requires outranking them (their permissions are a
+    subset of yours). Nobody disables themselves or resets their own password
+    here (use /auth/change-password). Disabling the last admin is refused.
+    """
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
@@ -131,12 +158,25 @@ def update_user(user_id):
 
     data = request.get_json(silent=True) or {}
     from app.api.v1.endpoints.auth import validate_password, _bump_token_epoch
-    revoke_sessions = False
+    can_manage = current.has_permission('users:manage')
+    disabling = can_manage and data.get('is_active') is False and user.is_active
+    resetting = can_manage and 'password' in data
 
-    # Update allowed fields
+    try:
+        if any(f in data for f in _UPDATABLE_FIELDS):
+            assert_can_manage_user(current, user, 'update')
+        if disabling:
+            assert_can_manage_user(current, user, 'disable')
+            assert_admin_remains(current.organization_id, exclude_users={user.id}, resource_id=user.id)
+        if resetting:
+            assert_can_manage_user(current, user, 'reset_password')
+    except GuardError as e:
+        return guard_error_response(e)
+
+    revoke_sessions = False
     if 'name' in data:
         user.name = data['name'].strip()
-    if 'is_active' in data and current.has_permission('users:manage'):
+    if 'is_active' in data and can_manage:
         if not isinstance(data['is_active'], bool):
             return jsonify({'error': 'bad_request', 'message': 'is_active must be a boolean'}), 400
         if user.is_active and not data['is_active']:
@@ -145,11 +185,12 @@ def update_user(user_id):
     if 'organizational_role' in data:
         user.organizational_role = data['organizational_role'].strip() if data['organizational_role'] else None
 
-    # Password update (admin only) — same policy as self-service changes, and
+    # Password reset (users:manage) — same policy as self-service changes, and
     # all of the user's existing sessions are revoked.
-    if 'password' in data and current.has_permission('users:manage'):
+    if resetting:
         valid, message = validate_password(data['password'] or '')
         if not valid:
+            db.session.rollback()
             return jsonify({'error': 'bad_request', 'message': message}), 400
         user.set_password(data['password'])
         revoke_sessions = True
@@ -164,18 +205,21 @@ def update_user(user_id):
 
 @api_bp.route('/users/<uuid:user_id>', methods=['DELETE'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('users:delete')
 @audit_log('admin_action', 'delete_user', 'user')
 def delete_user(user_id):
-    """Delete a user."""
+    """Delete a user you outrank (never yourself, never the last admin)."""
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
     if not user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
-        
-    if user.id == current.id:
-        return jsonify({'error': 'bad_request', 'message': 'Cannot delete yourself'}), 400
+
+    try:
+        assert_can_manage_user(current, user, 'delete')
+        assert_admin_remains(current.organization_id, exclude_users={user.id}, resource_id=user.id)
+    except GuardError as e:
+        return guard_error_response(e)
 
     db.session.delete(user)
     db.session.commit()
@@ -213,22 +257,32 @@ def get_user_roles(user_id):
 @require_permission('roles:manage')
 @audit_log('admin_action', 'assign_role', 'user')
 def assign_role(user_id):
-    """Assign a role to a user."""
+    """Assign a role (system or own org) the caller could grant."""
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
     if not user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     role_id = data.get('role_id')
 
     if not role_id:
         return jsonify({'error': 'bad_request', 'message': 'role_id is required'}), 400
+    try:
+        role_uuid = uuid.UUID(str(role_id))
+    except ValueError:
+        return jsonify({'error': 'not_found', 'message': 'Role not found'}), 404
 
-    role = Role.query.get(role_id)
+    role = Role.visible_to(current.organization_id).filter(Role.id == role_uuid).first()
     if not role:
         return jsonify({'error': 'not_found', 'message': 'Role not found'}), 404
+
+    try:
+        assert_can_grant_roles(current, [role], resource_id=user.id)
+        assert_can_manage_user(current, user, 'assign_role')
+    except GuardError as e:
+        return guard_error_response(e)
 
     # Check if already assigned
     existing = UserRole.query.filter_by(user_id=user.id, role_id=role.id).first()
@@ -243,6 +297,7 @@ def assign_role(user_id):
     )
     db.session.add(user_role)
     db.session.commit()
+    emit_permissions_changed([user.id])
 
     # Push updated roles to Supabase app_metadata
     from app.services.supabase_role_sync import push_roles_to_supabase
@@ -256,7 +311,8 @@ def assign_role(user_id):
 @require_permission('roles:manage')
 @audit_log('admin_action', 'revoke_role', 'user')
 def revoke_role(user_id, role_id):
-    """Revoke a role from a user."""
+    """Revoke a role from a user you outrank, keeping at least one admin and
+    never stripping your own admin core."""
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
@@ -267,8 +323,18 @@ def revoke_role(user_id, role_id):
     if not user_role:
         return jsonify({'error': 'not_found', 'message': 'Role assignment not found'}), 404
 
+    drop = [(user.id, role_id)]
+    try:
+        assert_can_manage_user(current, user, 'revoke_role')
+        assert_admin_remains(current.organization_id, drop_assignments=drop, resource_id=user.id)
+        if user.id == current.id:
+            assert_no_self_lockout(current, drop_assignments=drop, resource_id=user.id)
+    except GuardError as e:
+        return guard_error_response(e)
+
     db.session.delete(user_role)
     db.session.commit()
+    emit_permissions_changed([user.id])
 
     # Push updated roles to Supabase app_metadata
     from app.services.supabase_role_sync import push_roles_to_supabase
@@ -280,13 +346,16 @@ def revoke_role(user_id, role_id):
 @api_bp.route('/users/sync-supabase', methods=['POST'])
 @jwt_required()
 @require_permission('users:manage')
+@audit_log('admin_action', 'sync_supabase', 'user')
 def sync_supabase_users():
-    """Fetch users from Supabase and sync them into local DB.
+    """Fetch users from Supabase and sync them into the default org.
 
-    Uses the Supabase Admin API (service_role key) to list all Supabase
-    users.  For each one that doesn't already exist locally, a local User
-    record is created with auth_provider='supabase' and assigned the Viewer
-    role.  Already-existing users are left unchanged.
+    Supabase sign-ins land in the default organization, so only an admin of
+    that org may sync. Existing users of other orgs are never touched
+    (counted in `skipped_other_org`). Roles from Supabase app_metadata are
+    resolved in the default org and only assigned when within the caller's
+    permissions (others are listed in `roles_skipped`); new users without
+    assignable roles get Viewer.
     """
     import requests as http_requests
 
@@ -297,6 +366,10 @@ def sync_supabase_users():
         return jsonify({'error': 'not_configured', 'message': 'Supabase service role key not configured'}), 501
 
     current = get_current_user()
+    org = Organization.query.filter_by(slug='default').first()
+    if not org or org.id != current.organization_id:
+        return jsonify({'error': 'not_default_org',
+                        'message': 'Supabase users can only be synced by an administrator of the default organization'}), 403
 
     try:
         # Paginate through all Supabase users
@@ -314,7 +387,7 @@ def sync_supabase_users():
                 timeout=15,
             )
             if resp.status_code != 200:
-                current_app.logger.error(f"Supabase admin API error: {resp.status_code} {resp.text}")
+                current_app.logger.error(f"Supabase admin API error: {resp.status_code}")
                 return jsonify({'error': 'supabase_error', 'message': 'Failed to fetch Supabase users'}), 502
 
             data = resp.json()
@@ -326,20 +399,11 @@ def sync_supabase_users():
                 break
             page += 1
 
-        # Sync into local DB
-        created = 0
-        skipped = 0
-        org = Organization.query.filter_by(slug='default').first()
-        if not org:
-            org = Organization(name='Default Organization', slug='default')
-            db.session.add(org)
-            db.session.flush()
+        created = skipped = skipped_other_org = 0
+        roles_skipped = []
+        viewer_role = Role.resolve('Viewer', org.id)
 
-        viewer_role = Role.query.filter_by(name='Viewer').first()
-
-        from app.services.supabase_role_sync import (
-            roles_from_supabase_metadata, assign_roles_from_list,
-        )
+        from app.services.supabase_role_sync import roles_from_supabase_metadata, assign_roles_from_list
 
         for sb_user in all_sb_users:
             email = sb_user.get('email')
@@ -348,6 +412,9 @@ def sync_supabase_users():
 
             existing = User.query.filter_by(email=email.lower()).first()
             if existing:
+                if existing.organization_id != org.id:
+                    skipped_other_org += 1
+                    continue
                 # Update supabase_id if missing
                 if not existing.supabase_id and sb_user.get('id'):
                     existing.supabase_id = sb_user['id']
@@ -355,11 +422,8 @@ def sync_supabase_users():
                 if not existing.user_roles:
                     sb_roles = roles_from_supabase_metadata(sb_user)
                     if sb_roles:
-                        assign_roles_from_list(
-                            existing, sb_roles,
-                            organization_id=existing.organization_id,
-                            granted_by=current.id,
-                        )
+                        assign_roles_from_list(existing, sb_roles, organization_id=org.id,
+                                               granted_by=current.id, ceiling=current, skipped=roles_skipped)
                 skipped += 1
                 continue
 
@@ -370,12 +434,11 @@ def sync_supabase_users():
                 or user_meta.get('user_name')
                 or email.split('@')[0]
             )
-            avatar = user_meta.get('avatar_url')
 
             new_user = User(
                 email=email.lower(),
                 name=name,
-                avatar_url=avatar,
+                avatar_url=user_meta.get('avatar_url'),
                 organization_id=org.id,
                 auth_provider='supabase',
                 supabase_id=sb_user.get('id', ''),
@@ -387,20 +450,13 @@ def sync_supabase_users():
 
             # Assign roles from Supabase app_metadata, fall back to Viewer
             sb_roles = roles_from_supabase_metadata(sb_user)
+            assigned = 0
             if sb_roles:
-                assign_roles_from_list(
-                    new_user, sb_roles,
-                    organization_id=org.id,
-                    granted_by=current.id,
-                )
-            elif viewer_role:
-                ur = UserRole(
-                    user_id=new_user.id,
-                    role_id=viewer_role.id,
-                    organization_id=org.id,
-                    granted_by=current.id,
-                )
-                db.session.add(ur)
+                assigned = assign_roles_from_list(new_user, sb_roles, organization_id=org.id,
+                                                  granted_by=current.id, ceiling=current, skipped=roles_skipped)
+            if not assigned and viewer_role and set(viewer_role.permissions or []) <= with_implied(current.permissions):
+                db.session.add(UserRole(user_id=new_user.id, role_id=viewer_role.id,
+                                        organization_id=org.id, granted_by=current.id))
 
             created += 1
 
@@ -410,13 +466,12 @@ def sync_supabase_users():
             'message': f'Synced Supabase users: {created} created, {skipped} already existed',
             'created': created,
             'skipped': skipped,
+            'skipped_other_org': skipped_other_org,
+            'roles_skipped': roles_skipped,
             'total_supabase': len(all_sb_users),
         }), 200
 
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Supabase sync error: {e}")
+        current_app.logger.error(f"Supabase sync error: {type(e).__name__}")
         return jsonify({'error': 'server_error', 'message': 'Failed to sync Supabase users'}), 500
-
-
-

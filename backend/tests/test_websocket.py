@@ -95,3 +95,19 @@ def test_spoofed_identity_in_events_is_ignored(app, users, auth, make_incident):
                             'user_id': str(users['Administrator'].id), 'user_name': 'Admin'})
     typing = [e for e in b.get_received() if e['name'] == 'user_typing']
     assert typing and typing[0]['args'][0]['user_id'] == str(users['Viewer'].id)
+
+
+def test_permissions_changed_emitted_on_assign(app, db, users, auth, org_a):
+    import uuid
+    from app.models import Role, User, UserRole
+    target = User(email=f'ws-perm-{uuid.uuid4().hex[:8]}@a.test', name='t', organization_id=org_a.id, is_active=True)
+    db.session.add(target)
+    db.session.commit()
+    c = _connect(app, auth={'token': auth(target).access_token})
+    c.get_received()
+    viewer = Role.query.filter(Role.organization_id.is_(None), Role.name == 'Viewer').one()
+    resp = auth(users['Administrator']).post(f'/api/v1/users/{target.id}/roles', json={'role_id': str(viewer.id)})
+    assert resp.status_code == 201
+    assert 'permissions_changed' in [e['name'] for e in c.get_received()]
+    UserRole.query.filter_by(user_id=target.id).delete()
+    db.session.commit()

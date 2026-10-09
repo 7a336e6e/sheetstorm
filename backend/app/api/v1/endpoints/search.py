@@ -24,7 +24,7 @@ def _user_incident_ids(user_id):
     user = db.session.get(User, user_id)
     if not user:
         return []
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
     return [r[0] for r in accessible_incidents_query(user).with_entities(Incident.id).all()]
 
 
@@ -58,7 +58,7 @@ def search_across_incidents():
     from app.services import search_service
     from app.utils.pagination import ListArgsError, parse_page_args, parse_q, parse_uuid
     from app.utils.validation import parse_datetime
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
 
     user = get_current_user()
     args = request.args

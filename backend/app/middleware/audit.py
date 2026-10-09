@@ -47,7 +47,7 @@ def _broadcast_activity(log_entry):
 
     Incident-scoped events go only to that incident's room (whose members
     passed an incident access check on join). Org-wide events go to the org
-    room, except admin actions which go only to the org's administrators.
+    room, except admin actions which go only to holders of audit_logs:read.
     Sensitive detail keys are never broadcast.
     """
     if not log_entry or not log_entry.organization_id:
@@ -71,13 +71,17 @@ def _broadcast_activity(log_entry):
         if log_entry.incident_id:
             socketio.emit('activity:new', payload, room=f'incident_{log_entry.incident_id}')
         elif log_entry.event_type == 'admin_action':
+            # Admin actions go only to users who may read the audit log.
             from app.models import User, UserRole, Role
             admin_ids = [
-                uid for (uid,) in db.session.query(User.id)
+                uid for (uid,) in db.session.query(User.id).distinct()
                 .join(UserRole, UserRole.user_id == User.id)
                 .join(Role, Role.id == UserRole.role_id)
                 .filter(User.organization_id == log_entry.organization_id,
-                        Role.name == 'Administrator', User.is_active.is_(True))
+                        Role.permissions.contains(['audit_logs:read']),
+                        db.or_(db.and_(Role.organization_id.is_(None), Role.is_system.is_(True)),
+                               Role.organization_id == log_entry.organization_id),
+                        User.is_active.is_(True))
                 .all()
             ]
             for uid in admin_ids:
@@ -228,6 +232,9 @@ def audit_log(event_type, action, resource_type=None):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             start_time = time.monotonic()
+            # Diff slots filled by the endpoint via utils.audit_diff.record_changes.
+            g.pop('audit_changes', None)
+            g.pop('audit_extra', None)
 
             # Execute the wrapped function
             result = f(*args, **kwargs)

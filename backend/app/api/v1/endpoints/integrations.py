@@ -42,6 +42,9 @@ def get_integration(integration_id):
     return jsonify(integration.to_dict()), 200
 
 
+_LOGIN_UNSUPPORTED_TYPES = {'oauth_google', 'oauth_azure'}
+
+
 @api_bp.route('/integrations', methods=['POST'])
 @jwt_required()
 @require_permission('integrations:create')
@@ -57,6 +60,11 @@ def create_integration():
     integration_type = data.get('type', '').strip()
     if integration_type not in Integration.INTEGRATION_TYPES:
         return jsonify({'error': 'bad_request', 'message': 'Invalid integration type'}), 400
+    if integration_type in _LOGIN_UNSUPPORTED_TYPES:
+        # No login flow exists for these providers; existing rows can still
+        # be read and deleted.
+        return jsonify({'error': 'not_supported',
+                        'message': 'Sign-in with this provider is not implemented'}), 400
 
     name = data.get('name', '').strip()
     if not name:
@@ -473,13 +481,13 @@ def list_integration_types():
              'config_fields': ['api_url'], 'credential_fields': ['api_key'],
              'doc_url': ''},
             # Authentication
-            {'id': 'oauth_google', 'name': 'Google OAuth', 'description': 'Allow users to sign in with Google accounts', 'category': 'auth',
+            {'id': 'oauth_google', 'login_supported': False, 'name': 'Google OAuth', 'description': 'Allow users to sign in with Google accounts', 'category': 'auth',
              'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://developers.google.com/identity/protocols/oauth2'},
-            {'id': 'oauth_github', 'name': 'GitHub OAuth', 'description': 'Allow users to sign in with GitHub accounts', 'category': 'auth',
+            {'id': 'oauth_github', 'login_supported': True, 'name': 'GitHub OAuth', 'description': 'Allow users to sign in with GitHub accounts', 'category': 'auth',
              'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://docs.github.com/en/apps/oauth-apps'},
-            {'id': 'oauth_azure', 'name': 'Azure AD / Entra ID', 'description': 'Microsoft Entra ID (Azure AD) for enterprise SSO', 'category': 'auth',
+            {'id': 'oauth_azure', 'login_supported': False, 'name': 'Azure AD / Entra ID', 'description': 'Microsoft Entra ID (Azure AD) for enterprise SSO', 'category': 'auth',
              'config_fields': ['client_id', 'tenant_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://learn.microsoft.com/en-us/entra/identity-platform/'},
         ],

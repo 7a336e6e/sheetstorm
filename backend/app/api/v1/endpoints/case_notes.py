@@ -122,14 +122,10 @@ def update_case_note(incident_id, note_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/case-notes/<uuid:note_id>', methods=['DELETE'])
 @jwt_required()
-@require_incident_access('incidents:update')
+@require_incident_access('case_notes:delete')
 @audit_log('data_modification', 'delete', 'case_note')
 def delete_case_note(incident_id, note_id):
-    """Soft-delete a case note. Only administrators can delete notes."""
-    user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can delete case notes'}), 403
-
+    """Soft-delete a case note (case_notes:delete on an incident you can access)."""
     note = CaseNote.query.filter_by(id=note_id, incident_id=incident_id, is_archived=False).first()
     if not note:
         return jsonify({'error': 'not_found', 'message': 'Case note not found'}), 404

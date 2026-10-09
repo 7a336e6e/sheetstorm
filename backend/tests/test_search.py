@@ -306,7 +306,7 @@ def test_pg_trgm_and_indexes_installed(app, db):
 @pytest.mark.parametrize('type_key', ['incidents', 'timeline', 'hosts', 'accounts', 'network_iocs',
                                       'host_iocs', 'malware', 'notes'])
 def test_explain_uses_trigram_index(app, db, users, type_key):
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
     from app.models import Incident
     from app.services import search_service
     st = search_service.TYPES_BY_NAME[type_key]

@@ -61,7 +61,10 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 | POST   | `/incidents`                              | Create incident                |
 | GET    | `/incidents/{id}`                         | Get incident details           |
 | PUT    | `/incidents/{id}`                         | Update incident                |
-| DELETE | `/incidents/{id}`                         | Delete incident                |
+| POST   | `/incidents/{id}/archive`                 | Archive (`incidents:archive`)  |
+| POST   | `/incidents/{id}/unarchive`               | Restore (`incidents:archive`)  |
+| GET    | `/incidents/archived`                     | List archived (`incidents:archive`) |
+| DELETE | `/incidents/{id}/permanent`               | Purge an archived incident (`incidents:purge`) |
 | PATCH  | `/incidents/{id}/status`                  | Update status/phase            |
 | POST   | `/incidents/{id}/import/parse`            | Parse Excel file               |
 | POST   | `/incidents/{id}/import/submit`           | Submit mapped import data      |
@@ -160,16 +163,28 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 | Method | Endpoint                                  | Description                    |
 |--------|-------------------------------------------|--------------------------------|
 | GET    | `/users`                                  | List users                     |
-| POST   | `/users`                                  | Create user                    |
+| POST   | `/users`                                  | Create user (`users:create`; roles need `roles:manage` and must be within your permissions) |
 | GET    | `/users/{id}`                             | Get user details               |
-| PUT    | `/users/{id}`                             | Update user                    |
-| DELETE | `/users/{id}`                             | Deactivate user                |
+| PUT    | `/users/{id}`                             | Update user (`users:update`; you must outrank the user) |
+| DELETE | `/users/{id}`                             | Delete user (`users:delete`; never yourself or the last admin) |
 | GET    | `/users/{id}/roles`                       | Get user roles                 |
-| POST   | `/users/{id}/roles`                       | Assign role                    |
-| DELETE | `/users/{id}/roles/{rid}`                 | Remove role                    |
-| GET    | `/roles`                                  | List roles                     |
-| GET    | `/teams`                                  | List teams                     |
-| POST   | `/teams`                                  | Create team                    |
+| POST   | `/users/{id}/roles`                       | Assign role (`roles:manage`, within your permissions) |
+| DELETE | `/users/{id}/roles/{rid}`                 | Remove role (`roles:manage`; last-admin / self-lockout guarded) |
+| POST   | `/users/sync-supabase`                    | Import Supabase users into the default org (`users:manage`, default-org admins only) |
+| GET    | `/permissions`                            | Permission catalog `{groups, items}` (any authenticated user) |
+| GET    | `/roles`                                  | System roles + your org's roles (`users:read`) |
+| GET    | `/roles/{id}`                             | Role details                   |
+| POST   | `/roles`                                  | Create custom role (`roles:manage`) |
+| PUT    | `/roles/{id}`                             | Edit custom role (system roles: `403 system_role_immutable`) |
+| POST   | `/roles/{id}/clone`                       | Clone a role into your org     |
+| DELETE | `/roles/{id}`                             | Delete an unassigned custom role |
+| GET    | `/teams`                                  | List teams (`teams:read`)      |
+| GET    | `/teams/{id}`                             | Team with members (`teams:read` + `users:read`) |
+| POST   | `/teams`                                  | Create team (`teams:create`)   |
+| PUT    | `/teams/{id}`                             | Edit team (`teams:update`); members via `/teams/{id}/members` |
+| DELETE | `/teams/{id}`                             | Delete team (`teams:delete`)   |
+| GET    | `/organization`                           | Organization with allow-listed settings |
+| PUT    | `/organization`                           | Update name / settings (`organizations:manage`; unknown keys → `400 validation_error`) |
 | GET    | `/notifications`                          | List notifications             |
 | PUT    | `/notifications/{id}/read`                | Mark as read                   |
 | POST   | `/notifications/mark-all-read`            | Mark all as read               |
@@ -178,3 +193,26 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 | GET    | `/integrations`                           | List integrations              |
 | POST   | `/integrations`                           | Create integration             |
 | GET    | `/health`                                 | Health check                   |
+
+### Organization settings
+
+`PUT /organization` accepts `{name?, settings?}`; `settings` keys (all optional, merged over the
+stored ones): `timezone` (IANA name), `auto_enrich_iocs` (bool), `enrichment_allow_amber_strict`
+(bool), `ai_tlp_policy` (`{white|green|amber|amber_strict|red: allow|local_only|block}`, defaults
+`red`/`amber_strict` → `local_only`, others `allow`) and `registration_enabled` (bool, default
+organization only, otherwise `400 not_applicable`). Self-registration is **closed by default**.
+Every change is audited with a before/after diff; loosening the AI policy for any TLP level also
+records an `ai_tlp_policy_loosened` security event.
+
+### Guard errors
+
+| Status | `error`                 | Extra fields          |
+|--------|-------------------------|-----------------------|
+| 400    | `unknown_permissions`   | `unknown`             |
+| 400    | `self_action`           | `action`              |
+| 400    | `use_change_password`   | —                     |
+| 403    | `privilege_escalation`  | `missing` (`platform_only`) |
+| 403    | `insufficient_privilege`| `missing`             |
+| 403    | `system_role_immutable` | —                     |
+| 409    | `last_admin`            | —                     |
+| 409    | `self_lockout`          | `lost`                |

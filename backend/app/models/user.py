@@ -1,6 +1,6 @@
 """User and authentication models"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary, Text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary, Text, and_, func, or_
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -10,13 +10,21 @@ import bcrypt
 
 
 class Role(BaseModel):
-    """Role model for RBAC."""
+    """Role model for RBAC.
+
+    `organization_id IS NULL` marks a global system role (immutable, shared
+    by every tenant); custom roles always belong to one organization. Names
+    are unique case-insensitively among system roles and within an org, and
+    custom roles cannot shadow a system role name.
+    """
     __tablename__ = 'roles'
 
-    name = Column(String(100), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
     description = Column(String(500))
     permissions = Column(JSONB, default=list)
     is_system = Column(Boolean, default=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'),
+                             nullable=True)
 
     # Relationships
     user_roles = relationship('UserRole', back_populates='role', lazy='dynamic')
@@ -26,7 +34,35 @@ class Role(BaseModel):
 
     def has_permission(self, permission):
         """Check if role has a specific permission."""
-        return permission in self.permissions
+        return permission in (self.permissions or [])
+
+    def applies_to_org(self, org_id):
+        """A role only counts for users of its own org (system roles: all)."""
+        if self.organization_id is None:
+            return bool(self.is_system)
+        return self.organization_id == org_id
+
+    @classmethod
+    def visible_to(cls, org_id):
+        """Query of the roles an org may see and assign: system + its own."""
+        return cls.query.filter(or_(
+            and_(cls.organization_id.is_(None), cls.is_system.is_(True)),
+            cls.organization_id == org_id,
+        ))
+
+    @classmethod
+    def resolve(cls, name, org_id):
+        """Case-insensitive name lookup among the roles visible to `org_id`.
+
+        System names cannot be shadowed by custom roles, so at most one row
+        matches; a system role wins if legacy data ever disagrees.
+        """
+        if not name or not isinstance(name, str):
+            return None
+        return (cls.visible_to(org_id)
+                .filter(func.lower(cls.name) == name.strip().lower())
+                .order_by(cls.organization_id.isnot(None))
+                .first())
 
 
 class User(BaseModel):
@@ -85,12 +121,15 @@ class User(BaseModel):
 
     @property
     def permissions(self):
-        """Get combined permissions from all roles."""
+        """Union of the permissions of all roles (additive; no role restricts
+        another). Roles of a foreign org are ignored even if a stray
+        user_roles row exists."""
         perms = set()
         for user_role in self.user_roles:
-            if user_role.role and user_role.role.permissions:
-                perms.update(user_role.role.permissions)
-        return list(perms)
+            role = user_role.role
+            if role and role.permissions and role.applies_to_org(self.organization_id):
+                perms.update(role.permissions)
+        return sorted(perms)
 
     def has_permission(self, permission):
         """Check if user has a specific permission."""
@@ -107,7 +146,8 @@ class User(BaseModel):
         return all(p in user_perms for p in permissions)
 
     def has_role(self, role_name):
-        """Check if user has a specific role."""
+        """Check if user has a role by name. Display / sync only — never use
+        a role name for an authorization decision (check a permission)."""
         return role_name in self.role_names
 
     @property

@@ -77,6 +77,10 @@ class BaseConfig:
     # the organization setting `auto_enrich_iocs` overrides it).
     IOC_AUTO_ENRICH = _env_bool('IOC_AUTO_ENRICH', False)
 
+    # Slug of the platform organization. Only holders of `system:manage` in
+    # this org are platform admins (instance-wide settings and status).
+    PLATFORM_ORG_SLUG = os.getenv('PLATFORM_ORG_SLUG', 'default')
+
     # Socket.IO runtime
     SOCKETIO_ASYNC_MODE = 'eventlet'
 

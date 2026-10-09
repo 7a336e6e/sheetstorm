@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'add_search_trgm_indexes'
+EXPECTED_HEAD = 'admin_guardrails_rbac'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -102,3 +102,119 @@ def test_fresh_install_upgrade_downgrade_upgrade(scratch_db):
     r = _flask_db(scratch_db, 'heads')
     assert r.returncode == 0
     assert [ln for ln in r.stdout.splitlines() if ln.strip()] == [f'{EXPECTED_HEAD} (head)']
+
+
+# ── admin_guardrails_rbac ───────────────────────────────────────────
+
+def test_roles_org_column_and_partial_unique_indexes(app, db):
+    cols = db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='roles'")).scalars().all()
+    assert 'organization_id' in cols
+    idx = dict(db.session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename='roles'")).all())
+    assert 'WHERE (organization_id IS NULL)' in idx['uq_roles_system_name']
+    assert 'lower' in idx['uq_roles_org_name'] and 'WHERE (organization_id IS NOT NULL)' in idx['uq_roles_org_name']
+    assert not db.session.execute(text(
+        "SELECT 1 FROM pg_constraint WHERE conname='roles_name_key'")).first()
+
+
+def test_guardrails_permission_backfill(app, db):
+    perms = dict(db.session.execute(text(
+        "SELECT name, permissions FROM roles WHERE is_system AND organization_id IS NULL")).all())
+    assert {'incidents:archive', 'incidents:purge', 'incidents:read_all', 'case_notes:delete'} <= set(perms['Administrator'])
+    assert 'incidents:read_tlp_white' in perms['Viewer']
+    assert 'incidents:read_all' in perms['Manager']
+    assert 'incidents:read_team' in perms['Analyst'] and 'incidents:read_team' in perms['Incident Responder']
+    assert not any('incidents:delete' in p for p in perms.values())
+
+
+def _seed_legacy_roles(url):
+    """At custody_key_id_admin_perm: 3 orgs, global custom roles in use."""
+    eng = create_engine(url)
+    try:
+        with eng.begin() as conn:
+            def q(sql, **kw):
+                return conn.execute(text(sql), kw)
+            orgs = {}
+            for i, slug in enumerate(('default', 'org-x', 'org-y')):
+                orgs[slug] = q("INSERT INTO organizations (name, slug, settings, created_at) "
+                               "VALUES (:s, :s, '{}', now() + make_interval(secs => :i)) RETURNING id",
+                               s=slug, i=i).scalar()
+            users = {}
+            for slug in ('org-x', 'org-y'):
+                users[slug] = q("INSERT INTO users (organization_id, email, name) VALUES (:o, :e, 'u') RETURNING id",
+                                o=orgs[slug], e=f'u@{slug}.test').scalar()
+            roles = {}
+            for name, perms in (
+                ('Shared Hunters', '["incidents:read", "incidents:delete", "users:manage", "users:read",'
+                                   ' "incidents:create", "reports:generate"]'),
+                ('Lonely', '["tasks:read"]'),
+                ('Only X', '["incidents:read"]'),
+            ):
+                roles[name] = q("INSERT INTO roles (name, permissions, is_system) "
+                                "VALUES (:n, CAST(:p AS jsonb), false) RETURNING id", n=name, p=perms).scalar()
+            for slug in ('org-x', 'org-y'):
+                q("INSERT INTO user_roles (user_id, role_id, organization_id) VALUES (:u, :r, :o)",
+                  u=users[slug], r=roles['Shared Hunters'], o=orgs[slug])
+            q("INSERT INTO user_roles (user_id, role_id, organization_id) VALUES (:u, :r, :o)",
+              u=users['org-x'], r=roles['Only X'], o=orgs['org-x'])
+            before = dict(conn.execute(text("SELECT name, permissions FROM roles")).all())
+        return orgs, users, before
+    finally:
+        eng.dispose()
+
+
+def test_custom_roles_rehomed_split_and_access_preserved(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'custody_key_id_admin_perm')
+    assert r.returncode == 0, r.stderr[-3000:]
+    orgs, users, before = _seed_legacy_roles(scratch_db)
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            by_name = {}
+            for rid, name, org_id, perms in conn.execute(text(
+                    "SELECT id, name, organization_id, permissions FROM roles")).all():
+                by_name.setdefault(name, []).append((str(rid), org_id, set(perms)))
+            # The shared role is split into one row per org and user_roles are repointed.
+            shared = by_name['Shared Hunters']
+            assert sorted(str(o) for _, o, _ in shared) == sorted(str(orgs[s]) for s in ('org-x', 'org-y'))
+            owner = {rid: org for rid, org, _ in shared}
+            for slug in ('org-x', 'org-y'):
+                rid = conn.execute(text(
+                    "SELECT ur.role_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+                    "WHERE ur.user_id = :u AND r.name = 'Shared Hunters'"), {'u': users[slug]}).scalar()
+                assert owner[str(rid)] == orgs[slug]
+            assert by_name['Only X'][0][1] == orgs['org-x']
+            assert by_name['Lonely'][0][1] == orgs['default']  # unused -> default org
+            # Effective access preserved (only incidents:delete is dropped) + backfills.
+            for name, old in before.items():
+                for _, _, new in by_name[name]:
+                    assert set(old) - {'incidents:delete'} <= new, name
+                    assert 'incidents:delete' not in new
+            hunters = shared[0][2]
+            assert {'incidents:read_team', 'decisions:read', 'response_actions:read', 'improvements:read',
+                    'users:create', 'users:delete', 'teams:create', 'teams:update', 'teams:delete',
+                    'teams:read', 'templates:manage', 'incidents:export'} <= hunters
+            assert 'incidents:archive' not in hunters and 'system:manage' not in hunters
+            assert by_name['Lonely'][0][2] == {'tasks:read'}
+            # The existing default org keeps registration open.
+            settings = conn.execute(text("SELECT settings FROM organizations WHERE slug='default'")).scalar()
+            assert settings['registration_enabled'] is True
+    finally:
+        eng.dispose()
+
+    # Lossy but clean downgrade: global UNIQUE(name) restored over the split rows.
+    r = _flask_db(scratch_db, 'downgrade', 'custody_key_id_admin_perm')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            names = conn.execute(text("SELECT name FROM roles WHERE name LIKE 'Shared Hunters%'")).scalars().all()
+            assert len(names) == 2 and len(set(names)) == 2
+            admin = conn.execute(text("SELECT permissions FROM roles WHERE name='Administrator'")).scalar()
+            assert 'incidents:delete' in admin and 'incidents:archive' not in admin
+    finally:
+        eng.dispose()

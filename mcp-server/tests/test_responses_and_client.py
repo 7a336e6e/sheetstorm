@@ -123,16 +123,35 @@ async def test_permanent_delete_requires_exact_confirmation(client, backend):
 
 @pytest.mark.parametrize("given,expected", [
     ("analyst", "Analyst"), ("ADMIN", "Administrator"), ("incident_responder", "Incident Responder"),
-    ("Viewer", "Viewer"),
+    ("Viewer", "Viewer"), ("admin", "Administrator"),
 ])
 async def test_create_user_sends_canonical_role(client, backend, given, expected):
     await admin.sheetstorm_create_user("a@b.c", "A", "pw", role=given)
     assert backend.find("POST", "/users")["json"]["roles"] == [expected]
 
 
-async def test_create_user_rejects_unknown_role(client, backend):
-    out = await admin.sheetstorm_create_user("a@b.c", "A", "pw", role="superuser")
-    assert out.startswith("✗ Unknown role") and not backend.calls
+async def test_create_user_passes_custom_role_through(client, backend):
+    await admin.sheetstorm_create_user("a@b.c", "A", "pw", role="Hunters")
+    assert backend.find("POST", "/users")["json"]["roles"] == ["Hunters"]
+
+
+async def test_list_permissions_flags_dangerous_and_filters_group(client, backend):
+    backend.set("GET", "/permissions", {
+        "groups": [{"key": "incidents", "label": "Incidents"}, {"key": "users", "label": "Users"}],
+        "items": [
+            {"key": "incidents:purge", "group": "incidents", "label": "Purge", "description": "d", "dangerous": True},
+            {"key": "users:read", "group": "users", "label": "View users", "description": "d", "dangerous": False},
+        ]})
+    out = await admin.sheetstorm_list_permissions(group="incidents")
+    assert "incidents:purge" in out and "dangerous" in out and "users:read" not in out
+
+
+async def test_list_roles_tags_system_and_custom(client, backend):
+    backend.set("GET", "/roles", {"items": [
+        {"id": "r1", "name": "Analyst", "is_system": True, "permissions": ["a", "b"]},
+        {"id": "r2", "name": "Hunters", "is_system": False, "permissions": ["a"]}]})
+    out = await admin.sheetstorm_list_roles()
+    assert "Analyst** [system]" in out and "Hunters** [custom]" in out
 
 
 async def test_update_user_does_not_send_ignored_fields(client, backend):

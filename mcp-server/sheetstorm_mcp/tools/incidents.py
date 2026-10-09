@@ -246,7 +246,7 @@ async def sheetstorm_update_incident_status(
 async def sheetstorm_archive_incident(incident_id: str) -> str:
     """Archive an incident (soft delete). The incident disappears from normal
     listings but all its data is kept and it can be restored with
-    sheetstorm_unarchive_incident. Requires the Administrator or Manager role.
+    sheetstorm_unarchive_incident. Requires the incidents:archive permission.
 
     Args:
         incident_id: UUID of the incident to archive
@@ -267,7 +267,7 @@ async def sheetstorm_list_archived_incidents(
     q: Optional[str] = None,
     sort: Optional[str] = None,
 ) -> str:
-    """List archived incidents. Requires the Administrator role.
+    """List archived incidents. Requires the incidents:archive permission.
 
     Args:
         page: Page number (default 1)
@@ -300,7 +300,7 @@ async def sheetstorm_list_archived_incidents(
 
 @mcp.tool()
 async def sheetstorm_unarchive_incident(incident_id: str) -> str:
-    """Restore an archived incident to the active list. Requires the Administrator role.
+    """Restore an archived incident to the active list. Requires incidents:archive.
 
     Args:
         incident_id: UUID of the archived incident
@@ -319,7 +319,7 @@ PERMANENT_DELETE_CONFIRMATION = "DELETE PERMANENTLY"
 @mcp.tool()
 async def sheetstorm_permanently_delete_incident(incident_id: str, confirmation: str) -> str:
     """IRREVERSIBLY delete an ARCHIVED incident and all of its evidence records,
-    timeline, IOCs and notes. Administrator role only. The incident must be
+    timeline, IOCs and notes. Requires incidents:purge. The incident must be
     archived first (sheetstorm_archive_incident). Only call this after the user
     has explicitly asked for permanent deletion of this specific incident.
 

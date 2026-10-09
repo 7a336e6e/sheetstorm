@@ -183,6 +183,8 @@ CASES: dict[str, tuple] = {
                                "POST", "/users", {"roles": ["Incident Responder"]}, None),
     "sheetstorm_update_user": ({"user_id": "u1", "is_active": False}, "PUT", "/users/u1", {"is_active": False}, None),
     "sheetstorm_delete_user": ({"user_id": "u1"}, "DELETE", "/users/u1", None, None),
+    "sheetstorm_list_roles": ({}, "GET", "/roles", None, None),
+    "sheetstorm_list_permissions": ({}, "GET", "/permissions", None, None),
     "sheetstorm_list_notifications": ({"unread_only": True}, "GET", "/notifications", None, {"unread_only": "true"}),
     "sheetstorm_mark_notification_read": ({"notification_id": "n1"}, "POST", "/notifications/n1/read", None, None),
     "sheetstorm_mark_all_notifications_read": ({}, "POST", "/notifications/read-all", None, None),

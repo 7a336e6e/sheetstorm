@@ -79,9 +79,11 @@ detected and unpublished within hours to a few days.
   GHSA-p293-qw3h-jr36 and GHSA-vcvr-r3jv-pc5j (critical RCEs) and every other
   Next.js advisory OSV lists for 16.x, so the younger `16.4.0` was not needed.
 - Dependabot (`.github/dependabot.yml`) opens PRs only for versions past a
-  7-day cooldown (14 for npm/pip majors), groups minor/patch bumps, and covers
-  npm, pip (backend, mcp-server, mcp-bridge), Dockerfiles, docker-compose and
-  GitHub Actions.
+  7-day cooldown and covers npm, pip (backend, mcp-server, mcp-bridge),
+  Dockerfiles, docker-compose and GitHub Actions. Version updates arrive as one
+  grouped weekly PR of minor/patch bumps per ecosystem/directory (at most 2
+  open per entry); semver-major bumps are ignored and done manually. Security
+  updates are grouped into one PR per ecosystem/directory.
 
 ### 4. Vetting checklist for a new or bumped dependency
 

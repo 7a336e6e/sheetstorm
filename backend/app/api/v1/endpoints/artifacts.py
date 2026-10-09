@@ -398,7 +398,7 @@ def get_custody_chain(incident_id, artifact_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>/legal-hold', methods=['POST'])
 @jwt_required()
-@require_incident_access('artifacts:delete')
+@require_incident_access('artifacts:delete', allow_archived_writes=True)
 @audit_log('admin_action', 'legal_hold', 'artifact')
 def set_legal_hold(incident_id, artifact_id):
     """Place or release a legal hold / preservation lock on an artifact."""

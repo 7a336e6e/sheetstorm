@@ -1,7 +1,15 @@
+import type React from 'react'
 import { afterEach, describe, expect, it } from '@jest/globals'
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
 import { useAuthStore, type User } from '@/lib/store'
-import { PermissionGate, checkPermission, usePermission, usePermissionCheck } from './permission-gate'
+import {
+  PermissionGate,
+  ReadOnlyScope,
+  checkPermission,
+  isReadOnlyPermission,
+  usePermission,
+  usePermissionCheck,
+} from './permission-gate'
 
 function setPermissions(permissions: string[] | undefined) {
   const user: User | null =
@@ -81,5 +89,47 @@ describe('PermissionGate', () => {
       </PermissionGate>
     )
     expect(screen.queryByText('shown')).not.toBeNull()
+  })
+})
+
+describe('ReadOnlyScope (archived incidents)', () => {
+  it('keeps only reading permissions inside an active scope', () => {
+    setPermissions(['incidents:read', 'incidents:update', 'timeline:read', 'timeline:create', 'incidents:export'])
+    const wrapper = ({ children }: { children: React.ReactNode }) => <ReadOnlyScope active>{children}</ReadOnlyScope>
+    const { result } = renderHook(
+      () => ({
+        read: usePermission('timeline:read'),
+        create: usePermission('timeline:create'),
+        update: usePermission('incidents:update'),
+        exp: usePermission('incidents:export'),
+      }),
+      { wrapper }
+    )
+    expect(result.current).toEqual({ read: true, create: false, update: false, exp: true })
+  })
+
+  it('changes nothing when inactive, and hides gated controls when active', () => {
+    setPermissions(['incidents:update'])
+    const { rerender } = render(
+      <ReadOnlyScope active={false}>
+        <PermissionGate permission="incidents:update">edit</PermissionGate>
+      </ReadOnlyScope>
+    )
+    expect(screen.queryByText('edit')).not.toBeNull()
+    rerender(
+      <ReadOnlyScope active>
+        <PermissionGate permission="incidents:update">edit</PermissionGate>
+      </ReadOnlyScope>
+    )
+    expect(screen.queryByText('edit')).toBeNull()
+  })
+
+  it('classifies permissions', () => {
+    for (const p of ['incidents:read', 'incidents:read_team', 'artifacts:download', 'incidents:export', 'compromised_accounts:reveal']) {
+      expect(isReadOnlyPermission(p)).toBe(true)
+    }
+    for (const p of ['incidents:update', 'tasks:create', 'artifacts:delete', 'incidents:archive']) {
+      expect(isReadOnlyPermission(p)).toBe(false)
+    }
   })
 })

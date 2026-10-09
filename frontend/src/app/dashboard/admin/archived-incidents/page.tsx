@@ -1,6 +1,8 @@
 "use client"
 
 import { Suspense, useMemo } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { SeverityBadge, StatusBadge } from '@/components/ui/badge'
 import { DataTable, FilterSelect, type DataTableColumn, type RowAction } from '@/components/ui/data-table'
@@ -9,7 +11,7 @@ import { useIncidentStore } from '@/lib/store'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Incident } from '@/types'
-import { ArchiveRestore, Trash2, AlertTriangle } from 'lucide-react'
+import { ArchiveRestore, Eye, Trash2, AlertTriangle } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type ArchivedIncident = Incident & { archived_at?: string | null }
@@ -32,6 +34,7 @@ export default function ArchivedIncidentsPage() {
 function ArchivedIncidentsList() {
   const { unarchiveIncident, permanentDeleteIncident } = useIncidentStore()
   const confirm = useConfirm()
+  const router = useRouter()
 
   const query = usePaginatedQuery<ArchivedIncident>({
     endpoint: '/incidents/archived',
@@ -87,7 +90,12 @@ function ArchivedIncidentsList() {
         sortKey: 'title',
         cell: (i) => (
           <div className="min-w-0">
-            <p className="truncate font-medium text-foreground">{i.title}</p>
+            <Link
+              href={`/dashboard/incidents/${i.id}`}
+              className="block truncate font-medium text-foreground hover:text-primary hover:underline"
+            >
+              {i.title}
+            </Link>
             {i.description && (
               <p className="mt-0.5 max-w-[400px] truncate text-xs text-muted-foreground">{i.description}</p>
             )}
@@ -126,6 +134,12 @@ function ArchivedIncidentsList() {
   )
 
   const rowActions = (i: ArchivedIncident): RowAction[] => [
+    {
+      label: 'Open (read-only)',
+      icon: Eye,
+      permission: 'incidents:archive',
+      onSelect: () => router.push(`/dashboard/incidents/${i.id}`),
+    },
     {
       label: 'Restore',
       icon: ArchiveRestore,

@@ -66,6 +66,11 @@ function describeCode(
             : `Your organization's policy does not allow AI features for ${label} incidents.`,
       }
     }
+    case 'incident_archived':
+      return {
+        title: 'Incident is archived',
+        description: message ?? 'Archived incidents are read-only. Unarchive it to make changes.',
+      }
     case 'tlp_restricted':
       return {
         title: 'Blocked by TLP',

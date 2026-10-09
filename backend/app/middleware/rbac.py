@@ -1,6 +1,6 @@
 """Role-Based Access Control (RBAC) middleware"""
 from functools import wraps
-from flask import jsonify, g, current_app
+from flask import jsonify, g, current_app, request
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 
 from app import db
@@ -207,11 +207,37 @@ def accessible_incidents_query(user, archived=False):
     return query.filter(db.or_(*clauses))
 
 
+ARCHIVE_PERMISSION = 'incidents:archive'
+SAFE_METHODS = frozenset({'GET', 'HEAD', 'OPTIONS'})
+
+
+def archived_incident_error(user, incident, allow_archived_writes=False):
+    """(body, status) when an archived incident must not be served, else None.
+
+    Without `incidents:archive` an archived incident answers 404, exactly like
+    one that does not exist (no existence oracle). With it, the incident is
+    browsable read-only: mutating requests answer 409 `incident_archived`
+    until it is unarchived (the archive/unarchive/purge endpoints do not go
+    through `require_incident_access`)."""
+    if not incident.is_archived:
+        return None
+    if not user.has_permission(ARCHIVE_PERMISSION):
+        return {'error': 'not_found', 'message': 'Incident not found'}, 404
+    if request.method not in SAFE_METHODS and not allow_archived_writes:
+        return {'error': 'incident_archived',
+                'message': 'This incident is archived and read-only. Unarchive it to make changes.'}, 409
+    return None
+
+
 def user_can_access_incident(user, incident):
     """Whether `user` may see `incident` (already known to be in their org).
     Same rules as accessible_incidents_query."""
     from app.models import IncidentAssignment, IncidentTeam, TeamMember
 
+    # Archived incidents are hidden from everyone without `incidents:archive`,
+    # whatever their visibility scope (direct links, sockets, search, MCP).
+    if incident.is_archived and not user.has_permission(ARCHIVE_PERMISSION):
+        return False
     scopes = incident_scopes(user)
     if 'all' in scopes:
         return True
@@ -236,12 +262,16 @@ def user_can_access_incident(user, incident):
     ).first() is not None
 
 
-def require_incident_access(permission=None):
+def require_incident_access(permission=None, allow_archived_writes=False):
     """Decorator to check user has access to a specific incident.
 
     Access requires BOTH the permission (when given) AND incident visibility
     (user_can_access_incident: assigned, or within one of the user's
     incident_scopes()).
+
+    Archived incidents: 404 without `incidents:archive`; read-only with it,
+    unless `allow_archived_writes=True` (records-management actions such as
+    legal holds, which must work on an archived incident before a purge).
 
     Usage:
         @require_incident_access('incidents:read')
@@ -281,6 +311,11 @@ def require_incident_access(permission=None):
                     'error': 'not_found',
                     'message': 'Incident not found'
                 }), 404
+
+            archived = archived_incident_error(user, incident, allow_archived_writes)
+            if archived:
+                body, status = archived
+                return jsonify(body), status
 
             if permission and not user.has_permission(permission):
                 return jsonify({
@@ -335,6 +370,8 @@ def check_incident_access(user, incident_id):
     ).first()
     if not incident:
         return False, None
+    if incident.is_archived and not user.has_permission(ARCHIVE_PERMISSION):
+        return False, None  # indistinguishable from a missing incident
 
     if not user.has_permission('incidents:read') or not user_can_access_incident(user, incident):
         return False, incident

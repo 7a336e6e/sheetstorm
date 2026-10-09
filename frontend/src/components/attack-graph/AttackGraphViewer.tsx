@@ -575,7 +575,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   }, [setNodes])
 
   const handleNodeDragStop = useCallback(
-    async (_: React.MouseEvent, node: Node) => {
+    async (_: React.MouseEvent | MouseEvent | TouchEvent, node: Node) => {
       if (!canUpdate) return
       try {
         const updated = await api.put<GraphNodeUpdate>(
@@ -603,7 +603,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   const onRemoteNodeDrag = realtime?.onNodeDrag
   const lastDragSentRef = useRef(0)
   const handleNodeDrag = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_: React.MouseEvent | MouseEvent | TouchEvent, node: Node) => {
       if (!canUpdate || !sendNodeDrag) return
       const now = Date.now()
       if (now - lastDragSentRef.current < NODE_DRAG_THROTTLE_MS) return

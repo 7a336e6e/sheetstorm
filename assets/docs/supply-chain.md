@@ -44,6 +44,10 @@ detected and unpublished within hours to a few days.
   `next` (`@next/swc-*`) and `sharp` (`@img/sharp-*`) use per-platform
   optional dependencies and have no install scripts. `tsc --noEmit`, `eslint`,
   `next build` and the Docker image build all pass with scripts disabled.
+- Playwright (`@playwright/test`, dev only) has no install script. It does
+  **not** download browsers on install; they are fetched explicitly with
+  `npx playwright install chromium` (into the per-user cache, outside the
+  repo) by whoever runs E2E. Never add a `postinstall` for it.
 - If a future dependency genuinely needs a build step, allowlist it
   explicitly and visibly (e.g. `RUN npm rebuild <pkg>` in the Dockerfile with
   a comment saying why) after vetting it. Never turn scripts back on globally.
@@ -78,6 +82,20 @@ detected and unpublished within hours to a few days.
   2026-09-30, past the cooldown), which fixes GHSA-2xp9-vwfh-vxw4,
   GHSA-p293-qw3h-jr36 and GHSA-vcvr-r3jv-pc5j (critical RCEs) and every other
   Next.js advisory OSV lists for 16.x, so the younger `16.4.0` was not needed.
+- 2026-10-08 (W0-TH, owner-approved test harness): new dev-only packages,
+  exact pins, each at least 14 days old, installed with
+  `npm install -D --save-exact --ignore-scripts --legacy-peer-deps --min-release-age=14`:
+  `jest-environment-jsdom@29.7.0` (2023-09-12, matches `jest` 29.7.0),
+  `@types/jest@29.5.14` (2024-10-23), `@playwright/test@1.63.0`
+  (2026-09-04; `playwright`/`playwright-core` 1.63.0). The lockfile gained 54
+  entries (jsdom 20 and its tree), all from the registry with integrity
+  hashes, none with an install script, youngest `nwsapi@2.2.28`
+  (2026-09-18). `hasown` moved 2.0.2 -> 2.0.4 (2026-05-28). `npm audit`
+  reports no new advisory, only the existing `braces`/`micromatch` finding
+  in the jest 29 tree propagating to the two new jest packages.
+  `@testing-library/user-event` was not added: after a year without
+  releases it published five versions in August-September 2026
+  (checklist item 3); re-evaluate later.
 - Dependabot (`.github/dependabot.yml`) opens PRs only for versions past a
   7-day cooldown (14 for npm/pip majors), groups minor/patch bumps, and covers
   npm, pip (backend, mcp-server, mcp-bridge), Dockerfiles, docker-compose and

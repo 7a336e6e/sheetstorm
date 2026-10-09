@@ -1,5 +1,7 @@
 /**
- * Authentication tab — OAuth provider configs (Google, GitHub, Azure AD).
+ * Authentication tab: OAuth provider configs. Only types the backend can log
+ * in with (`login_supported`, today GitHub) can be added; existing rows of
+ * other types (Google, Azure) are shown as unused and can only be deleted.
  */
 
 "use client"
@@ -13,8 +15,9 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Shield, Loader2, Plus, Trash2, Zap, Users, Lock } from 'lucide-react'
 import { api } from '@/lib/api'
-import { useToast } from '@/components/ui/use-toast'
+import { notifyError, notifySuccess } from '@/lib/errors'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { PermissionGate, usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -31,6 +34,8 @@ interface Integration {
 interface IntegrationType {
   id: string; name: string; description: string; category: string
   config_fields: string[]; credential_fields: string[]
+  /** False for types without a login flow (they are never offered). */
+  login_supported?: boolean
 }
 
 const AUTH_TYPES = new Set(['oauth_google', 'oauth_github', 'oauth_azure'])
@@ -61,8 +66,9 @@ const FIELD_LABELS: Record<string, string> = {
 const SECRET_FIELDS = new Set(['client_secret'])
 
 export function AuthenticationTab() {
-  const { toast } = useToast()
   const confirm = useConfirm()
+  const canUpdate = usePermission('integrations:update')
+  const canCreate = usePermission('integrations:create')
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [integrationTypes, setIntegrationTypes] = useState<IntegrationType[]>([])
@@ -85,11 +91,13 @@ export function AuthenticationTab() {
       ])
       setIntegrations((intRes.items || []).filter(i => AUTH_TYPES.has(i.type)))
       setIntegrationTypes((typesRes.types || []).filter(t => AUTH_TYPES.has(t.id)))
-    } catch { toast({ title: 'Error', variant: 'destructive' }) }
+    } catch (err) { notifyError(err, 'load the authentication providers') }
     finally { setLoading(false) }
   }
 
   const getTypeInfo = (id: string) => integrationTypes.find(t => t.id === id)
+  const loginSupported = (id: string) => getTypeInfo(id)?.login_supported === true
+  const supportedTypes = integrationTypes.filter(t => t.login_supported === true)
 
   const openModal = (int?: Integration) => {
     if (int) {
@@ -97,7 +105,7 @@ export function AuthenticationTab() {
       setForm({ type: int.type, name: int.name, config: { ...int.config }, credentials: {}, is_enabled: int.is_enabled })
     } else {
       setEditingIntegration(null)
-      const first = integrationTypes[0]?.id || 'oauth_google'
+      const first = supportedTypes[0]?.id || 'oauth_github'
       setForm({ type: first, name: '', config: {}, credentials: {}, is_enabled: true })
     }
     setShowModal(true)
@@ -111,16 +119,16 @@ export function AuthenticationTab() {
       if (Object.keys(form.credentials).length > 0) payload.credentials = form.credentials
       if (editingIntegration) await api.put(`/integrations/${editingIntegration.id}`, payload)
       else await api.post('/integrations', payload)
-      toast({ title: 'Success' }); setShowModal(false); loadData()
-    } catch { toast({ title: 'Error', variant: 'destructive' }) }
+      notifySuccess(editingIntegration ? 'Provider updated' : 'Provider added'); setShowModal(false); loadData()
+    } catch (err) { notifyError(err, editingIntegration ? 'update the provider' : 'add the provider') }
     finally { setSaving(false) }
   }
 
   const handleDelete = async (id: string) => {
     const ok = await confirm({ title: 'Delete OAuth Provider', description: 'Users who signed in with this provider will lose SSO access. They can still log in with email/password if set.', confirmLabel: 'Delete', variant: 'destructive' })
     if (!ok) return
-    try { await api.delete(`/integrations/${id}`); toast({ title: 'Deleted' }); setIntegrations(prev => prev.filter(i => i.id !== id)) }
-    catch { toast({ title: 'Error', variant: 'destructive' }) }
+    try { await api.delete(`/integrations/${id}`); notifySuccess('Provider deleted'); setIntegrations(prev => prev.filter(i => i.id !== id)) }
+    catch (err) { notifyError(err, 'delete the provider') }
   }
 
   const handleTest = async (id: string) => {
@@ -140,7 +148,7 @@ export function AuthenticationTab() {
   }
 
   const configuredTypes = new Set(integrations.map(i => i.type))
-  const availableTypes = integrationTypes.filter(t => !configuredTypes.has(t.id))
+  const availableTypes = supportedTypes.filter(t => !configuredTypes.has(t.id))
 
   return (
     <div className="space-y-6">
@@ -148,10 +156,14 @@ export function AuthenticationTab() {
         <div>
           <h3 className="text-lg font-medium">Authentication</h3>
           <p className="text-sm text-muted-foreground">
-            SSO providers for single sign-on · {integrations.filter(i => i.is_enabled).length} active
+            SSO providers for single sign-on · {integrations.filter(i => i.is_enabled && loginSupported(i.type)).length} active
           </p>
         </div>
-        <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add OAuth Provider</Button>
+        {supportedTypes.length > 0 && (
+          <PermissionGate permission="integrations:create">
+            <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add OAuth Provider</Button>
+          </PermissionGate>
+        )}
       </div>
 
       {/* Info card */}
@@ -173,14 +185,19 @@ export function AuthenticationTab() {
           <CardContent className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
             <Shield className="h-8 w-8 mb-3 opacity-50" />
             <p className="font-medium">No OAuth providers configured</p>
-            <p className="text-sm mt-1">Users sign in with email/password only. Add Google, GitHub, or Azure for SSO.</p>
-            <Button variant="link" onClick={() => openModal()}>Add a provider</Button>
+            <p className="text-sm mt-1">Users sign in with email/password only. Add GitHub for SSO.</p>
+            {supportedTypes.length > 0 && (
+              <PermissionGate permission="integrations:create">
+                <Button variant="link" onClick={() => openModal()}>Add a provider</Button>
+              </PermissionGate>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4">
           {integrations.map(int => {
             const meta = PROVIDER_META[int.type]
+            const unsupported = !loginSupported(int.type)
             return (
               <Card key={int.id}>
                 <CardContent className="flex items-center justify-between p-5">
@@ -191,7 +208,9 @@ export function AuthenticationTab() {
                     <div>
                       <h4 className="font-medium flex items-center gap-2">
                         {int.name}
-                        {int.is_enabled ? <Badge variant="outline" className="text-green-400 border-green-500/30 text-xs">Active</Badge> : <Badge variant="outline" className="text-muted-foreground text-xs">Disabled</Badge>}
+                        {unsupported
+                          ? <Badge variant="outline" className="text-amber-400 border-amber-500/30 text-xs">Login not implemented — not used</Badge>
+                          : int.is_enabled ? <Badge variant="outline" className="text-green-400 border-green-500/30 text-xs">Active</Badge> : <Badge variant="outline" className="text-muted-foreground text-xs">Disabled</Badge>}
                       </h4>
                       <p className="text-sm text-muted-foreground">{meta?.description || int.type}</p>
                       {int.config?.redirect_uri && (
@@ -206,11 +225,17 @@ export function AuthenticationTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
-                      {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    {!unsupported && canUpdate && (
+                      <>
+                        <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
+                          {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>
+                      </>
+                    )}
+                    <PermissionGate permission="integrations:delete">
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" aria-label={`Delete ${int.name}`} onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    </PermissionGate>
                   </div>
                 </CardContent>
               </Card>
@@ -220,7 +245,7 @@ export function AuthenticationTab() {
       )}
 
       {/* Available providers */}
-      {availableTypes.length > 0 && (
+      {availableTypes.length > 0 && canCreate && (
         <Card className="border-dashed">
           <CardHeader><CardTitle className="text-sm font-medium text-muted-foreground">Available Providers</CardTitle></CardHeader>
           <CardContent>
@@ -256,7 +281,7 @@ export function AuthenticationTab() {
               <Select value={form.type} onValueChange={v => { const info = getTypeInfo(v); setForm({ ...form, type: v, name: form.name || info?.name || '', config: {}, credentials: {} }) }} disabled={!!editingIntegration}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {integrationTypes.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                  {(editingIntegration ? integrationTypes : supportedTypes).map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

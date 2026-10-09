@@ -3,9 +3,10 @@ from sqlalchemy import Column, String, Text, Integer, Boolean, DateTime, Foreign
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
+from app.models.provenance import ProvenanceMixin
 
 
-class NetworkIndicator(BaseModel):
+class NetworkIndicator(ProvenanceMixin, BaseModel):
     """Network-based indicator of compromise."""
     __tablename__ = 'network_indicators'
 
@@ -40,7 +41,7 @@ class NetworkIndicator(BaseModel):
     source_host_ref = relationship('CompromisedHost', foreign_keys=[source_host_id])
     destination_host_ref = relationship('CompromisedHost', foreign_keys=[destination_host_id])
     timeline_event = relationship('TimelineEvent')
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
 
     DIRECTIONS = ['inbound', 'outbound', 'lateral']
     PROTOCOLS = ['TCP', 'UDP', 'ICMP', 'HTTP', 'HTTPS', 'DNS', 'SMTP', 'FTP', 'SSH', 'RDP', 'SMB']
@@ -52,6 +53,7 @@ class NetworkIndicator(BaseModel):
         """Convert to dictionary."""
         data = super().to_dict()
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data.update(self.provenance_to_dict())
         data['host'] = self.host.to_dict() if self.host else None
         data['source_host_id'] = str(self.source_host_id) if self.source_host_id else None
         data['destination_host_id'] = str(self.destination_host_id) if self.destination_host_id else None
@@ -65,7 +67,7 @@ class NetworkIndicator(BaseModel):
         return data
 
 
-class HostBasedIndicator(BaseModel):
+class HostBasedIndicator(ProvenanceMixin, BaseModel):
     """Host-based indicator of compromise."""
     __tablename__ = 'host_based_indicators'
 
@@ -93,7 +95,7 @@ class HostBasedIndicator(BaseModel):
     incident = relationship('Incident', back_populates='host_indicators')
     host_ref = relationship('CompromisedHost', back_populates='host_indicators')
     source_event = relationship('TimelineEvent', back_populates='host_indicators')
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
 
     ARTIFACT_TYPES = ['wmi_event', 'asep', 'registry', 'scheduled_task', 'service', 'file', 'process', 'other']
 
@@ -104,6 +106,7 @@ class HostBasedIndicator(BaseModel):
         """Convert to dictionary."""
         data = super().to_dict()
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data.update(self.provenance_to_dict())
         data['host_ref'] = self.host_ref.to_dict() if self.host_ref else None
         data['source_event'] = self.source_event.to_dict() if self.source_event else None
         # Keep host for backwards compatibility
@@ -112,7 +115,7 @@ class HostBasedIndicator(BaseModel):
         return data
 
 
-class MalwareTool(BaseModel):
+class MalwareTool(ProvenanceMixin, BaseModel):
     """Malware and tools discovered during incident."""
     __tablename__ = 'malware_tools'
 
@@ -145,7 +148,7 @@ class MalwareTool(BaseModel):
     # Relationships
     incident = relationship('Incident', back_populates='malware_tools')
     host_ref = relationship('CompromisedHost', back_populates='malware_tools')
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
 
     def __repr__(self):
         return f'<MalwareTool {self.file_name}>'
@@ -154,6 +157,7 @@ class MalwareTool(BaseModel):
         """Convert to dictionary."""
         data = super().to_dict()
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data.update(self.provenance_to_dict())
         data['host_ref'] = self.host_ref.to_dict() if self.host_ref else None
         # Keep host for backwards compatibility
         if not data.get('host') and self.host_ref:

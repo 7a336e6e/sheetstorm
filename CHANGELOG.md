@@ -91,6 +91,19 @@
   task and case-note actions are checked by permission, not role name; deletes
   ask for confirmation and errors show as toasts. The events search no longer
   matches MITRE technique text.
+- **Password login on an SSO-only account returns the generic 401.** It no
+  longer answers "Please login with <provider>" (which revealed that the
+  account exists); the attempt counts toward lockout like a wrong password.
+- **Duplicate assignments return `409 already_assigned`** instead of
+  `409 conflict` (incident assignments and user role assignments). `conflict`
+  now only means an optimistic-concurrency version mismatch; API clients that
+  matched the old code must switch.
+- **`GET /storage/stats` no longer includes `disk_usage.path`** (the server
+  filesystem path) except for platform admins.
+- **Settings tabs are read-only without the integration permissions.**
+  Integrations, AI Providers, Storage, Threat Intel and Notifications show add
+  / test / configure / delete and Google Drive controls only to holders of
+  `integrations:create`, `integrations:update` or `integrations:delete`.
 
 ### New
 

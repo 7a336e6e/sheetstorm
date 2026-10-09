@@ -37,6 +37,7 @@ import {
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import { BulkEnrichAction } from './BulkEnrichAction'
 
 type IndicatorRow = VersionedRow<NetworkIndicator>
 
@@ -235,6 +236,15 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                         />
                     </>
                 }
+                selectable
+                bulkActions={(ids, clear) => (
+                    <BulkEnrichAction
+                        incidentId={incidentId}
+                        noun="network IOC"
+                        values={query.items.filter((i) => ids.includes(i.id)).map((i) => i.dns_ip)}
+                        onDone={clear}
+                    />
+                )}
                 primaryAction={{ label: 'Add IOC', onSelect: () => handleOpenModal(), permission: 'network_iocs:create' }}
                 rowActions={(i) => [
                     { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(i), permission: 'network_iocs:update' },

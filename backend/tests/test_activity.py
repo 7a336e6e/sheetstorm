@@ -35,10 +35,12 @@ def test_org_event_goes_to_org_room(app, users, emitted):
     assert room == f'org_{users["Analyst"].organization_id}' and payload['details'] == {'k': 1}
 
 
-def test_admin_action_only_to_admins(app, users, emitted):
+def test_admin_action_only_to_audit_log_readers(app, users, emitted):
+    # Recipients are chosen by the audit_logs:read permission, not a role name:
+    # Administrator and Manager hold it in org A; nobody else does.
     _log(app, users['Administrator'], 'admin_action', 'update_integration')
     rooms = {room for _, _, room in emitted}
-    assert rooms == {f'user_{users["Administrator"].id}'}
+    assert rooms == {f'user_{users["Administrator"].id}', f'user_{users["Manager"].id}'}
 
 
 def test_activity_feed_scoped(app, users, auth, make_incident):

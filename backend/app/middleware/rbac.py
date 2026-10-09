@@ -1,6 +1,6 @@
 """Role-Based Access Control (RBAC) middleware"""
 from functools import wraps
-from flask import jsonify, g
+from flask import jsonify, g, current_app
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 
 from app import db
@@ -112,63 +112,90 @@ def require_all_permissions(permissions):
     return decorator
 
 
-def require_role(role_name):
-    """Decorator to require a specific role.
+def is_platform_admin(user):
+    """Instance-wide admin: holds `system:manage` AND belongs to the platform
+    organization (`config.PLATFORM_ORG_SLUG`). `system:manage` alone is
+    meaningless in any other org."""
+    if not user or not user.has_permission('system:manage') or not user.organization:
+        return False
+    return user.organization.slug == current_app.config.get('PLATFORM_ORG_SLUG', 'default')
 
-    Usage:
-        @require_role('Administrator')
-        def admin_only():
-            ...
+
+def require_platform_admin(f):
+    """Decorator: only platform admins (see is_platform_admin)."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'unauthorized', 'message': 'Authentication required'}), 401
+        if not is_platform_admin(user):
+            return jsonify({'error': 'forbidden', 'message': 'Platform administrator required'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def incident_scopes(user):
+    """Incident visibility scopes granted by the user's permissions.
+
+    Returns {'all'} for `incidents:read_all`, otherwise a subset of
+    {'team', 'tlp_white'}. Directly assigned incidents are always visible.
+    Scopes are additive across roles (a Viewer+Analyst user gets team +
+    TLP:WHITE); no role ever narrows another.
     """
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            user = get_current_user()
-
-            if not user:
-                return jsonify({
-                    'error': 'unauthorized',
-                    'message': 'Authentication required'
-                }), 401
-
-            if not user.has_role(role_name):
-                return jsonify({
-                    'error': 'forbidden',
-                    'message': f'Role required: {role_name}'
-                }), 403
-
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
+    perms = set(user.permissions)
+    if 'incidents:read_all' in perms:
+        return {'all'}
+    scopes = set()
+    if 'incidents:read_team' in perms:
+        scopes.add('team')
+    if 'incidents:read_tlp_white' in perms:
+        scopes.add('tlp_white')
+    return scopes
 
 
-def incident_access_tier(user):
-    """Classify how far a user's incident visibility extends.
+def accessible_incidents_query(user, archived=False):
+    """Base query of incidents the user may see (org + visibility scopes).
 
-    - 'full':     Administrator / Manager — every incident in the org
-    - 'viewer':   Viewer — directly assigned + TLP:WHITE incidents
-    - 'operator': Operator — directly assigned incidents only
-    - 'team':     everyone else (Responder/Analyst) — assigned, in one of
-                  their teams, or not team-restricted
-
-    Single source of truth for list/search (accessible_incidents_query) and
-    per-incident checks, so the rules cannot diverge.
+    The single source of truth for list / search / feed / correlation and
+    (through user_can_access_incident) per-incident checks:
+        assigned
+        + team scope:      in one of my teams, or not team-restricted
+        + tlp_white scope: TLP:WHITE
+    `incidents:read_all` sees everything in the org.
     """
-    if user.has_role('Administrator') or user.has_role('Manager'):
-        return 'full'
-    if user.has_role('Viewer'):
-        return 'viewer'
-    if user.has_role('Operator'):
-        return 'operator'
-    return 'team'
+    from app.models import Incident, IncidentAssignment, IncidentTeam, TeamMember
+
+    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=archived)
+    scopes = incident_scopes(user)
+    if 'all' in scopes:
+        return query
+
+    clauses = [Incident.id.in_(
+        db.session.query(IncidentAssignment.incident_id).filter(
+            IncidentAssignment.user_id == user.id,
+            IncidentAssignment.removed_at.is_(None),
+        )
+    )]
+    if 'team' in scopes:
+        user_team_ids = db.session.query(TeamMember.team_id).filter(TeamMember.user_id == user.id)
+        clauses.append(Incident.id.in_(
+            db.session.query(IncidentTeam.incident_id).filter(IncidentTeam.team_id.in_(user_team_ids))
+        ))
+        clauses.append(~db.session.query(IncidentTeam).filter(IncidentTeam.incident_id == Incident.id).exists())
+    if 'tlp_white' in scopes:
+        clauses.append(Incident.tlp == 'white')
+    return query.filter(db.or_(*clauses))
 
 
 def user_can_access_incident(user, incident):
-    """Whether `user` may see `incident` (already known to be in their org)."""
+    """Whether `user` may see `incident` (already known to be in their org).
+    Same rules as accessible_incidents_query."""
     from app.models import IncidentAssignment, IncidentTeam, TeamMember
 
-    tier = incident_access_tier(user)
-    if tier == 'full':
+    scopes = incident_scopes(user)
+    if 'all' in scopes:
+        return True
+    if 'tlp_white' in scopes and incident.tlp == 'white':
         return True
 
     assigned = db.session.query(IncidentAssignment.id).filter_by(
@@ -176,12 +203,10 @@ def user_can_access_incident(user, incident):
     ).first() is not None
     if assigned:
         return True
-    if tier == 'operator':
+    if 'team' not in scopes:
         return False
-    if tier == 'viewer':
-        return incident.tlp == 'white'
 
-    # Team tier: unscoped (no team restriction) incidents are org-wide.
+    # Team scope: unscoped (no team restriction) incidents are org-wide.
     if IncidentTeam.query.filter_by(incident_id=incident.id).count() == 0:
         return True
     user_team_ids = db.session.query(TeamMember.team_id).filter(TeamMember.user_id == user.id)
@@ -195,11 +220,8 @@ def require_incident_access(permission=None):
     """Decorator to check user has access to a specific incident.
 
     Access requires BOTH the permission (when given) AND incident visibility
-    per incident_access_tier():
-    - Administrator/Manager: full org access
-    - Responder/Analyst: assigned, team member, or incident not team-scoped
-    - Operator: directly assigned only
-    - Viewer: directly assigned or TLP:WHITE
+    (user_can_access_incident: assigned, or within one of the user's
+    incident_scopes()).
 
     Usage:
         @require_incident_access('incidents:read')

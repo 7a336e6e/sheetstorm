@@ -135,7 +135,8 @@ def get_activity_feed():
     if not user:
         return jsonify({'error': 'unauthorized', 'message': 'Authentication required'}), 401
     limit = max(1, min(request.args.get('limit', 30, type=int), 100))
-    is_admin = user.has_role('Administrator')
+    # Admin actions and full details are for audit-log readers.
+    is_admin = user.has_permission('audit_logs:read')
 
     # Only show user-facing event types; admin actions are admin-only.
     feed_event_types = ['data_modification', 'data_access', 'security_event']
@@ -145,7 +146,7 @@ def get_activity_feed():
     # Only activity on incidents the user can access (same rules as the
     # incident list), plus org-level events not tied to any incident.
     from app.models import Incident
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
     accessible_ids = accessible_incidents_query(user).with_entities(Incident.id)
 
     query = AuditLog.query.filter(

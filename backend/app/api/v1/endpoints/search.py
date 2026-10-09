@@ -25,7 +25,7 @@ def _user_incident_ids(user_id):
     user = db.session.get(User, user_id)
     if not user:
         return []
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
     return [r[0] for r in accessible_incidents_query(user).with_entities(Incident.id).all()]
 
 

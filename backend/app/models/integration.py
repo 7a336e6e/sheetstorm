@@ -17,6 +17,9 @@ class Integration(BaseModel):
     credentials_encrypted = Column(LargeBinary)
     last_used_at = Column(DateTime(timezone=True))
     last_error = Column(Text)
+    # Last explicit connection test (POST /integrations/<id>/test).
+    last_tested_at = Column(DateTime(timezone=True))
+    last_test_ok = Column(Boolean)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
 

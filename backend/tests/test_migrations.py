@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'realtime_versions'
+EXPECTED_HEAD = 'audit_governance'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -218,3 +218,72 @@ def test_custom_roles_rehomed_split_and_access_preserved(scratch_db):
             assert 'incidents:delete' in admin and 'incidents:archive' not in admin
     finally:
         eng.dispose()
+
+
+# ── audit_governance ────────────────────────────────────────────────
+
+def test_audit_governance_schema_at_head(app, db):
+    fks = db.session.execute(text(
+        "SELECT conname FROM pg_constraint WHERE conrelid = 'audit_logs'::regclass AND contype = 'f'")).all()
+    assert fks == []
+    triggers = set(db.session.execute(text(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'audit_logs'::regclass AND NOT tgisinternal")).scalars())
+    assert {'audit_logs_append_only_row', 'audit_logs_append_only_truncate'} <= triggers
+    cols = set(db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='audit_logs'")).scalars())
+    assert {'chain_seq', 'prev_hash', 'row_hash', 'chain_key_id'} <= cols
+    assert db.session.execute(text("SELECT to_regclass('ledger_heads')")).scalar() == 'ledger_heads'
+    idx = set(db.session.execute(text("SELECT indexname FROM pg_indexes WHERE tablename='audit_logs'")).scalars())
+    assert {'uq_audit_org_seq', 'idx_audit_org_created_id', 'idx_audit_org_user_created',
+            'idx_audit_org_event_created'} <= idx
+    icols = set(db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='integrations'")).scalars())
+    assert {'last_tested_at', 'last_test_ok'} <= icols
+
+
+def test_audit_governance_round_trip_with_data(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            org = conn.execute(text("INSERT INTO organizations (name, slug, settings) "
+                                    "VALUES ('o', 'o', '{}') RETURNING id")).scalar()
+            conn.execute(text("INSERT INTO audit_logs (organization_id, event_type, action) "
+                              "VALUES (:o, 'system_event', 'legacy')"), {'o': org})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            # A chained-looking row with a dangling user id (no FK any more).
+            conn.execute(text("INSERT INTO audit_logs (organization_id, user_id, event_type, action, chain_seq, "
+                              "prev_hash, row_hash) VALUES (:o, :u, 'system_event', 'new', 1, 'p', 'h')"),
+                         {'o': org, 'u': '00000000-0000-0000-0000-0000000000ff'})
+        with eng.begin() as conn:
+            assert conn.execute(text("SELECT count(*) FROM audit_logs WHERE chain_seq IS NULL")).scalar() == 1
+    finally:
+        eng.dispose()
+
+    # Down: triggers dropped first, FKs come back NOT VALID despite the dangling id.
+    r = _flask_db(scratch_db, 'downgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            fks = dict(conn.execute(text(
+                "SELECT conname, convalidated FROM pg_constraint "
+                "WHERE conrelid = 'audit_logs'::regclass AND contype = 'f'")).all())
+            assert set(fks) == {'audit_logs_organization_id_fkey', 'audit_logs_user_id_fkey',
+                                'audit_logs_incident_id_fkey'}
+            assert conn.execute(text("SELECT to_regclass('ledger_heads')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM audit_logs")).scalar() == 2
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD

@@ -66,6 +66,24 @@ class BaseConfig:
     # not invalidate every custody signature.
     CUSTODY_SIGNING_KEY = os.getenv('CUSTODY_SIGNING_KEY', '')
 
+    # Audit log governance (services/ledger.py, services/audit_service.py).
+    # AUDIT_CHAIN_KEY keys the audit hash chain (HMAC). It falls back to
+    # SECRET_KEY with a warning when unset; set a dedicated key and keep it
+    # outside the database. AUDIT_CHAIN_PREVIOUS_KEYS (comma list) keeps rows
+    # written under rotated keys verifiable.
+    AUDIT_CHAIN_KEY = os.getenv('AUDIT_CHAIN_KEY', '')
+    AUDIT_CHAIN_PREVIOUS_KEYS = _env_list('AUDIT_CHAIN_PREVIOUS_KEYS')
+    AUDIT_EXPORT_MAX_ROWS = int(os.getenv('AUDIT_EXPORT_MAX_ROWS', '100000'))
+    AUDIT_RETENTION_MIN_DAYS = 365
+    AUDIT_PURGE_BATCH_SIZE = int(os.getenv('AUDIT_PURGE_BATCH_SIZE', '10000'))
+
+    # Build metadata shown in the admin system status (platform admins only).
+    APP_VERSION = os.getenv('APP_VERSION', '')
+    GIT_COMMIT = os.getenv('GIT_COMMIT', '')
+
+    # Local artifact storage directory (used when S3 is not configured).
+    LOCAL_ARTIFACT_DIR = os.getenv('LOCAL_ARTIFACT_DIR', '/app/artifacts')
+
     # Hosts / CIDRs that admin-configured self-hosted integrations (MISP,
     # Velociraptor, TheHive, Cortex, Elastic, Splunk, S3/MinIO, Ollama,
     # openai_compatible) may target even when they resolve to private
@@ -162,6 +180,7 @@ class TestingConfig(BaseConfig):
     SECRET_KEY = 'test-only-secret-key-not-for-production'
     JWT_SECRET_KEY = 'test-only-jwt-secret-key-not-for-production'
     CUSTODY_SIGNING_KEY = 'test-only-custody-signing-key'
+    AUDIT_CHAIN_KEY = 'test-only-audit-chain-key'
     # Valid Fernet key (urlsafe base64 of 32 bytes), test-only.
     FERNET_KEY = 'dGVzdC1vbmx5LWZlcm5ldC1rZXktMzJieXRlcyEhISE='
     SQLALCHEMY_DATABASE_URI = os.getenv(

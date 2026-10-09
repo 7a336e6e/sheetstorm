@@ -48,6 +48,14 @@ import {
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import {
+    ProvenanceBadge,
+    ProvenanceSection,
+    emptyProvenance,
+    provenanceFromRecord,
+    provenancePayload,
+    useProvenanceRowActions,
+} from './provenance'
 
 type HostIocRow = VersionedRow<HostBasedIndicator>
 
@@ -84,6 +92,9 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
     const [editingItem, setEditingItem] = useState<HostIocRow | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [customTypes, setCustomTypes] = useState<CustomFieldOption[]>([])
+    // Provenance (W3-PROV); `provInitial` limits an edit to the changed fields.
+    const [prov, setProv] = useState(emptyProvenance)
+    const [provInitial, setProvInitial] = useState(emptyProvenance)
     // Every host of the incident for the picker (not just the first page).
     const hosts = useAllPages<CompromisedHost>(`/incidents/${incidentId}/hosts`, { live: 'host', enabled: showModal })
 
@@ -128,6 +139,8 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
             is_malicious: true,
             remediated: false,
         })
+        setProv(emptyProvenance())
+        setProvInitial(emptyProvenance())
         setEditingItem(null)
     }
 
@@ -145,6 +158,9 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
                 is_malicious: item.is_malicious,
                 remediated: item.remediated,
             })
+            const fromRecord = provenanceFromRecord(item)
+            setProv(fromRecord)
+            setProvInitial(fromRecord)
         } else {
             resetForm()
         }
@@ -165,6 +181,7 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
                 notes: form.notes || null,
                 is_malicious: form.is_malicious,
                 remediated: form.remediated,
+                ...provenancePayload(prov, editingItem ? provInitial : undefined),
             }
 
             if (editingItem) {
@@ -206,6 +223,8 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
         return allArtifactTypes.find(t => t.value === type)?.label || type
     }
 
+    const provenanceActions = useProvenanceRowActions(incidentId, 'host_ioc', () => invalidate(endpoint))
+
     const columns: DataTableColumn<HostIocRow>[] = [
         {
             id: 'type', header: 'Type', sortKey: 'artifact_type', cell: (item) => (
@@ -220,6 +239,7 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
             cell: (item) => <span title={item.artifact_value}>{item.artifact_value}</span>,
         },
         { id: 'host', header: 'Host', sortKey: 'host', hideBelow: 'sm', cell: (item) => item.host_ref?.hostname || item.host || '-' },
+        { id: 'provenance', header: 'Source', hideBelow: 'sm', className: 'w-[56px]', cell: (item) => <ProvenanceBadge record={item} /> },
         {
             id: 'status', header: 'Status', cell: (item) => (
                 <Badge variant={item.remediated ? 'default' : 'destructive'} className={item.remediated ? 'bg-green-500/20 text-green-400' : ''}>
@@ -252,6 +272,7 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
                 primaryAction={{ label: 'Add IOC', onSelect: () => handleOpenModal(), permission: 'host_iocs:create' }}
                 rowActions={(item) => [
                     { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(item), permission: 'host_iocs:update' },
+                    ...provenanceActions(item),
                     { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(item), permission: 'host_iocs:delete' },
                 ]}
                 focusedRowId={focusRowId}
@@ -296,6 +317,18 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
                                 <DateTimeInput value={form.datetime} onChange={iso => setForm({ ...form, datetime: iso ?? '' })} variant="glass" />
                             </div>
                         </div>
+                        <ProvenanceSection
+                            incidentId={incidentId}
+                            value={prov}
+                            onChange={setProv}
+                            timestamp={form.datetime}
+                            onUseComputed={(utc) => {
+                                setForm((f) => ({ ...f, datetime: utc }))
+                                setProv((p) => ({ ...p, keep_manual: false }))
+                            }}
+                            hostId={form.host_id || null}
+                            timestampLabel="date/time observed"
+                        />
                         <div className="space-y-2">
                             <Label>Notes</Label>
                             <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} variant="glass" placeholder="Additional context about this indicator..." />

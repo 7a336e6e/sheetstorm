@@ -37,6 +37,14 @@ import {
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import {
+    ProvenanceBadge,
+    ProvenanceSection,
+    emptyProvenance,
+    provenanceFromRecord,
+    provenancePayload,
+    useProvenanceRowActions,
+} from './provenance'
 
 type IndicatorRow = VersionedRow<NetworkIndicator>
 
@@ -88,6 +96,9 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
     const [editingItem, setEditingItem] = useState<IndicatorRow | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [form, setForm] = useState(EMPTY_FORM)
+    // Provenance (W3-PROV); `provInitial` limits an edit to the changed fields.
+    const [prov, setProv] = useState(emptyProvenance)
+    const [provInitial, setProvInitial] = useState(emptyProvenance)
 
     // Source/destination host pickers: every host, loaded only while the modal is open.
     const hosts = useAllPages<CompromisedHost>(`/incidents/${incidentId}/hosts`, {
@@ -97,6 +108,8 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
 
     const resetForm = () => {
         setForm(EMPTY_FORM)
+        setProv(emptyProvenance())
+        setProvInitial(emptyProvenance())
         setEditingItem(null)
     }
 
@@ -120,6 +133,9 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                 threat_intel_source: item.threat_intel_source || '',
                 add_to_attack_graph: false,
             })
+            const fromRecord = provenanceFromRecord(item)
+            setProv(fromRecord)
+            setProvInitial(fromRecord)
         } else {
             resetForm()
         }
@@ -145,6 +161,7 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                 description: form.description || null,
                 is_malicious: form.is_malicious,
                 threat_intel_source: form.threat_intel_source || null,
+                ...provenancePayload(prov, editingItem ? provInitial : undefined),
             }
 
             if (!editingItem && form.add_to_attack_graph) {
@@ -178,6 +195,8 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
         }
     }
 
+    const provenanceActions = useProvenanceRowActions(incidentId, 'network_ioc', () => invalidate(endpoint))
+
     const hostLabel = (ref: CompromisedHost | undefined, text: string | undefined) => ref?.hostname || text || '-'
 
     const columns: DataTableColumn<IndicatorRow>[] = [
@@ -190,6 +209,7 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
             ),
         },
         { id: 'dns_ip', header: 'Value (IP/DNS)', sortKey: 'dns_ip', className: 'font-mono text-sm', cell: (item) => item.dns_ip },
+        { id: 'provenance', header: 'Source', hideBelow: 'sm', className: 'w-[56px]', cell: (item) => <ProvenanceBadge record={item} /> },
         {
             id: 'protocol', header: 'Protocol/Port', sortKey: 'protocol', hideBelow: 'sm',
             cell: (item) => `${item.protocol ?? ''}${item.port ? ` :${item.port}` : ''}` || '-',
@@ -238,6 +258,7 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                 primaryAction={{ label: 'Add IOC', onSelect: () => handleOpenModal(), permission: 'network_iocs:create' }}
                 rowActions={(i) => [
                     { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(i), permission: 'network_iocs:update' },
+                    ...provenanceActions(i),
                     { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(i), permission: 'network_iocs:delete' },
                 ]}
                 focusedRowId={focusRowId}
@@ -344,6 +365,19 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                             <Label>Description</Label>
                             <Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} variant="glass" />
                         </div>
+
+                        <ProvenanceSection
+                            incidentId={incidentId}
+                            value={prov}
+                            onChange={setProv}
+                            timestamp={form.timestamp}
+                            onUseComputed={(utc) => {
+                                setForm((f) => ({ ...f, timestamp: utc }))
+                                setProv((p) => ({ ...p, keep_manual: false }))
+                            }}
+                            hostId={form.host_id || form.source_host_id || null}
+                            timestampLabel="timestamp"
+                        />
 
                         {/* Attack Graph Integration */}
                         {!editingItem && (

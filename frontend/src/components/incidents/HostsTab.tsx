@@ -50,11 +50,13 @@ import {
     Cloud,
     Pencil,
     Trash2,
+    Clock,
 } from 'lucide-react'
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { Timestamp } from '@/components/ui/timestamp'
 import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import { ClockSkewEditor, formatSkew } from './provenance'
 
 type HostRow = VersionedRow<CompromisedHost>
 
@@ -178,6 +180,8 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const canUpdate = usePermission('hosts:update')
     const [acquisition, setAcquisition] = useState<AcquisitionForm>(EMPTY_ACQUISITION)
     const [bulkBusy, setBulkBusy] = useState(false)
+    // Clock-skew editor (W3-PROV): mounted per host so its fields start from the row.
+    const [skewHost, setSkewHost] = useState<HostRow | null>(null)
 
     const bulkUpdate = async (ids: string[], update: Omit<BulkHostUpdate, 'host_ids'>, clear: () => void) => {
         if (ids.length === 0) return
@@ -323,6 +327,16 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
             id: 'first_seen', header: 'First Seen', sortKey: 'first_seen', hideBelow: 'sm', className: 'text-sm text-muted-foreground',
             cell: (h) => <Timestamp value={h.first_seen} fallback="-" />,
         },
+        {
+            id: 'clock_skew', header: 'Clock skew', hideBelow: 'lg', className: 'whitespace-nowrap text-xs text-muted-foreground',
+            cell: (h) => h.clock_skew_seconds === null || h.clock_skew_seconds === undefined
+                ? '-'
+                : (
+                    <span title={h.clock_skew_basis || undefined}>
+                        {formatSkew(h.clock_skew_seconds)}{h.timezone ? ` · ${h.timezone}` : ''}
+                    </span>
+                ),
+        },
     ]
 
     return (
@@ -379,6 +393,7 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                 primaryAction={{ label: 'Add Host', onSelect: () => handleOpenModal(), permission: 'hosts:create' }}
                 rowActions={(h) => [
                     { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(h), permission: 'hosts:update' },
+                    { label: 'Clock skew…', icon: Clock, onSelect: () => setSkewHost(h), permission: 'hosts:update' },
                     { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(h), permission: 'hosts:delete' },
                 ]}
                 focusedRowId={focusRowId}
@@ -387,6 +402,17 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                     description: 'Record systems that have been identified as compromised during this incident investigation.',
                 }}
             />
+
+            {skewHost && (
+                <ClockSkewEditor
+                    key={skewHost.id}
+                    incidentId={incidentId}
+                    host={skewHost}
+                    open
+                    onOpenChange={(open) => { if (!open) setSkewHost(null) }}
+                    onSaved={() => invalidate(`/incidents/${incidentId}`)}
+                />
+            )}
 
             {/* Add/Edit Host Modal */}
             <Dialog open={showModal} onOpenChange={setShowModal}>

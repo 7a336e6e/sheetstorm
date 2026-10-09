@@ -32,9 +32,9 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`${GeistSans.variable} ${GeistMono.variable} ${spaceGrotesk.variable} font-sans bg-background text-foreground antialiased`}>
-        <ThemeProvider defaultTheme="dark" storageKey="sheetstorm-theme">
+        <ThemeProvider>
           <AuthProvider>
             <ConfirmDialogProvider>
               {children}

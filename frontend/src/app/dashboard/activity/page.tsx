@@ -21,42 +21,42 @@ import { useSocketEvent } from '@/hooks/use-socket'
 // ── Display helpers ────────────────────────────────────────────────
 
 const actionDisplay: Record<string, { icon: any; color: string; bg: string }> = {
-    create: { icon: FileEdit, color: 'text-green-600', bg: 'bg-green-50' },
-    update: { icon: FileEdit, color: 'text-blue-600', bg: 'bg-blue-50' },
-    delete: { icon: Trash2, color: 'text-red-600', bg: 'bg-red-50' },
-    login: { icon: LogIn, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    logout: { icon: LogOut, color: 'text-gray-500', bg: 'bg-gray-50' },
-    generate: { icon: Settings, color: 'text-purple-600', bg: 'bg-purple-50' },
-    view: { icon: Eye, color: 'text-sky-600', bg: 'bg-sky-50' },
-    export: { icon: Database, color: 'text-amber-600', bg: 'bg-amber-50' },
-    connect: { icon: Link2, color: 'text-teal-600', bg: 'bg-teal-50' },
-    disconnect: { icon: X, color: 'text-orange-600', bg: 'bg-orange-50' },
-    password_reveal: { icon: Eye, color: 'text-red-600', bg: 'bg-red-50' },
+    create: { icon: FileEdit, color: 'text-green-400', bg: 'bg-green-500/10' },
+    update: { icon: FileEdit, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+    delete: { icon: Trash2, color: 'text-red-400', bg: 'bg-red-500/10' },
+    login: { icon: LogIn, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    logout: { icon: LogOut, color: 'text-muted-foreground', bg: 'bg-muted' },
+    generate: { icon: Settings, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+    view: { icon: Eye, color: 'text-sky-400', bg: 'bg-sky-500/10' },
+    export: { icon: Database, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    connect: { icon: Link2, color: 'text-teal-400', bg: 'bg-teal-500/10' },
+    disconnect: { icon: X, color: 'text-orange-400', bg: 'bg-orange-500/10' },
+    password_reveal: { icon: Eye, color: 'text-red-400', bg: 'bg-red-500/10' },
 }
 
 const eventTypeBadge: Record<string, { label: string; className: string }> = {
-    authentication: { label: 'Auth', className: 'bg-emerald-100 text-emerald-700' },
-    authorization: { label: 'Authz', className: 'bg-orange-100 text-orange-700' },
-    data_access: { label: 'Access', className: 'bg-sky-100 text-sky-700' },
-    data_modification: { label: 'Modify', className: 'bg-blue-100 text-blue-700' },
-    admin_action: { label: 'Admin', className: 'bg-purple-100 text-purple-700' },
-    security_event: { label: 'Security', className: 'bg-red-100 text-red-700' },
-    system_event: { label: 'System', className: 'bg-gray-100 text-gray-600' },
+    authentication: { label: 'Auth', className: 'bg-emerald-500/15 text-emerald-400' },
+    authorization: { label: 'Authz', className: 'bg-orange-500/15 text-orange-400' },
+    data_access: { label: 'Access', className: 'bg-sky-500/15 text-sky-400' },
+    data_modification: { label: 'Modify', className: 'bg-blue-500/15 text-blue-400' },
+    admin_action: { label: 'Admin', className: 'bg-purple-500/15 text-purple-400' },
+    security_event: { label: 'Security', className: 'bg-red-500/15 text-red-400' },
+    system_event: { label: 'System', className: 'bg-muted text-muted-foreground' },
 }
 
 const methodColor: Record<string, string> = {
-    GET: 'text-green-700 bg-green-50',
-    POST: 'text-blue-700 bg-blue-50',
-    PUT: 'text-amber-700 bg-amber-50',
-    PATCH: 'text-orange-700 bg-orange-50',
-    DELETE: 'text-red-700 bg-red-50',
+    GET: 'text-green-400 bg-green-500/10',
+    POST: 'text-blue-400 bg-blue-500/10',
+    PUT: 'text-amber-400 bg-amber-500/10',
+    PATCH: 'text-orange-400 bg-orange-500/10',
+    DELETE: 'text-red-400 bg-red-500/10',
 }
 
 const statusColor = (code?: number) => {
-    if (!code) return 'text-gray-500'
-    if (code < 300) return 'text-green-600'
-    if (code < 400) return 'text-amber-600'
-    return 'text-red-600'
+    if (!code) return 'text-muted-foreground'
+    if (code < 300) return 'text-green-400'
+    if (code < 400) return 'text-amber-400'
+    return 'text-red-400'
 }
 
 const deviceIcon: Record<string, any> = {
@@ -74,7 +74,7 @@ function getActivityDisplay(eventType: string, action: string, resourceType?: st
         description = `${description} ${resourceType.replace(/_/g, ' ')}`
     }
     const actionKey = action.split('_')[0] || action
-    const display = actionDisplay[action] || actionDisplay[actionKey] || { icon: Activity, color: 'text-gray-500', bg: 'bg-gray-50' }
+    const display = actionDisplay[action] || actionDisplay[actionKey] || { icon: Activity, color: 'text-muted-foreground', bg: 'bg-muted' }
     return { description, ...display }
 }
 
@@ -213,7 +213,7 @@ function ActivityRow({ activity, isExpanded, onToggle }: {
                     {/* HTTP Method + Status */}
                     <div className="hidden lg:flex items-center gap-2">
                         {activity.request_method && (
-                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold ${methodColor[activity.request_method] || 'text-gray-600 bg-gray-50'}`}>
+                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold ${methodColor[activity.request_method] || 'text-muted-foreground bg-muted'}`}>
                                 {activity.request_method}
                             </span>
                         )}
@@ -693,7 +693,7 @@ export default function ActivityPage() {
                             onClick={() => setShowFilters(v => !v)}
                             className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                                 hasFilters
-                                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                    ? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
                                     : 'border-border bg-background text-muted-foreground hover:bg-muted/50'
                             }`}
                         >
@@ -744,7 +744,7 @@ export default function ActivityPage() {
                 <CardContent className="px-0">
                     {error ? (
                         <div className="text-center py-12 px-4">
-                            <div className="mx-auto w-12 h-12 rounded-md bg-red-50 flex items-center justify-center mb-4">
+                            <div className="mx-auto w-12 h-12 rounded-md bg-red-500/10 flex items-center justify-center mb-4">
                                 <AlertTriangle className="h-6 w-6 text-red-500" />
                             </div>
                             <p className="font-medium mb-1 text-red-600">Error loading activity</p>

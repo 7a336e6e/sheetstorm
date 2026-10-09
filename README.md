@@ -134,7 +134,7 @@ That's it. The script generates secrets, builds 6 Docker containers, runs migrat
 | API        | http://127.0.0.1:5000/api/v1     |
 | MCP Server | http://127.0.0.1:8811/sse        |
 
-> **Default login:** `admin@sheetstorm.local` · password in `ADMIN_PASSWORD` from `.env`
+> **First login:** `admin@sheetstorm.local` (`ADMIN_EMAIL`). Leave `ADMIN_PASSWORD` empty in `.env` and the seed step prints a random password **once** in the `start.sh` output (it is not stored anywhere); otherwise it is the `ADMIN_PASSWORD` you set. You must choose a new password at first sign-in. Registration is closed by default: add further users from **Admin → Users** (invite links or accounts).
 
 ### Requirements
 

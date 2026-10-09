@@ -1,14 +1,18 @@
 """User management endpoints"""
 import uuid
 
+from datetime import datetime, timezone
+
+import sqlalchemy as sa
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db
-from app.models import User, Role, UserRole, Organization
+from app.models import User, Role, UserRole, Organization, TeamMember
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
-from app.utils.pagination import list_response
+from app.utils.audit_diff import record_changes, snapshot
+from app.utils.pagination import ListArgsError, list_response, parse_uuid
 from app.permissions import with_implied
 from app.services.rbac_guard import (
     GuardError, guard_error_response, assert_can_grant_roles, assert_can_manage_user,
@@ -22,7 +26,44 @@ USER_SORTABLE = {
     'created_at': User.created_at,
     'last_login': User.last_login,
 }
-USER_FILTERS = {'is_active': (User.is_active, 'bool')}
+USER_FILTERS = {'is_active': (User.is_active, 'bool'), 'mfa': (User.mfa_enabled, 'bool')}
+USER_STATUSES = ('active', 'disabled', 'locked', 'must_change_password')
+
+
+def _lifecycle_filters(query):
+    """status / team_id / role_id filters of the admin user list."""
+    args = request.args
+    status = args.get('status')
+    if status:
+        if status not in USER_STATUSES:
+            raise ListArgsError(f"invalid status {status!r}; allowed: {', '.join(USER_STATUSES)}", 'invalid_filter')
+        now = datetime.now(timezone.utc)
+        query = query.filter({
+            'active': User.is_active.is_(True),
+            'disabled': User.is_active.is_(False),
+            'locked': User.locked_until > now,
+            'must_change_password': User.must_change_password.is_(True),
+        }[status])
+    if args.get('team_id'):
+        team_id = parse_uuid('team_id', args['team_id'])
+        query = query.filter(User.id.in_(
+            db.session.query(TeamMember.user_id).filter(TeamMember.team_id == team_id)))
+    if args.get('role_id'):
+        role_id = parse_uuid('role_id', args['role_id'])
+        query = query.filter(User.id.in_(
+            db.session.query(UserRole.user_id).filter(UserRole.role_id == role_id)))
+    return query
+
+
+def _guard_or_lifecycle_error(e):
+    from app.services.user_lifecycle import LifecycleError
+    if isinstance(e, GuardError):
+        return guard_error_response(e)
+    if isinstance(e, LifecycleError):
+        return e.response()
+    db.session.rollback()
+    from app.services.token_revocation import revocation_failed_response
+    return revocation_failed_response()
 
 
 @api_bp.route('/users', methods=['GET'])
@@ -30,7 +71,8 @@ USER_FILTERS = {'is_active': (User.is_active, 'bool')}
 @require_permission('users:read')
 def list_users():
     """List users in the organization (utils/pagination.py contract; q/search
-    over name+email, filters role (name) and is_active)."""
+    over name+email, filters role (name), role_id, is_active, status, team_id
+    and mfa)."""
     user = get_current_user()
     query = User.query.filter_by(organization_id=user.organization_id)
 
@@ -39,6 +81,7 @@ def list_users():
     if role:
         query = query.filter(User.id.in_(
             db.session.query(UserRole.user_id).join(Role, Role.id == UserRole.role_id).filter(Role.name == role)))
+    query = _lifecycle_filters(query)
 
     return jsonify(list_response(
         query, sortable=USER_SORTABLE, default_sort='-created_at', id_col=User.id,
@@ -62,16 +105,21 @@ def create_user():
 
     if not data.get('email') or not data.get('name') or not data.get('password'):
         return jsonify({'error': 'bad_request', 'message': 'Email, name, and password are required'}), 400
+    if not isinstance(data['email'], str):
+        return jsonify({'error': 'bad_request', 'message': 'Invalid email address'}), 400
+    # Login lowercases the email, so store it lowercased (a mixed-case
+    # admin-created address could never sign in).
+    email = data['email'].strip().lower()
 
     # Admin-created accounts must still meet email/password policy.
     from app.api.v1.endpoints.auth import validate_password, validate_email
-    if not validate_email(data['email']):
+    if not validate_email(email):
         return jsonify({'error': 'bad_request', 'message': 'Invalid email address'}), 400
     valid, message = validate_password(data['password'])
     if not valid:
         return jsonify({'error': 'bad_request', 'message': message}), 400
 
-    if User.query.filter_by(email=data['email']).first():
+    if User.query.filter(sa.func.lower(User.email) == email).first():
         return jsonify({'error': 'conflict', 'message': 'Email already exists'}), 409
 
     role_names = data.get('roles') or ([data['role']] if data.get('role') else [])
@@ -100,7 +148,7 @@ def create_user():
         return guard_error_response(e)
 
     user = User(
-        email=data['email'],
+        email=email,
         name=data['name'],
         organization_id=current.organization_id,
         is_active=data.get('is_active', True),
@@ -118,6 +166,8 @@ def create_user():
             granted_by=current.id
         ))
     db.session.commit()
+    record_changes({}, {'email': user.email, 'name': user.name, 'roles': [r.name for r in roles],
+                        'is_active': user.is_active})
 
     return jsonify(user.to_dict()), 201
 
@@ -133,10 +183,13 @@ def get_user(user_id):
     if not user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
+    if current.has_permission('users:manage'):
+        return jsonify(user.to_admin_dict(include_permissions=True)), 200
     return jsonify(user.to_dict(include_permissions=True)), 200
 
 
-_UPDATABLE_FIELDS = ('name', 'is_active', 'organizational_role', 'password')
+_UPDATABLE_FIELDS = ('name', 'is_active', 'organizational_role', 'password', 'must_change_password')
+_DIFF_FIELDS = ('name', 'is_active', 'organizational_role', 'must_change_password', 'deactivation_reason')
 
 
 @api_bp.route('/users/<uuid:user_id>', methods=['PUT'])
@@ -149,7 +202,15 @@ def update_user(user_id):
     Acting on anyone else requires outranking them (their permissions are a
     subset of yours). Nobody disables themselves or resets their own password
     here (use /auth/change-password). Disabling the last admin is refused.
+    With users:manage, `is_active` goes through the lifecycle service
+    (disable records who/why and revokes every session; reason optional,
+    default "(via update)") and `password` resets it (all sessions revoked;
+    optional `must_change_password`). A failed revocation is 503 and nothing
+    changes.
     """
+    from app.services import user_lifecycle
+    from app.services.token_revocation import SessionRevocationError, revoke_all_sessions
+
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
@@ -157,48 +218,59 @@ def update_user(user_id):
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
     data = request.get_json(silent=True) or {}
-    from app.api.v1.endpoints.auth import validate_password, _bump_token_epoch
+    from app.api.v1.endpoints.auth import validate_password
     can_manage = current.has_permission('users:manage')
+    if 'is_active' in data and can_manage and not isinstance(data['is_active'], bool):
+        return jsonify({'error': 'bad_request', 'message': 'is_active must be a boolean'}), 400
+    if 'must_change_password' in data and not isinstance(data['must_change_password'], bool):
+        return jsonify({'error': 'bad_request', 'message': 'must_change_password must be a boolean'}), 400
     disabling = can_manage and data.get('is_active') is False and user.is_active
+    enabling = can_manage and data.get('is_active') is True and not user.is_active
     resetting = can_manage and 'password' in data
 
+    before = snapshot(user, _DIFF_FIELDS)
     try:
         if any(f in data for f in _UPDATABLE_FIELDS):
             assert_can_manage_user(current, user, 'update')
-        if disabling:
-            assert_can_manage_user(current, user, 'disable')
-            assert_admin_remains(current.organization_id, exclude_users={user.id}, resource_id=user.id)
         if resetting:
             assert_can_manage_user(current, user, 'reset_password')
-    except GuardError as e:
-        return guard_error_response(e)
 
-    revoke_sessions = False
-    if 'name' in data:
-        user.name = data['name'].strip()
-    if 'is_active' in data and can_manage:
-        if not isinstance(data['is_active'], bool):
-            return jsonify({'error': 'bad_request', 'message': 'is_active must be a boolean'}), 400
-        if user.is_active and not data['is_active']:
-            revoke_sessions = True  # disabling: kill outstanding tokens
-        user.is_active = data['is_active']
-    if 'organizational_role' in data:
-        user.organizational_role = data['organizational_role'].strip() if data['organizational_role'] else None
+        if 'name' in data:
+            user.name = data['name'].strip()
+        if 'organizational_role' in data:
+            user.organizational_role = data['organizational_role'].strip() if data['organizational_role'] else None
 
-    # Password reset (users:manage) — same policy as self-service changes, and
-    # all of the user's existing sessions are revoked.
-    if resetting:
-        valid, message = validate_password(data['password'] or '')
-        if not valid:
-            db.session.rollback()
-            return jsonify({'error': 'bad_request', 'message': message}), 400
-        user.set_password(data['password'])
-        revoke_sessions = True
+        # Password reset (users:manage) — same policy as self-service changes, and
+        # all of the user's existing sessions are revoked.
+        if resetting:
+            valid, message = validate_password(data['password'] or '')
+            if not valid:
+                db.session.rollback()
+                return jsonify({'error': 'bad_request', 'message': message}), 400
+            user.set_password(data['password'])
+            user.failed_login_count = 0
+            user.locked_until = None
+        if can_manage and 'must_change_password' in data:
+            user.must_change_password = data['must_change_password']
+
+        if disabling:
+            reason = data.get('reason') if isinstance(data.get('reason'), str) and data['reason'].strip() \
+                else '(via update)'
+            user_lifecycle.disable_user(current, user, reason)  # revokes sessions
+        elif enabling:
+            user_lifecycle.enable_user(current, user)
+        if resetting and not disabling:
+            db.session.flush()
+            user_lifecycle.revoke_reset_link(user.id)
+            revoke_all_sessions(user, 'password_reset')
+    except (GuardError, user_lifecycle.LifecycleError, SessionRevocationError) as e:
+        return _guard_or_lifecycle_error(e)
 
     db.session.commit()
-
-    if revoke_sessions:
-        _bump_token_epoch(str(user.id))
+    after = snapshot(user, _DIFF_FIELDS)
+    if resetting:
+        before['password'], after['password'] = None, 'reset'
+    record_changes(before, after, target_email=user.email)
 
     return jsonify(user.to_dict()), 200
 
@@ -208,23 +280,33 @@ def update_user(user_id):
 @require_permission('users:delete')
 @audit_log('admin_action', 'delete_user', 'user')
 def delete_user(user_id):
-    """Delete a user you outrank (never yourself, never the last admin)."""
+    """Delete a user you outrank (never yourself, never the last admin).
+
+    Only users with no attributed records can be deleted: otherwise 409
+    `user_has_records` {counts, hint: 'deactivate'} (disable them instead).
+    `?anonymize=true` keeps the row but scrubs its personal data.
+    """
+    from app.services import user_lifecycle
+    from app.services.token_revocation import SessionRevocationError
+
     current = get_current_user()
     user = User.query.filter_by(id=user_id, organization_id=current.organization_id).first()
 
     if not user:
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
+    anonymize = (request.args.get('anonymize') or '').lower() in ('1', 'true', 'yes')
+    before = {'email': user.email, 'name': user.name, 'roles': user.role_names, 'is_active': user.is_active}
     try:
-        assert_can_manage_user(current, user, 'delete')
-        assert_admin_remains(current.organization_id, exclude_users={user.id}, resource_id=user.id)
-    except GuardError as e:
-        return guard_error_response(e)
-
-    db.session.delete(user)
+        outcome = user_lifecycle.delete_user(current, user, anonymize=anonymize)
+    except (GuardError, user_lifecycle.LifecycleError, SessionRevocationError) as e:
+        return _guard_or_lifecycle_error(e)
     db.session.commit()
+    record_changes(before, {}, outcome=outcome)
 
-    return jsonify({'message': 'User deleted successfully'}), 200
+    if outcome == 'anonymized':
+        return jsonify({'message': 'User anonymized', 'outcome': outcome}), 200
+    return jsonify({'message': 'User deleted successfully', 'outcome': outcome}), 200
 
 
 @api_bp.route('/users/<uuid:user_id>/roles', methods=['GET'])
@@ -295,8 +377,11 @@ def assign_role(user_id):
         organization_id=current.organization_id,
         granted_by=current.id
     )
+    roles_before = user.role_names
     db.session.add(user_role)
     db.session.commit()
+    db.session.expire(user, ['user_roles'])
+    record_changes({'roles': roles_before}, {'roles': user.role_names}, target_email=user.email)
     emit_permissions_changed([user.id])
 
     # Push updated roles to Supabase app_metadata
@@ -332,8 +417,11 @@ def revoke_role(user_id, role_id):
     except GuardError as e:
         return guard_error_response(e)
 
+    roles_before = user.role_names
     db.session.delete(user_role)
     db.session.commit()
+    db.session.expire(user, ['user_roles'])
+    record_changes({'roles': roles_before}, {'roles': user.role_names}, target_email=user.email)
     emit_permissions_changed([user.id])
 
     # Push updated roles to Supabase app_metadata

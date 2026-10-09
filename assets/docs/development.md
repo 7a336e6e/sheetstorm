@@ -130,12 +130,12 @@ Playwright (`@playwright/test`) runs against an **already-running** stack. The c
 cd frontend
 npx playwright install chromium              # once per machine / Playwright version
 export E2E_BASE_URL=http://localhost:8080    # default: the compose proxy
-export ADMIN_EMAIL=... ADMIN_PASSWORD=...    # bootstrap admin, from your .env (never committed)
+export ADMIN_EMAIL=... ADMIN_PASSWORD=...    # bootstrap admin AFTER its first-login password change
 npm run test:e2e:smoke                       # playwright test --grep @smoke
 npm run test:e2e                             # everything
 ```
 
-`e2e/global-setup.ts` seeds one user per system role through the API and saves each session to `frontend/e2e/.auth/<org>-<role>.json` (mode 0600, git- and docker-ignored). Without `ADMIN_EMAIL`/`ADMIN_PASSWORD` nothing is seeded and every logged-in spec skips. Specs call `useRole('viewer')` (from `e2e/fixtures.ts`) to run as a role. A second org for cross-org specs is bootstrapped with `frontend/e2e/seed-second-org.py`. See `frontend/e2e/README.md` for details.
+`e2e/global-setup.ts` seeds one user per system role through the API and saves each session to `frontend/e2e/.auth/<org>-<role>.json` (mode 0600, git- and docker-ignored). Without `ADMIN_EMAIL`/`ADMIN_PASSWORD` nothing is seeded and every logged-in spec skips. The seeded admin starts with a forced password change (every API call but `/auth/me`, `/auth/change-password`, `/auth/logout` and `/auth/refresh` answers 403 `password_change_required`), so sign in once and change the password before exporting it here. Specs call `useRole('viewer')` (from `e2e/fixtures.ts`) to run as a role. A second org for cross-org specs is bootstrapped with `frontend/e2e/seed-second-org.py`. See `frontend/e2e/README.md` for details.
 
 E2E runs only on the integration branch, by the integrator, against a `docker compose up` stack. Work-package agents must not bring up the compose stack, because its container names and port 8080 are fixed.
 

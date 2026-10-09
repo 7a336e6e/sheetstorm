@@ -122,7 +122,7 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Case Notes | 5 | Investigator notes |
 | Playbooks | 7 | Templates, activate, phase advance, run actions, tick tasks |
 | Reports | 3 | PDF and AI-generated summaries |
-| Admin | 9 | Users, notifications, audit logs, health |
+| Admin | 19 | Users, roles, permissions, invites (one-time join links), disable/enable, force logout, unlock, user activity, notifications, audit logs, health. No password/MFA resets over MCP |
 | Threat Intel | 7 | VirusTotal, MISP, CVE, reputation |
 | Knowledge Base | 6 | LOLBAS, event IDs, D3FEND, MITRE ATT&CK |
 | Advanced | 4 | Search, correlate, STIX export, bulk enrich |

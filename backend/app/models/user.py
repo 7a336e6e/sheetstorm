@@ -1,6 +1,6 @@
 """User and authentication models"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary, Text, and_, func, or_
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, func, or_
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -90,6 +90,18 @@ class User(BaseModel):
     # (PREFERENCE_KEYS); never store arbitrary client JSON here.
     preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
 
+    # ── Account lifecycle (W1-LIFE-BE, migration user_lifecycle) ──────────
+    # Login lockout: counter + lock expiry (services/user_lifecycle.py).
+    failed_login_count = Column(Integer, nullable=False, default=0, server_default='0')
+    locked_until = Column(DateTime(timezone=True))
+    # Restricted session until the user changes their password
+    # (middleware/account_state.py: 403 password_change_required).
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default='false')
+    deactivated_at = Column(DateTime(timezone=True))
+    deactivated_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
+    deactivation_reason = Column(String(500))
+    # ── end account lifecycle ────────────────────────────────────────────
+
     # Relationships
     organization = relationship('Organization', back_populates='users')
     user_roles = relationship('UserRole', back_populates='user', lazy='joined', cascade='all, delete-orphan', foreign_keys='UserRole.user_id')
@@ -111,6 +123,11 @@ class User(BaseModel):
         if not self.password_hash:
             return False
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
+
+    @property
+    def is_locked(self):
+        """True while a login lockout is in force."""
+        return bool(self.locked_until and self.locked_until > datetime.now(timezone.utc))
 
     @property
     def roles(self):
@@ -188,9 +205,28 @@ class User(BaseModel):
             'teams': self.teams,
             'organization_id': str(self.organization_id) if self.organization_id else None,
             'preferences': dict(self.preferences or {}),
+            'is_locked': self.is_locked,
+            'locked_until': self.locked_until.isoformat() if self.is_locked else None,
+            'must_change_password': bool(self.must_change_password),
+            'deactivated_at': self.deactivated_at.isoformat() if self.deactivated_at else None,
         }
         if include_permissions:
             data['permissions'] = self.permissions
+        return data
+
+    def to_admin_dict(self, include_permissions=False):
+        """to_dict plus account-state details for holders of users:manage."""
+        data = self.to_dict(include_permissions=include_permissions)
+        deactivator = None
+        if self.deactivated_by:
+            other = db.session.get(User, self.deactivated_by)
+            deactivator = {'id': str(self.deactivated_by), 'name': other.name if other else None}
+        data.update({
+            'failed_login_count': self.failed_login_count or 0,
+            'deactivated_by': deactivator,
+            'deactivation_reason': self.deactivation_reason,
+            'password_changed_at': self.password_changed_at.isoformat() if self.password_changed_at else None,
+        })
         return data
 
 
@@ -204,7 +240,7 @@ class UserRole(BaseModel):
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     role_id = Column(UUID(as_uuid=True), ForeignKey('roles.id', ondelete='CASCADE'), nullable=False)
     organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'))
-    granted_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
+    granted_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
     granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships

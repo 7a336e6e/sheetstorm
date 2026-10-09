@@ -87,8 +87,14 @@ services:
       IOC_AUTO_ENRICH: ${IOC_AUTO_ENRICH:-false}
       JWT_REFRESH_GRACE_SECONDS: ${JWT_REFRESH_GRACE_SECONDS:-30}
       RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-600 per minute}
+      # Login lockout after N bad passwords/MFA codes (3..20) for M minutes (1..1440).
+      LOGIN_LOCKOUT_THRESHOLD: ${LOGIN_LOCKOUT_THRESHOLD:-10}
+      LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+      # Lifetime of admin-issued password reset links, in hours (1..72).
+      PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sheetstorm.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      # Empty: the seed generates a random admin password and prints it once.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "127.0.0.1:5000:5000"
     volumes:

@@ -112,6 +112,25 @@ def require_all_permissions(permissions):
     return decorator
 
 
+def require_interactive_session(f):
+    """Decorator: refuse API-key tokens (403 `interactive_session_required`).
+
+    For credential, MFA, profile and API-key management routes: a key can
+    never change its owner's password or MFA, nor mint or manage keys. Place
+    it below `@jwt_required()`.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        from app.utils.token_scopes import is_api_key_request
+        if is_api_key_request():
+            return jsonify({
+                'error': 'interactive_session_required',
+                'message': 'This action requires an interactive sign-in; API keys cannot use it.',
+            }), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 def is_platform_admin(user):
     """Instance-wide admin: holds `system:manage` AND belongs to the platform
     organization (`config.PLATFORM_ORG_SLUG`). `system:manage` alone is
@@ -140,9 +159,10 @@ def incident_scopes(user):
     Returns {'all'} for `incidents:read_all`, otherwise a subset of
     {'team', 'tlp_white'}. Directly assigned incidents are always visible.
     Scopes are additive across roles (a Viewer+Analyst user gets team +
-    TLP:WHITE); no role ever narrows another.
+    TLP:WHITE); no role ever narrows another. Derived from the owner's role
+    permissions: an API key's scopes restrict actions, not visibility.
     """
-    perms = set(user.permissions)
+    perms = set(user.role_permissions)
     if 'incidents:read_all' in perms:
         return {'all'}
     scopes = set()

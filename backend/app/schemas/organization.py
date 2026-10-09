@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 TLP_LEVELS = ('white', 'green', 'amber', 'amber_strict', 'red')
 AI_POLICY_MODES = ('allow', 'local_only', 'block')
@@ -53,6 +53,10 @@ class OrgSettings(BaseModel):
     registration_enabled: Optional[StrictBool] = None
     enrichment_allow_amber_strict: Optional[StrictBool] = None
     ai_tlp_policy: Optional[Dict[TlpLevel, AiPolicyMode]] = None
+    # API keys (services/api_key_service.py): org kill switch (default on)
+    # and the cap on a key's lifetime in days (default 365).
+    api_keys_enabled: Optional[StrictBool] = None
+    api_key_max_lifetime_days: Optional[StrictInt] = Field(None, ge=1, le=365)
 
     @field_validator('timezone')
     @classmethod
@@ -78,4 +82,9 @@ class OrganizationUpdate(BaseModel):
 
 # Keys returned by GET /organization (everything writable except
 # registration_enabled, which is returned separately to managers only).
-PUBLIC_SETTING_KEYS = ('timezone', 'auto_enrich_iocs', 'enrichment_allow_amber_strict')
+PUBLIC_SETTING_KEYS = ('timezone', 'auto_enrich_iocs', 'enrichment_allow_amber_strict',
+                       'api_keys_enabled', 'api_key_max_lifetime_days')
+
+# Defaults of the API-key settings when the org has not stored them.
+API_KEYS_ENABLED_DEFAULT = True
+API_KEY_MAX_LIFETIME_DAYS_DEFAULT = 365

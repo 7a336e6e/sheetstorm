@@ -6,6 +6,7 @@ api_bp = Blueprint('api_v1', __name__)
 # Import and register endpoint modules
 from app.api.v1.endpoints import health
 from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import api_keys
 from app.api.v1.endpoints import users
 from app.api.v1.endpoints import incidents
 from app.api.v1.endpoints import timeline

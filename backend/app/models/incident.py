@@ -26,7 +26,12 @@ class Incident(BaseModel):
     lead_responder_id = Column(UUID(as_uuid=True), ForeignKey('users.id'))
     team_id = Column(UUID(as_uuid=True), ForeignKey('teams.id', ondelete='SET NULL'), nullable=True)
     tlp = Column(String(20), nullable=False, default='amber', server_default='amber')
+    # Manual override of the derived first-malicious-activity time (metrics).
+    first_malicious_at = Column(DateTime(timezone=True))
     detected_at = Column(DateTime(timezone=True))
+    # First response: auto-set on the first status change away from `open` or
+    # the first explicit assignment; editable.
+    responded_at = Column(DateTime(timezone=True))
     contained_at = Column(DateTime(timezone=True))
     eradicated_at = Column(DateTime(timezone=True))
     recovered_at = Column(DateTime(timezone=True))

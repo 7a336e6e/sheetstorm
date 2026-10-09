@@ -225,3 +225,35 @@ def _verify_audit_chain_job():
 
 register_job('purge-audit-logs', _purge_audit_logs_job, every_seconds=AUDIT_JOB_INTERVAL, lock_ttl=3600)
 register_job('verify-audit-chain', _verify_audit_chain_job, every_seconds=AUDIT_JOB_INTERVAL, lock_ttl=3600)
+
+
+# ---------------------------------------------------------------------------
+# Due-date reminders for tasks and improvement actions (W3-RT-POST).
+# ---------------------------------------------------------------------------
+
+REMINDER_JOB_INTERVAL = 15 * 60
+
+
+@sheetstorm_cli.command('send-due-reminders')
+@click.option('--window-hours', type=click.IntRange(1, 24 * 30), default=24, show_default=True,
+              help='Remind about items due within this many hours (overdue items always qualify).')
+@click.option('--dry-run', is_flag=True, help='Report what would be sent; send and record nothing.')
+@click.option('--org', 'org_slug', default=None, help='Only this organization (slug).')
+def send_due_reminders_command(window_hours, dry_run, org_slug):
+    """Notify assignees/owners of due-soon and overdue tasks and improvement actions."""
+    from app.services.reminder_service import send_due_reminders
+    org_ids = [o.id for o in _audit_orgs(org_slug)] if org_slug else None
+    summary = send_due_reminders(window_hours=window_hours, dry_run=dry_run, organization_ids=org_ids)
+    _print_summary(summary)
+    if summary['errors']:
+        raise SystemExit(1)
+
+
+def _send_due_reminders_job():
+    from app.services.reminder_service import send_due_reminders
+    summary = send_due_reminders()
+    if summary['errors']:
+        raise RuntimeError(f'due-date reminders failed for {summary["errors"]} organization(s)')
+
+
+register_job('send-due-reminders', _send_due_reminders_job, every_seconds=REMINDER_JOB_INTERVAL, lock_ttl=900)

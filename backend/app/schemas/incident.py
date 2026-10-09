@@ -6,10 +6,10 @@ from .base import BaseSchema
 
 TLP_PATTERN = '^(white|green|amber|amber_strict|red)$'
 
-# IR milestone timestamps editable through PUT /incidents/<id>, in the order
-# they must occur (see incidents.py::validate_milestones). RT-POST adds
-# `first_malicious_at` / `responded_at` here once the columns exist.
-MILESTONE_FIELDS = ('detected_at', 'contained_at', 'eradicated_at', 'recovered_at', 'closed_at')
+# IR milestone timestamps editable through PUT /incidents/<id>
+# (see incidents.py::validate_milestones for the ordering rules).
+MILESTONE_FIELDS = ('first_malicious_at', 'detected_at', 'responded_at', 'contained_at',
+                    'eradicated_at', 'recovered_at', 'closed_at')
 
 DESCRIPTION_MAX = 10000
 NARRATIVE_MAX = 20000
@@ -44,7 +44,9 @@ class IncidentUpdate(BaseSchema):
     tlp: Optional[str] = Field(None, pattern=TLP_PATTERN)
     team_id: Optional[UUID4] = None
     # IR milestones (C20). null clears a milestone.
+    first_malicious_at: Optional[datetime] = None
     detected_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
     contained_at: Optional[datetime] = None
     eradicated_at: Optional[datetime] = None
     recovered_at: Optional[datetime] = None

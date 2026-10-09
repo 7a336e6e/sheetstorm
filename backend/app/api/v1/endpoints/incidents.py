@@ -46,10 +46,13 @@ INCIDENT_SEARCH = (Incident.title, Incident.description, Incident.incident_numbe
 
 # --- IR milestones and lifecycle stamping (W2-DFIR-B, C20) ---
 
-# Every milestone in the order it must occur. Columns that do not exist yet
-# (first_malicious_at arrives with W3-RT-POST) are skipped automatically.
+# Milestones in the order they must occur.
 MILESTONE_ORDER = ('first_malicious_at', 'detected_at', 'contained_at',
                    'eradicated_at', 'recovered_at', 'closed_at')
+# Every editable lifecycle timestamp. `responded_at` (W3-RT-POST) sits outside
+# the strict chain: it is future-checked and must not precede `detected_at`.
+EDITABLE_MILESTONES = ('first_malicious_at', 'detected_at', 'responded_at', 'contained_at',
+                       'eradicated_at', 'recovered_at', 'closed_at')
 # Clock-skew allowance for "not in the future".
 MILESTONE_FUTURE_TOLERANCE = timedelta(minutes=5)
 
@@ -73,12 +76,12 @@ STATUS_MILESTONE = {
 AUDITED_INCIDENT_FIELDS = (
     'title', 'description', 'severity', 'classification', 'status', 'phase', 'tlp',
     'team_id', 'lead_responder_id', 'executive_summary', 'lessons_learned',
-) + MILESTONE_ORDER
+) + EDITABLE_MILESTONES
 
 
 def milestone_fields():
-    """MILESTONE_ORDER restricted to columns the Incident model has."""
-    return [f for f in MILESTONE_ORDER if hasattr(Incident, f)]
+    """Editable milestone fields (those the Incident model has)."""
+    return [f for f in EDITABLE_MILESTONES if hasattr(Incident, f)]
 
 
 def _milestone_error(code, message, **details):
@@ -95,6 +98,7 @@ def validate_milestones(incident, changes, now=None):
       recovered <= closed: every *changed* value is compared with every other
       set value (stored or changed). Pairs where neither side changes are
       legacy data and are left alone (metrics report them as anomalies).
+    - `responded_at` must not precede `detected_at` (same rule, same scope).
     """
     now = now or datetime.now(timezone.utc)
     for field, value in changes.items():
@@ -102,8 +106,17 @@ def validate_milestones(incident, changes, now=None):
             return _milestone_error('milestone_in_future',
                                     f'{field} cannot be more than 5 minutes in the future', field=field)
 
-    order = milestone_fields()
-    merged = {f: (changes[f] if f in changes else getattr(incident, f, None)) for f in order}
+    order = [f for f in MILESTONE_ORDER if hasattr(Incident, f)]
+    merged = {f: (changes[f] if f in changes else getattr(incident, f, None))
+              for f in (*order, 'responded_at')}
+    if ('responded_at' in changes or 'detected_at' in changes) \
+            and merged['responded_at'] is not None and merged['detected_at'] is not None \
+            and merged['detected_at'] > merged['responded_at']:
+        return _milestone_error(
+            'milestone_order', 'detected_at must not be after responded_at',
+            field='responded_at' if 'responded_at' in changes else 'detected_at',
+            conflicts_with='detected_at' if 'responded_at' in changes else 'responded_at',
+            pair=['detected_at', 'responded_at'])
     for field in order:
         if field not in changes or merged[field] is None:
             continue
@@ -141,6 +154,9 @@ def apply_status_change(incident, status=None, phase=None, now=None):
         incident.status = status
     if phase is not None:
         incident.phase = phase
+    # First response (W3-RT-POST): the first move away from `open`.
+    if incident.status != 'open' and incident.responded_at is None:
+        incident.responded_at = now
 
     milestone = STATUS_MILESTONE.get(incident.status)
     if milestone and getattr(incident, milestone) is None:
@@ -704,6 +720,12 @@ def assign_user(incident_id):
         if lead_changed:
             incident.lead_responder_id = None
 
+    # First response (W3-RT-POST): the first explicit assignment. The
+    # creator's automatic assignment at create time does not count.
+    responded_stamped = incident.responded_at is None
+    if responded_stamped:
+        incident.responded_at = datetime.now(timezone.utc)
+
     db.session.commit()
 
     # Notify assigned user
@@ -711,7 +733,7 @@ def assign_user(incident_id):
     realtime.emit_change(incident.id, 'assignment', 'updated' if existing else 'created', obj=assignment)
     for old_lead in old_leads:
         realtime.emit_change(incident.id, 'assignment', 'updated', obj=old_lead)
-    if new_role == 'Lead Responder' or lead_changed:
+    if new_role == 'Lead Responder' or lead_changed or responded_stamped:
         realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
                              data=incident.to_dict(include_counts=True))
 

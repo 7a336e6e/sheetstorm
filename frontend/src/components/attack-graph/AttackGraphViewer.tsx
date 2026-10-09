@@ -35,7 +35,6 @@ import {
   LayoutGrid,
   X,
   Plus,
-  Trash2,
 } from 'lucide-react'
 import {
   Dialog,
@@ -48,9 +47,18 @@ import {
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { api } from '@/lib/api'
+import { api, isApiError } from '@/lib/api'
+import { notifyError } from '@/lib/errors'
 import { useToast } from '@/components/ui/use-toast'
-import type { AttackGraphNode, AttackGraphEdge as GraphEdgeType, CompromisedHost, TimelineEvent } from '@/types'
+import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
+import type {
+  AttackGraphNode as BaseGraphNode,
+  AttackGraphEdge as BaseGraphEdge,
+  CompromisedHost,
+  TimelineEvent,
+  VersionedRow,
+} from '@/types'
 import { useTheme } from '@/components/providers/theme-provider'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -69,6 +77,38 @@ import HostIndicatorNode from './nodes/HostIndicatorNode'
 
 // Custom edge
 import AttackEdge from './edges/AttackEdge'
+
+type AttackGraphNode = VersionedRow<BaseGraphNode>
+type GraphEdgeType = VersionedRow<BaseGraphEdge>
+
+/** Keys a node created with "Add Node" carries; generated nodes carry entity data. */
+const MANUAL_EXTRA_KEYS = new Set(['description'])
+
+/**
+ * Heuristic: a node is manual when it links to no host/account and its
+ * extra_data holds nothing but a description (auto-generated nodes always
+ * carry entity fields such as containment_status, sha256 or direction).
+ */
+export function isManualNode(data: {
+  compromisedHostId?: unknown
+  compromisedAccountId?: unknown
+  extra_data?: unknown
+}): boolean {
+  if (data.compromisedHostId || data.compromisedAccountId) return false
+  const extra = (data.extra_data ?? {}) as Record<string, unknown>
+  return Object.keys(extra).every((k) => MANUAL_EXTRA_KEYS.has(k))
+}
+
+/** What the current user may do on the graph (cosmetic; the API enforces). */
+export function graphAbilities(can: { create: boolean; update: boolean; delete: boolean }) {
+  return {
+    canCreate: can.create,
+    canUpdate: can.update,
+    canDelete: can.delete,
+    // Regenerate clears the graph (destroys manual edits): create + delete.
+    canRegenerate: can.create && can.delete,
+  }
+}
 
 interface AttackGraphViewerProps {
   incidentId: string
@@ -166,6 +206,7 @@ function transformToReactFlowData(
       compromisedAccountId: n.compromised_account_id,
       correlation: n.correlation,
       extra_data: n.extra_data,
+      version: n.version,
     },
   }))
 
@@ -179,14 +220,23 @@ function transformToReactFlowData(
       label: e.label,
       mitreTactic: e.mitre_tactic,
       mitreTechnique: e.mitre_technique,
+      version: e.version,
     },
   }))
 
   return { nodes, edges }
 }
 
+type GraphNodeUpdate = Partial<AttackGraphNode>
+
 function GraphInner({ incidentId }: { incidentId: string }) {
   const { toast } = useToast()
+  const confirm = useConfirm()
+  const { canCreate, canUpdate, canDelete, canRegenerate } = graphAbilities({
+    create: usePermission('attack_graph:create'),
+    update: usePermission('attack_graph:update'),
+    delete: usePermission('attack_graph:delete'),
+  })
   const { resolvedTheme } = useTheme()
   const { fitView, zoomIn, zoomOut, getNodes: getInternalNodes } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -240,17 +290,31 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         setIsEmpty(true)
       }
     } catch (error) {
-      console.error('Failed to fetch attack graph:', error)
-      toast({
-        title: 'Error fetching graph',
-        description: 'Could not load attack graph data',
-        variant: 'destructive',
-      })
+      notifyError(error, 'load the attack graph')
       setIsEmpty(true)
     } finally {
       setIsLoading(false)
     }
-  }, [incidentId, toast, setNodes, setEdges])
+  }, [incidentId, setNodes, setEdges])
+
+  // Every deletion (Delete key, selection) is confirmed first.
+  const onBeforeDelete = useCallback(
+    async ({ nodes: delNodes, edges: delEdges }: { nodes: Node[]; edges: Edge[] }) => {
+      if (!canDelete) return false
+      if (delNodes.length === 0 && delEdges.length === 0) return true
+      const parts = [
+        delNodes.length ? `${delNodes.length} node${delNodes.length === 1 ? '' : 's'}` : '',
+        delEdges.length ? `${delEdges.length} connection${delEdges.length === 1 ? '' : 's'}` : '',
+      ].filter(Boolean)
+      return confirm({
+        title: 'Delete from attack graph?',
+        description: `${parts.join(' and ')} will be permanently deleted. This can't be undone.`,
+        confirmLabel: 'Delete',
+        variant: 'destructive',
+      })
+    },
+    [canDelete, confirm]
+  )
 
   const onNodesDelete = useCallback(
     async (nodesToDelete: Node[]) => {
@@ -262,14 +326,15 @@ function GraphInner({ incidentId }: { incidentId: string }) {
       // Call API
       for (const node of nodesToDelete) {
         try {
-          await api.delete(`/incidents/${incidentId}/attack-graph/nodes/${node.id}`)
+          await api.delete(`/incidents/${incidentId}/attack-graph/nodes/${node.id}`, undefined, {
+            ifMatch: node.data.version as number | undefined,
+          })
         } catch (error) {
-          console.error(`Failed to delete node ${node.id}:`, error)
-          toast({ title: 'Error', description: `Failed to delete node ${node.data.label}`, variant: 'destructive' })
+          notifyError(error, `delete node ${String(node.data.label ?? '')}`.trim())
         }
       }
     },
-    [incidentId, setNodes, setEdges, toast]
+    [incidentId, setNodes, setEdges]
   )
 
   const onEdgesDelete = useCallback(
@@ -281,9 +346,13 @@ function GraphInner({ incidentId }: { incidentId: string }) {
       // Call API
       for (const edge of edgesToDelete) {
         try {
-          await api.delete(`/incidents/${incidentId}/attack-graph/edges/${edge.id}`)
+          await api.delete(`/incidents/${incidentId}/attack-graph/edges/${edge.id}`, undefined, {
+            ifMatch: (edge.data?.version as number | undefined) ?? undefined,
+          })
         } catch (error) {
-          console.error(`Failed to delete edge ${edge.id}:`, error)
+          // Edges of a deleted node are removed with it on the server.
+          if (isApiError(error) && error.status === 404) continue
+          notifyError(error, 'delete the connection')
         }
       }
     },
@@ -292,7 +361,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
 
   const onConnect = useCallback(
     async (params: Connection) => {
-      if (!params.source || !params.target) return
+      if (!canCreate || !params.source || !params.target) return
 
       // Optimistic update
       setEdges((eds) => addEdge({ ...params, type: 'attack', animated: true }, eds))
@@ -314,13 +383,12 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         }))
 
       } catch (error) {
-        console.error('Failed to create connection:', error)
-        toast({ title: 'Connection Failed', description: 'Could not create link', variant: 'destructive' })
-        // Revert optimistic update? For now let's just refresh
+        notifyError(error, 'create the connection')
+        // Revert the optimistic edge.
         fetchGraph()
       }
     },
-    [incidentId, setEdges, toast, fetchGraph]
+    [canCreate, incidentId, setEdges, fetchGraph]
   )
 
   const handleCreateNode = async () => {
@@ -354,6 +422,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             label: newNode.label,
             nodeType: newNode.node_type,
             extra_data: newNode.extra_data,
+            version: newNode.version,
           }
         }
       ])
@@ -363,35 +432,49 @@ function GraphInner({ incidentId }: { incidentId: string }) {
       setNewNodeFormData({ type: 'attacker', label: '', description: '' })
 
     } catch (error) {
-      console.error('Failed to create node:', error)
-      toast({ title: 'Error', description: 'Failed to create node', variant: 'destructive' })
+      notifyError(error, 'create the node')
     }
   }
 
 
 
-  /* Auto-generate graph if empty on load */
-  const hasAutoGenerated = useRef(false)
-  useEffect(() => {
-    if (!isLoading && isEmpty && !hasAutoGenerated.current) {
-      hasAutoGenerated.current = true
-      handleRegenerate()
-    }
-  }, [isLoading, isEmpty])
-
-  const handleRegenerate = async () => {
-    // Native confirm removed as per user request
+  const generate = async () => {
     setIsRegenerating(true)
     try {
       await api.post(`/incidents/${incidentId}/attack-graph/auto-generate`, { clear_existing: true })
       toast({ title: 'Graph Regenerated', description: 'Attack graph has been rebuilt from incident data' })
       fetchGraph()
     } catch (error) {
-      console.error('Failed to regenerate graph:', error)
-      toast({ title: 'Regeneration Failed', description: 'Could not auto-generate graph', variant: 'destructive' })
+      notifyError(error, 'generate the attack graph')
     } finally {
       setIsRegenerating(false)
     }
+  }
+
+  /* Auto-generate graph if empty on load (nothing to destroy: no confirm) */
+  const hasAutoGenerated = useRef(false)
+  useEffect(() => {
+    if (canCreate && !isLoading && isEmpty && !hasAutoGenerated.current) {
+      hasAutoGenerated.current = true
+      void generate()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCreate, isLoading, isEmpty])
+
+  /** Rebuild from incident data: replaces every node and edge, so confirm. */
+  const handleRegenerate = async () => {
+    if (!canRegenerate) return
+    const manual = nodes.some((n) => isManualNode(n.data))
+    const ok = await confirm({
+      title: 'Regenerate attack graph?',
+      description: manual
+        ? 'The graph will be rebuilt from incident data. Manually added nodes, connections and layout changes will be lost.'
+        : 'The graph will be rebuilt from incident data. Layout changes and manual connections will be lost.',
+      confirmLabel: 'Regenerate',
+      variant: 'destructive',
+      requireText: manual ? 'REGENERATE' : undefined,
+    })
+    if (ok) await generate()
   }
 
   const handleCreateEdge = async () => {
@@ -412,8 +495,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
       setTimelineEvents([])
       fetchGraph()
     } catch (error) {
-      console.error('Failed to create edge:', error)
-      toast({ title: 'Error', description: 'Failed to create edge', variant: 'destructive' })
+      notifyError(error, 'create the connection')
     }
   }
 
@@ -465,14 +547,22 @@ function GraphInner({ incidentId }: { incidentId: string }) {
 
   const handleNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
+      if (!canUpdate) return
       try {
-        await api.put(`/incidents/${incidentId}/attack-graph/nodes/${node.id}`, {
-          position_x: node.position.x,
-          position_y: node.position.y,
-        })
-      } catch { /* ignore position save errors */ }
+        const updated = await api.put<GraphNodeUpdate>(
+          `/incidents/${incidentId}/attack-graph/nodes/${node.id}`,
+          { position_x: node.position.x, position_y: node.position.y },
+          { ifMatch: node.data.version as number | undefined }
+        )
+        // Keep the version current so the next save is not a false conflict.
+        if (updated?.version !== undefined) {
+          setNodes((nds) => nds.map((n) => (n.id === node.id ? { ...n, data: { ...n.data, version: updated.version } } : n)))
+        }
+      } catch (error) {
+        notifyError(error, 'save the node position')
+      }
     },
-    [incidentId]
+    [canUpdate, incidentId, setNodes]
   )
 
   const handleAutoLayout = useCallback(async () => {
@@ -656,12 +746,16 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         </div>
         <p className="text-muted-foreground text-center mb-2">No graph data found</p>
         <p className="text-muted-foreground/60 text-sm text-center max-w-md mb-6">
-          Generate an attack graph from incident data to visualize the attack path.
+          {canCreate
+            ? 'Generate an attack graph from incident data to visualize the attack path.'
+            : 'No attack graph has been generated for this incident yet.'}
         </p>
-        <Button onClick={handleRegenerate} disabled={isRegenerating}>
-          {isRegenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          Generate Graph
-        </Button>
+        {canCreate && (
+          <Button onClick={() => void generate()} disabled={isRegenerating}>
+            {isRegenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Generate Graph
+          </Button>
+        )}
       </div>
     )
   }
@@ -855,9 +949,14 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         onEdgeClick={handleEdgeClick}
         onPaneClick={handlePaneClick}
         onNodeDragStop={handleNodeDragStop}
+        onBeforeDelete={onBeforeDelete}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
         onConnect={onConnect}
+        nodesDraggable={canUpdate}
+        nodesConnectable={canCreate}
+        edgesReconnectable={false}
+        deleteKeyCode={canDelete ? undefined : null}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: 'attack' }}
@@ -955,16 +1054,21 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             <Button variant="ghost" size="icon" onClick={() => zoomOut()} title="Zoom Out" className="h-8 w-8">
               <ZoomOut className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsAddNodeModalOpen(true)}
-              title="Add Node"
-              className="h-8 w-8 text-cyan-400 hover:text-cyan-300"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
+            {canCreate && (
+              <>
+                <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsAddNodeModalOpen(true)}
+                  title="Add Node"
+                  aria-label="Add Node"
+                  className="h-8 w-8 text-cyan-400 hover:text-cyan-300"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={() => fitView({ padding: 0.2, duration: 300 })} title="Fit to Screen" className="h-8 w-8">
               <Maximize className="h-4 w-4" />
@@ -972,34 +1076,44 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             <Button variant="ghost" size="icon" onClick={handleAutoLayout} title="Auto Layout" className="h-8 w-8">
               <LayoutGrid className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
-            <Button
-              variant={isDrawMode ? 'default' : 'ghost'}
-              size="icon"
-              onClick={() => {
-                setIsDrawMode(!isDrawMode)
-                setSourceNodeId(null)
-              }}
-              title={isDrawMode ? 'Cancel Drawing' : 'Draw Connection'}
-              className={`h-8 w-8 ${isDrawMode ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}`}
-            >
-              <GitBranch className="h-4 w-4" />
-            </Button>
+            {canCreate && (
+              <>
+                <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
+                <Button
+                  variant={isDrawMode ? 'default' : 'ghost'}
+                  size="icon"
+                  onClick={() => {
+                    setIsDrawMode(!isDrawMode)
+                    setSourceNodeId(null)
+                  }}
+                  title={isDrawMode ? 'Cancel Drawing' : 'Draw Connection'}
+                  aria-label={isDrawMode ? 'Cancel Drawing' : 'Draw Connection'}
+                  className={`h-8 w-8 ${isDrawMode ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}`}
+                >
+                  <GitBranch className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
             <Button variant="ghost" size="icon" onClick={handleExportPng} title="Export PNG" className="h-8 w-8">
               <Download className="h-4 w-4" />
             </Button>
-            <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleRegenerate}
-              disabled={isRegenerating}
-              title="Regenerate Graph"
-              className="h-8 w-8 text-amber-400 hover:text-amber-300"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
-            </Button>
+            {canRegenerate && (
+              <>
+                <div className="w-px bg-black/10 dark:bg-white/10 mx-1" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void handleRegenerate()}
+                  disabled={isRegenerating}
+                  title="Regenerate Graph"
+                  aria-label="Regenerate Graph"
+                  className="h-8 w-8 text-amber-400 hover:text-amber-300"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+                </Button>
+              </>
+            )}
           </div>
           {isDrawMode && (
             <div className="mt-2 bg-amber-900/80 backdrop-blur-sm text-amber-200 text-xs px-3 py-1.5 rounded border border-amber-700/50">

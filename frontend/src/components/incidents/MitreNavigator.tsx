@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/tooltip'
 import { Target, Clock, Server, ChevronRight, ChevronDown, Link2, Eye, EyeOff, Loader2, Layers, ExternalLink, Shield } from 'lucide-react'
 import api from '@/lib/api'
+import { describeError } from '@/lib/errors'
 import type { TimelineEvent, MitreMapping, D3FENDTechnique, MITREAttackTechnique } from '@/types'
 
 // ─── MITRE ATT&CK Tactics in Kill Chain Order ────────────────────────────
@@ -130,6 +131,9 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
   const [ttpInfo, setTtpInfo] = useState<MITREAttackTechnique | null>(null)
   const [d3fendItems, setD3fendItems] = useState<D3FENDTechnique[]>([])
   const [drawerLoading, setDrawerLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [drawerError, setDrawerError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   // Fetch full MITRE matrix structure
   useEffect(() => {
@@ -137,16 +141,20 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
     async function load() {
       try {
         const res = await api.get<FormDataResponse>('/knowledge-base/mitre-attack/form-data')
-        if (!cancelled) setFormData(res)
+        if (!cancelled) {
+          setFormData(res)
+          setLoadError(null)
+        }
       } catch (err) {
-        console.error('Failed to load MITRE form data:', err)
+        // Read-only view: show the reason inline (with Retry), no toast.
+        if (!cancelled) setLoadError(describeError(err).description)
       } finally {
         if (!cancelled) setIsLoading(false)
       }
     }
     load()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadKey])
 
   // Aggregate events by tactic → technique
   const { techniqueMap, attackChain, activeTactics } = useMemo(() => {
@@ -213,6 +221,7 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
     setSheetOpen(true)
     setTtpInfo(null)
     setD3fendItems([])
+    setDrawerError(null)
     setDrawerLoading(true)
     try {
       const [ttpRes, d3fendRes] = await Promise.all([
@@ -225,7 +234,7 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
       setTtpInfo(match)
       setD3fendItems(d3fendRes.items || [])
     } catch (err) {
-      console.error('Failed to load TTP details:', err)
+      setDrawerError(describeError(err).description)
     } finally {
       setDrawerLoading(false)
     }
@@ -242,8 +251,18 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
 
   if (!formData) {
     return (
-      <div className="py-16 text-center text-sm text-muted-foreground">
-        Failed to load MITRE ATT&CK data.
+      <div role="alert" className="py-16 flex flex-col items-center gap-3 text-center text-sm text-muted-foreground">
+        <p>Failed to load MITRE ATT&CK data.{loadError ? ` ${loadError}` : ''}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setIsLoading(true)
+            setReloadKey((k) => k + 1)
+          }}
+        >
+          Retry
+        </Button>
       </div>
     )
   }
@@ -674,6 +693,10 @@ export function MitreNavigator({ events, incidentId }: MitreNavigatorProps) {
                   View on MITRE ATT&CK <ExternalLink className="h-3 w-3" />
                 </a>
               </div>
+            ) : drawerError ? (
+              <p role="alert" className="text-sm text-muted-foreground">
+                Couldn&apos;t load technique details. {drawerError}
+              </p>
             ) : null}
 
             {/* D3FEND Countermeasures */}

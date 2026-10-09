@@ -31,6 +31,17 @@ class CompromisedHost(BaseModel):
     # logs_collected, forensically_sound, acquired_at}
     acquisition_status = Column(JSONB, default=dict)
     notes = Column(Text)
+    # Clock skew (provenance): host clock minus true UTC in seconds
+    # (+ = host ahead), within +-CLOCK_SKEW_LIMIT_SECONDS. Records snapshot
+    # the skew they used (``clock_skew_applied_seconds``); editing it never
+    # silently changes existing facts. ``timezone`` is the host's configured
+    # zone (IANA key or ``UTC+HH:MM``), the default for its records' naive
+    # raw timestamps.
+    clock_skew_seconds = Column(Integer)
+    clock_skew_basis = Column(Text)
+    clock_skew_measured_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
+    clock_skew_measured_at = Column(DateTime(timezone=True))
+    timezone = Column(String(64))
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
@@ -41,7 +52,8 @@ class CompromisedHost(BaseModel):
 
     # Relationships
     incident = relationship('Incident', back_populates='compromised_hosts')
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
+    clock_skew_measurer = relationship('User', foreign_keys=[clock_skew_measured_by], viewonly=True)
     graph_nodes = relationship('AttackGraphNode', back_populates='compromised_host', lazy='dynamic')
     timeline_events = relationship('TimelineEvent', back_populates='host', lazy='dynamic',
                                    foreign_keys='TimelineEvent.host_id')
@@ -55,6 +67,7 @@ class CompromisedHost(BaseModel):
     SYSTEM_TYPES = ['workstation', 'server', 'domain_controller', 'database', 'web_server',
                     'file_server', 'mail_server', 'laptop', 'virtual_machine', 'container', 'other']
     TRIAGE_STATUSES = ['clean', 'compromised', 'under_analysis', 'suspicious']
+    CLOCK_SKEW_LIMIT_SECONDS = 604800  # +-7 days
 
     def __repr__(self):
         return f'<CompromisedHost {self.hostname}>'
@@ -64,6 +77,9 @@ class CompromisedHost(BaseModel):
         data = super().to_dict()
         data['ip_address'] = str(self.ip_address) if self.ip_address else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data['clock_skew_measurer'] = (
+            {'id': str(self.clock_skew_measured_by), 'name': self.clock_skew_measurer.name if self.clock_skew_measurer else None}
+            if self.clock_skew_measured_by else None)
         return data
 
 

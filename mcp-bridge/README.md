@@ -130,10 +130,10 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Auth | 2 | Get current user, logout |
 | Incidents | 10 | CRUD (milestones, lead, overview summary), status, dashboard stats, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
 | Assignments | 3 | Assign / unassign responders |
-| Timeline | 7 | Events (detection time, confidence), mark event as IOC, timeline MITRE lists |
+| Timeline | 7 | Events (detection time, confidence, record provenance with raw timestamp + time zone), mark event as IOC, timeline MITRE lists |
 | Tasks | 7 | Tasks & investigative leads (type, outcome, direction, evidence refs with server-resolved labels), lead queue (`sheetstorm_list_leads`), comments |
 | Assets | 10 | Hosts (triage / acquisition status and filters, bulk triage via `sheetstorm_bulk_update_hosts`), accounts (update, delete, single-account reveal) |
-| IOCs | 12 | Network IOCs, host IOCs, malware |
+| IOCs | 12 | Network IOCs, host IOCs, malware (add/update take the provenance parameters) |
 | Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
 | Evidence | 5 | Evidence register (list, get, register items with tool-reported hashes), custody check-out / transfer / check-in (requires `attested=true`), ledger verification. Requests carry `X-SheetStorm-Client: mcp-bridge` |
 | Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |

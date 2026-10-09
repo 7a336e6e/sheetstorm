@@ -8,6 +8,7 @@ from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool, Compro
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.utils.pagination import list_response
+from app.services import provenance_service as prov
 from app.services import realtime
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 
@@ -32,7 +33,8 @@ NETWORK_IOC_SORTABLE = {
 def list_network_iocs(incident_id):
     """List network indicators (utils/pagination.py contract; q/search over
     dns_ip, source/destination host, description; filters protocol,
-    direction, host_id)."""
+    direction, host_id, plus the provenance filters provenance_level,
+    source_artifact_id, source_evidence_id, unverified)."""
     incident = g.incident
     query = NetworkIndicator.query.filter_by(incident_id=incident.id)
     return jsonify(list_response(
@@ -41,6 +43,7 @@ def list_network_iocs(incident_id):
             'protocol': (NetworkIndicator.protocol, 'eq'),
             'direction': (NetworkIndicator.direction, 'eq'),
             'host_id': (NetworkIndicator.host_id, 'uuid'),
+            **prov.list_filters(NetworkIndicator),
         },
         search_columns=(NetworkIndicator.dns_ip, NetworkIndicator.source_host,
                         NetworkIndicator.destination_host, NetworkIndicator.description),
@@ -70,6 +73,7 @@ def create_network_ioc(incident_id):
     source_host = data.get('source_host')
     source_host_id = data.get('source_host_id')
     destination_host_id = data.get('destination_host_id')
+    host = None
     if host_id:
         host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host:
@@ -116,6 +120,7 @@ def create_network_ioc(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(ioc, data, host=host, creating=True)
 
     db.session.add(ioc)
 
@@ -208,6 +213,7 @@ def update_network_ioc(incident_id, ioc_id):
     conflict = precondition(ioc)
     if conflict:
         return conflict, conflict.status_code
+    prov_before = prov.snapshot(ioc)
 
     for field in ['protocol', 'port', 'dns_ip', 'source_host', 'destination_host',
                   'direction', 'description', 'is_malicious', 'threat_intel_source', 'extra_data']:
@@ -247,6 +253,8 @@ def update_network_ioc(incident_id, ioc_id):
             ioc.destination_host_id = data['destination_host_id']
         else:
             ioc.destination_host_id = None
+
+    prov.apply(ioc, data, before=prov_before, host=prov.host_for(ioc))
 
     conflict = commit_or_conflict(ioc)
     if conflict:
@@ -309,6 +317,7 @@ def list_host_iocs(incident_id):
             'host': (HostBasedIndicator.host, 'ilike'),
             # Only those linked to timeline events
             'from_timeline': (HostBasedIndicator.timeline_event_id.isnot(None), 'flag'),
+            **prov.list_filters(HostBasedIndicator),
         },
         search_columns=(HostBasedIndicator.artifact_value, HostBasedIndicator.host, HostBasedIndicator.notes),
         serialize=lambda i: i.to_dict(),
@@ -339,6 +348,7 @@ def create_host_ioc(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     host = data.get('host')
+    host_obj = None
     if host_id:
         host_obj = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host_obj:
@@ -366,6 +376,7 @@ def create_host_ioc(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(ioc, data, host=host_obj, creating=True)
 
     db.session.add(ioc)
     db.session.commit()
@@ -389,6 +400,7 @@ def update_host_ioc(incident_id, ioc_id):
     conflict = precondition(ioc)
     if conflict:
         return conflict, conflict.status_code
+    prov_before = prov.snapshot(ioc)
 
     for field in ['artifact_type', 'artifact_value', 'host', 'notes',
                   'is_malicious', 'remediated', 'extra_data']:
@@ -408,6 +420,8 @@ def update_host_ioc(incident_id, ioc_id):
             ioc.host = host_obj.hostname
         else:
             ioc.host_id = None
+
+    prov.apply(ioc, data, before=prov_before, host=prov.host_for(ioc))
 
     conflict = commit_or_conflict(ioc)
     if conflict:
@@ -466,6 +480,7 @@ def list_malware(incident_id):
         filters={
             'is_tool': (MalwareTool.is_tool, 'bool'),
             'host_id': (MalwareTool.host_id, 'uuid'),
+            **prov.list_filters(MalwareTool),
         },
         search_columns=(MalwareTool.file_name, MalwareTool.file_path, MalwareTool.sha256,
                         MalwareTool.md5, MalwareTool.malware_family),
@@ -493,6 +508,7 @@ def create_malware(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     host = data.get('host')
+    host_obj = None
     if host_id:
         host_obj = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host_obj:
@@ -520,6 +536,7 @@ def create_malware(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(malware, data, host=host_obj, creating=True)
 
     db.session.add(malware)
     db.session.commit()
@@ -543,6 +560,7 @@ def update_malware(incident_id, malware_id):
     conflict = precondition(malware)
     if conflict:
         return conflict, conflict.status_code
+    prov_before = prov.snapshot(malware)
 
     for field in ['file_name', 'file_path', 'md5', 'sha256', 'sha512', 'file_size',
                   'host', 'description', 'malware_family', 'threat_actor',
@@ -564,6 +582,8 @@ def update_malware(incident_id, malware_id):
             malware.host = host_obj.hostname
         else:
             malware.host_id = None
+
+    prov.apply(malware, data, before=prov_before, host=prov.host_for(malware))
 
     conflict = commit_or_conflict(malware)
     if conflict:

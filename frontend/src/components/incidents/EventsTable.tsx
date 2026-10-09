@@ -46,6 +46,15 @@ import {
 } from 'lucide-react'
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import {
+    ProvenanceBadge,
+    ProvenanceSection,
+    emptyProvenance,
+    provenanceFromRecord,
+    provenancePayload,
+    useProvenanceRowActions,
+} from './provenance'
+import { ProvenanceDetails } from './provenance/ProvenanceDetails'
 
 type EventRow = VersionedRow<TimelineEvent>
 
@@ -202,6 +211,11 @@ function EventDetail({
                                                                                 <p className="text-sm pl-5">{event.source}</p>
                                                                             </div>
                                                                         )}
+                                                                        {event.provenance_level && event.provenance_level !== 'none' && (
+                                                                            <div className="space-y-1 md:col-span-2">
+                                                                                <ProvenanceDetails record={event} />
+                                                                            </div>
+                                                                        )}
                                                                         {mappings.length > 0 && (
                                                                             <div className="space-y-1">
                                                                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -317,6 +331,10 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
     })
 
     const [mappingDraft, setMappingDraft] = useState({ tactic: '', technique: '' })
+    // Provenance (W3-PROV): `provInitial` is what the record had, so an edit
+    // only sends the provenance fields that changed.
+    const [prov, setProv] = useState(emptyProvenance)
+    const [provInitial, setProvInitial] = useState(emptyProvenance)
 
     // MITRE ATT&CK form data for bidirectional tactic/technique linking
     const [mitreFormData, setMitreFormData] = useState<{
@@ -448,17 +466,19 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const invalidateIncident = () => invalidate(`/incidents/${incidentId}`)
 
     const handleAddEvent = async () => {
-        if (!form.timestamp || !form.activity) return
+        // A raw timestamp (+ zone) lets the server derive the time.
+        if ((!form.timestamp && !prov.raw_timestamp.trim()) || !form.activity) return
         setIsSubmitting(true)
         try {
             const payload = {
-                timestamp: form.timestamp,
+                timestamp: form.timestamp || undefined,
                 detection_time: form.detection_time || null,
                 confidence_level: form.confidence_level || null,
                 activity: form.activity,
                 source: form.source || null,
                 host_id: form.host_id || null,
                 mitre_mappings: form.mitre_mappings.length > 0 ? form.mitre_mappings : undefined,
+                ...provenancePayload(prov, editing ? provInitial : undefined),
             }
             if (editing) {
                 await api.put(`${endpoint}/${editing.id}`, payload, { ifMatch: editing.version })
@@ -503,6 +523,9 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
             host_id: event.host?.id || event.host_id || '',
             mitre_mappings: eventMappings(event),
         })
+        const fromRecord = provenanceFromRecord(event)
+        setProv(fromRecord)
+        setProvInitial(fromRecord)
         setMappingDraft({ tactic: '', technique: '' })
         setShowAddModal(true)
     }
@@ -532,9 +555,13 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
             host_id: '',
             mitre_mappings: [],
         })
+        setProv(emptyProvenance())
+        setProvInitial(emptyProvenance())
         setMappingDraft({ tactic: '', technique: '' })
         setTechSearch('')
     }
+
+    const provenanceActions = useProvenanceRowActions(incidentId, 'timeline_event', invalidateIncident)
 
     const { filters } = query.state
     const showValue = filters.key_only === 'true' ? 'key' : filters.ioc_only === 'true' ? 'ioc' : undefined
@@ -569,6 +596,10 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
         {
             id: 'timestamp', header: 'Event time', sortKey: 'timestamp', className: 'whitespace-nowrap text-xs text-muted-foreground',
             cell: (event) => <Timestamp value={event.timestamp} />,
+        },
+        {
+            id: 'provenance', header: 'Source', hideBelow: 'md', className: 'w-[56px]',
+            cell: (event) => <ProvenanceBadge record={event} />,
         },
         {
             id: 'detection_time', header: 'Detected', sortKey: 'detection_time', hideBelow: 'md',
@@ -664,6 +695,7 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                 rowActions={(event) => [
                     { label: 'Edit', icon: Edit2, onSelect: () => handleEditClick(event), permission: 'timeline:update' },
                     { label: event.is_key_event ? 'Unpin from timeline' : 'Pin to timeline', icon: Star, onSelect: () => void handleToggleKeyEvent(event), permission: 'timeline:update' },
+                    ...provenanceActions(event),
                     { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(event), permission: 'timeline:delete' },
                 ]}
                 renderExpanded={(event) => (
@@ -688,7 +720,7 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                     </DialogHeader>
                     <DialogBody className="space-y-4">
                         <div className="space-y-2">
-                            <Label>Timestamp *</Label>
+                            <Label>{prov.raw_timestamp.trim() ? 'Timestamp' : 'Timestamp *'}</Label>
                             <DateTimeInput value={form.timestamp} onChange={iso => setForm({ ...form, timestamp: iso ?? '' })} />
                         </div>
                         <div className="space-y-2">
@@ -733,6 +765,18 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                                 </SelectContent>
                             </Select>
                         </div>
+                        <ProvenanceSection
+                            incidentId={incidentId}
+                            value={prov}
+                            onChange={setProv}
+                            timestamp={form.timestamp}
+                            onUseComputed={(utc) => {
+                                setForm((f) => ({ ...f, timestamp: utc }))
+                                setProv((p) => ({ ...p, keep_manual: false }))
+                            }}
+                            hostId={form.host_id || null}
+                            timestampLabel="timestamp"
+                        />
                         {/* MITRE ATT&CK Mappings */}
                         <div className="space-y-3">
                             <Label>MITRE ATT&CK Mappings</Label>

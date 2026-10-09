@@ -10,6 +10,7 @@ from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
+from app.services import provenance_service as prov
 from app.services import realtime
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import in_list, list_response
@@ -41,6 +42,7 @@ TIMELINE_FILTERS = {
     'ioc_only': (TimelineEvent.is_ioc == True, 'flag'),  # noqa: E712
     'confidence': (TimelineEvent.confidence_level, in_list(TimelineEvent.CONFIDENCE_LEVELS)),
     'has_detection': (TimelineEvent.detection_time.isnot(None), 'bool'),
+    **prov.list_filters(TimelineEvent),
 }
 
 
@@ -51,7 +53,9 @@ def list_timeline_events(incident_id):
     """List timeline events (utils/pagination.py contract; q/search over
     activity+hostname; filters phase, hostname, host_id, mitre_tactic,
     start_date, end_date, key_only, ioc_only, confidence (comma list of
-    low|medium|high|certain), has_detection (true|false)).
+    low|medium|high|certain), has_detection (true|false); provenance filters
+    provenance_level (none|partial|full|verified), source_artifact_id,
+    source_evidence_id, unverified (provenance recorded, not yet verified)).
 
     Sort: timestamp (default), detection_time, dwell, confidence, created_at,
     hostname, phase; NULLs (no detection time / confidence) sort last."""
@@ -86,7 +90,9 @@ def create_timeline_event(incident_id):
     incident = g.incident
     data = json_body()
 
-    timestamp = parse_datetime(data.get('timestamp'), 'timestamp', required=True)
+    # `timestamp` may be omitted when `raw_timestamp` (+ timezone) lets the
+    # server derive it (provenance_service.apply).
+    timestamp = parse_datetime(data.get('timestamp'), 'timestamp', required=not data.get('raw_timestamp'))
     detection_time = parse_datetime(data.get('detection_time'), 'detection_time')
     confidence_level = check_choice(data.get('confidence_level') or None,
                                     TimelineEvent.CONFIDENCE_LEVELS, 'confidence_level', allow_none=True)
@@ -138,6 +144,7 @@ def create_timeline_event(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     hostname = data.get('hostname')
+    host = None
     if host_id:
         host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host:
@@ -162,6 +169,9 @@ def create_timeline_event(incident_id):
         extra_data=data.get('extra_data') or {},
         created_by=user.id
     )
+    prov.apply(event, data, host=host, creating=True)
+    if event.timestamp is None:
+        return jsonify({'error': 'bad_request', 'message': 'timestamp is required'}), 400
 
     db.session.add(event)
     db.session.commit()
@@ -195,6 +205,7 @@ def update_timeline_event(incident_id, event_id):
     conflict = precondition(event)
     if conflict:
         return conflict, conflict.status_code
+    prov_before = prov.snapshot(event)
 
     # Validate before mutating anything.
     if 'timestamp' in data:
@@ -287,6 +298,8 @@ def update_timeline_event(incident_id, event_id):
     if 'extra_data' in data:
         event.extra_data = data['extra_data']
 
+    prov.apply(event, data, before=prov_before, host=prov.host_for(event))
+
     conflict = commit_or_conflict(event)
     if conflict:
         return conflict, conflict.status_code
@@ -353,6 +366,7 @@ def mark_event_as_ioc(incident_id, event_id):
         is_malicious=data.get('is_malicious', True),
         created_by=user.id
     )
+    prov.copy_provenance(event, ioc)  # the indicator cites the same source as the event
 
     db.session.add(ioc)
     db.session.commit()

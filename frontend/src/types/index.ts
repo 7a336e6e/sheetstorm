@@ -1,4 +1,5 @@
 import type { UserPreferences } from './preferences'
+import type { HostClockSkew, ProvenanceFields } from './provenance'
 
 export interface User {
   id: string
@@ -82,7 +83,7 @@ export interface MitreMapping {
   score?: number
 }
 
-export interface TimelineEvent {
+export interface TimelineEvent extends ProvenanceFields {
   id: string
   incident_id: string
   timestamp: string
@@ -118,7 +119,7 @@ export interface AcquisitionStatus {
   acquired_at?: string
 }
 
-export interface CompromisedHost {
+export interface CompromisedHost extends HostClockSkew {
   id: string
   incident_id: string
   hostname: string
@@ -129,7 +130,14 @@ export interface CompromisedHost {
   evidence?: string
   first_seen?: string
   last_seen?: string
-  containment_status: 'active' | 'isolated' | 'reimaged' | 'decommissioned'
+  containment_status:
+    | 'active'
+    | 'compromised'
+    | 'isolated'
+    | 'contained'
+    | 'reimaged'
+    | 'cleaned'
+    | 'decommissioned'
   triage_status?: TriageStatus | null
   acquisition_status?: AcquisitionStatus | null
   notes?: string
@@ -160,7 +168,7 @@ export interface CompromisedAccount {
   created_at: string
 }
 
-export interface NetworkIndicator {
+export interface NetworkIndicator extends ProvenanceFields {
   id: string
   incident_id: string
   host_id?: string
@@ -184,7 +192,7 @@ export interface NetworkIndicator {
   created_at: string
 }
 
-export interface HostBasedIndicator {
+export interface HostBasedIndicator extends ProvenanceFields {
   id: string
   incident_id: string
   host_id?: string
@@ -202,7 +210,8 @@ export interface HostBasedIndicator {
   created_at: string
 }
 
-export interface MalwareTool {
+export interface MalwareTool extends ProvenanceFields {
+  access_time?: string
   id: string
   incident_id: string
   host_id?: string
@@ -703,3 +712,4 @@ export * from './users-admin'
 export * from './audit'
 export * from './security'
 export * from './api-keys'
+export * from './provenance'

@@ -6,6 +6,7 @@ from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
 from sheetstorm_mcp.server import get_client, mcp
+from sheetstorm_mcp.tools._provenance import format_provenance, provenance_payload
 
 # ---------------------------------------------------------------------------
 # Formatters
@@ -23,6 +24,7 @@ def _format_network_ioc(i: dict) -> str:
         f"  Source: {src_name} \u2192 Dest: {dst_name}\n"
         f"  Description: {i.get('description', 'N/A')} | "
         f"Malicious: {'Yes' if i.get('is_malicious') else 'No'}"
+        + "".join("\n" + line for line in format_provenance(i))
     )
 
 
@@ -33,6 +35,7 @@ def _format_host_ioc(i: dict) -> str:
         f"  Host: {i.get('host', i.get('host_id', 'N/A'))}\n"
         f"  Notes: {i.get('notes', 'N/A')} | "
         f"Malicious: {'Yes' if i.get('is_malicious') else 'No'}"
+        + "".join("\n" + line for line in format_provenance(i))
     )
 
 
@@ -52,6 +55,7 @@ def _format_malware(m: dict) -> str:
         parts.append(f"  Threat Actor: {m['threat_actor']}")
     if m.get("description"):
         parts.append(f"  Description: {m['description']}")
+    parts.extend(format_provenance(m))
     return "\n".join(parts)
 
 
@@ -123,6 +127,15 @@ async def sheetstorm_add_network_ioc(
     source_host_id: Optional[str] = None,
     destination_host_id: Optional[str] = None,
     add_to_attack_graph: bool = False,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Add a network IOC (IP address, domain, or URL).
 
@@ -141,16 +154,27 @@ async def sheetstorm_add_network_ioc(
         source_host_id: UUID of the source compromised host (creates a host link)
         destination_host_id: UUID of the destination compromised host (creates a host link)
         add_to_attack_graph: If true, automatically creates an attack graph node for this IOC
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     from datetime import datetime as dt
     from datetime import timezone
 
     client = get_client()
     try:
-        payload: dict = {
-            "dns_ip": dns_ip,
-            "timestamp": timestamp or dt.now(timezone.utc).isoformat(),
-        }
+        payload: dict = {"dns_ip": dns_ip}
+        # A raw_timestamp lets the server derive the time; a defaulted "now"
+        # would contradict it.
+        if timestamp or not raw_timestamp:
+            payload["timestamp"] = timestamp or dt.now(timezone.utc).isoformat()
         if protocol:
             payload["protocol"] = protocol
         if port is not None:
@@ -175,6 +199,12 @@ async def sheetstorm_add_network_ioc(
             payload["destination_host_id"] = resolved_dst
         if add_to_attack_graph:
             payload["add_to_attack_graph"] = True
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
 
         ioc = await client.post(f"/incidents/{incident_id}/network-iocs", json=payload)
         return f"✓ Network IOC added:\n{_format_network_ioc(ioc)}"
@@ -194,6 +224,15 @@ async def sheetstorm_update_network_ioc(
     description: Optional[str] = None,
     source_host_id: Optional[str] = None,
     destination_host_id: Optional[str] = None,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Update a network IOC.
 
@@ -208,6 +247,16 @@ async def sheetstorm_update_network_ioc(
         description: New description
         source_host_id: UUID of source compromised host (or 'null' to clear)
         destination_host_id: UUID of destination compromised host (or 'null' to clear)
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     client = get_client()
     try:
@@ -224,6 +273,12 @@ async def sheetstorm_update_network_ioc(
         ]:
             if val is not None:
                 payload[field] = val
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
         if not payload:
             return "No fields to update."
         ioc = await client.put(f"/incidents/{incident_id}/network-iocs/{ioc_id}", json=payload)
@@ -282,6 +337,15 @@ async def sheetstorm_add_host_ioc(
     host_id: Optional[str] = None,
     notes: Optional[str] = None,
     is_malicious: bool = True,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Add a host-based IOC.
 
@@ -292,6 +356,16 @@ async def sheetstorm_add_host_ioc(
         host_id: UUID of the associated host
         notes: Additional notes
         is_malicious: Whether this is confirmed malicious
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     client = get_client()
     try:
@@ -301,6 +375,12 @@ async def sheetstorm_add_host_ioc(
         if notes:
             payload["notes"] = notes
         payload["is_malicious"] = is_malicious
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
         ioc = await client.post(f"/incidents/{incident_id}/host-iocs", json=payload)
         return f"✓ Host IOC added:\n{_format_host_ioc(ioc)}"
     except SheetStormAPIError as exc:
@@ -314,6 +394,15 @@ async def sheetstorm_update_host_ioc(
     artifact_type: Optional[str] = None,
     artifact_value: Optional[str] = None,
     notes: Optional[str] = None,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Update a host-based IOC.
 
@@ -323,6 +412,16 @@ async def sheetstorm_update_host_ioc(
         artifact_type: New type
         artifact_value: New value
         notes: New notes
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     client = get_client()
     try:
@@ -334,6 +433,12 @@ async def sheetstorm_update_host_ioc(
         ]:
             if val is not None:
                 payload[field] = val
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
         if not payload:
             return "No fields to update."
         ioc = await client.put(f"/incidents/{incident_id}/host-iocs/{ioc_id}", json=payload)
@@ -394,6 +499,15 @@ async def sheetstorm_add_malware(
     file_size: Optional[int] = None,
     host_id: Optional[str] = None,
     description: Optional[str] = None,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Add a malware/tool entry.
 
@@ -406,6 +520,16 @@ async def sheetstorm_add_malware(
         file_size: File size in bytes
         host_id: UUID of the host where found
         description: Description
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     client = get_client()
     try:
@@ -420,6 +544,12 @@ async def sheetstorm_add_malware(
         ]:
             if val is not None:
                 payload[field] = val
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
         malware = await client.post(f"/incidents/{incident_id}/malware", json=payload)
         return f"✓ Malware entry added:\n{_format_malware(malware)}"
     except SheetStormAPIError as exc:
@@ -436,6 +566,15 @@ async def sheetstorm_update_malware(
     sha256: Optional[str] = None,
     file_size: Optional[int] = None,
     description: Optional[str] = None,
+    source_evidence_id: Optional[str] = None,
+    source_artifact_id: Optional[str] = None,
+    source_record_type: Optional[str] = None,
+    source_record_ref: Optional[str] = None,
+    raw_timestamp: Optional[str] = None,
+    source_timezone: Optional[str] = None,
+    timestamp_type: Optional[str] = None,
+    extraction_tool: Optional[str] = None,
+    extraction_tool_version: Optional[str] = None,
 ) -> str:
     """Update a malware/tool entry.
 
@@ -448,6 +587,16 @@ async def sheetstorm_update_malware(
         sha256: New SHA256 hash
         file_size: New file size
         description: New description
+        source_evidence_id: UUID of the registered evidence item this fact came from (same incident)
+        source_artifact_id: UUID of a stored artifact this fact came from (same incident)
+        source_record_type: file_path, evtx_record, offset, log_line, url, registry_key, db_row or other
+        source_record_ref: Exact record reference, e.g. 'Security.evtx EventRecordID=48213' (stored as text only)
+        raw_timestamp: The timestamp exactly as found in the source. With source_timezone (or an offset in the
+            string) the server derives the UTC time, applying the host's clock skew; omit the explicit timestamp then
+        source_timezone: IANA zone (Europe/Berlin), UTC, or UTC+HH:MM for a raw_timestamp without an offset
+        timestamp_type: modified, accessed, changed, born, logged, first_seen, last_seen, observed or other
+        extraction_tool: Tool that produced the record, e.g. EvtxECmd
+        extraction_tool_version: Version of that tool
     """
     client = get_client()
     try:
@@ -462,6 +611,12 @@ async def sheetstorm_update_malware(
         ]:
             if val is not None:
                 payload[field] = val
+        payload.update(provenance_payload(
+            source_evidence_id=source_evidence_id, source_artifact_id=source_artifact_id,
+            source_record_type=source_record_type, source_record_ref=source_record_ref,
+            raw_timestamp=raw_timestamp, source_timezone=source_timezone, timestamp_type=timestamp_type,
+            extraction_tool=extraction_tool, extraction_tool_version=extraction_tool_version,
+        ))
         if not payload:
             return "No fields to update."
         malware = await client.put(f"/incidents/{incident_id}/malware/{malware_id}", json=payload)

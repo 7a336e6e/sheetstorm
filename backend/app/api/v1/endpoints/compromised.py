@@ -1,6 +1,6 @@
 """Compromised assets endpoints"""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from sqlalchemy import func
@@ -12,9 +12,9 @@ from app.models.compromised import PASSWORD_MASK
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
-from app.utils.audit_diff import record_changes
+from app.utils.audit_diff import record_changes, snapshot
 from app.utils.pagination import ListArgsError, in_list, list_response
-from app.services import realtime
+from app.services import provenance_service, realtime
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.validation import parse_datetime, check_choice, json_body
 
@@ -284,6 +284,123 @@ def update_compromised_host(incident_id, host_id):
     realtime.emit_change(incident.id, 'host', 'updated', obj=host)
 
     return set_etag(jsonify(host.to_dict()), host), 200
+
+
+CLOCK_SKEW_FIELDS = ('clock_skew_seconds', 'clock_skew_basis', 'timezone')
+# Permissions needed to re-derive the records of every kind (a host's skew
+# touches events and all three IOC kinds).
+REAPPLY_PERMISSIONS = ('timeline:update', 'network_iocs:update', 'host_iocs:update', 'malware:update')
+REAPPLY_AUDIT_CHANGES = 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/hosts/<uuid:host_id>/clock-skew', methods=['PUT'])
+@jwt_required()
+@require_incident_access('hosts:update')
+@audit_log('data_modification', 'update_clock_skew', 'compromised_host')
+def set_host_clock_skew(incident_id, host_id):
+    """Record a host's clock skew and configured time zone.
+
+    Body (at least one key): ``clock_skew_seconds`` (int within +-7 days,
+    host clock minus true UTC, + = host ahead; null clears), ``clock_skew_basis``
+    (how it was measured; required for a non-zero skew) and ``timezone`` (IANA
+    key or ``UTC+HH:MM``; null clears). Stamps who / when measured. Existing
+    records keep the skew they snapshotted; use ``clock-skew/reapply`` to
+    re-derive them.
+    """
+    incident = g.incident
+    data = json_body()
+    host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
+    if not host:
+        return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+    if not any(k in data for k in CLOCK_SKEW_FIELDS):
+        return jsonify({'error': 'bad_request',
+                        'message': f"Send at least one of: {', '.join(CLOCK_SKEW_FIELDS)}"}), 400
+    conflict = precondition(host)
+    if conflict:
+        return conflict, conflict.status_code
+    before = snapshot(host, CLOCK_SKEW_FIELDS)
+
+    if 'clock_skew_seconds' in data:
+        skew = provenance_service.validate_skew(data['clock_skew_seconds'])
+        host.clock_skew_seconds = skew
+        if skew is None:
+            host.clock_skew_basis = None
+            host.clock_skew_measured_by = None
+            host.clock_skew_measured_at = None
+        else:
+            host.clock_skew_measured_by = get_current_user().id
+            host.clock_skew_measured_at = datetime.now(timezone.utc)
+    if 'clock_skew_basis' in data:
+        basis = data['clock_skew_basis']
+        if basis is not None and not isinstance(basis, str):
+            return jsonify({'error': 'bad_request', 'message': 'clock_skew_basis must be a string'}), 400
+        basis = (basis or '').strip() or None
+        if basis and len(basis) > 2000:
+            return jsonify({'error': 'bad_request', 'message': 'clock_skew_basis must be at most 2000 characters'}), 400
+        host.clock_skew_basis = basis
+    if host.clock_skew_seconds and not host.clock_skew_basis:
+        return jsonify({'error': 'basis_required',
+                        'message': 'clock_skew_basis (how the skew was measured) is required for a non-zero skew'}), 400
+    if 'timezone' in data:
+        tz_name = data['timezone']
+        if tz_name in (None, ''):
+            host.timezone = None
+        else:
+            provenance_service.parse_timezone(tz_name)
+            host.timezone = tz_name
+
+    record_changes(before, snapshot(host, CLOCK_SKEW_FIELDS), host_id=str(host.id), hostname=host.hostname)
+    conflict = commit_or_conflict(host)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host', 'updated', obj=host)
+
+    return set_etag(jsonify(host.to_dict()), host), 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/hosts/<uuid:host_id>/clock-skew/reapply', methods=['POST'])
+@jwt_required()
+@require_incident_access('hosts:update')
+@audit_log('data_modification', 'renormalize', 'compromised_host')
+def reapply_host_clock_skew(incident_id, host_id):
+    """Re-derive the timestamps of this host's events / IOCs that were
+    *computed* from a raw timestamp under a different skew than the host has
+    now. Body ``{dry_run: true|false}`` (default true: preview only). Manual
+    and imported records are never touched. Requires update permission on
+    timeline events and all three IOC kinds; a real run clears the
+    provenance verification of every changed record.
+    """
+    incident = g.incident
+    data = json_body()
+    dry_run = data.get('dry_run', True)
+    if not isinstance(dry_run, bool):
+        return jsonify({'error': 'bad_request', 'message': 'dry_run must be true or false'}), 400
+    host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
+    if not host:
+        return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+    user = get_current_user()
+    missing = [p for p in REAPPLY_PERMISSIONS if not user.has_permission(p)]
+    if missing:
+        return jsonify({'error': 'forbidden',
+                        'message': f"Permission denied. Required: {', '.join(missing)}"}), 403
+    if not dry_run:
+        conflict = precondition(host)
+        if conflict:
+            return conflict, conflict.status_code
+
+    result = provenance_service.reapply_host_skew(host, dry_run=dry_run)
+    record_changes({}, {}, host_id=str(host.id), hostname=host.hostname, dry_run=dry_run,
+                   new_skew=host.clock_skew_seconds, count=result['count'],
+                   records=result['changes'][:REAPPLY_AUDIT_CHANGES])
+    if not dry_run:
+        db.session.commit()  # a concurrent edit -> StaleDataError -> 409 (global handler)
+        if result['count']:
+            realtime.emit_resync(incident.id, ['timeline', 'network_iocs', 'host_iocs', 'malware'],
+                                 reason='clock_skew_reapply')
+    truncated = result['count'] > REAPPLY_AUDIT_CHANGES * 5
+    return jsonify({'dry_run': dry_run, 'count': result['count'],
+                    'changes': result['changes'][:REAPPLY_AUDIT_CHANGES * 5],
+                    'truncated': truncated}), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/hosts/<uuid:host_id>', methods=['DELETE'])

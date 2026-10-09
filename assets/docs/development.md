@@ -142,12 +142,14 @@ E2E runs only on the integration branch, by the integrator, against a `docker co
 ### Merge gates (`scripts/verify-wp.sh`)
 
 ```bash
-scripts/verify-wp.sh            # gates for what changed vs `integration` (or `main`)
+scripts/verify-wp.sh            # gates for what changed vs the base (see BASE below)
 scripts/verify-wp.sh --all      # backend + MCP + frontend
 scripts/verify-wp.sh --e2e      # + Playwright @smoke against E2E_BASE_URL (integrator)
 ```
 
 Gates: backend docker suite (includes the single-Alembic-head check in `test_migrations.py`), MCP suites, then for the frontend `npm ci --ignore-scripts --legacy-peer-deps`, `tsc --noEmit`, `npm run lint`, `jest --ci` and `next build`. It also fails when a dependency manifest changed vs the base, because only W0-TH may add dependencies (`ALLOW_DEPS=1` acknowledges an approved change). `WP_ID` names the docker resources (default: from the branch name). Several WPs can run it at the same time.
+
+`BASE` is the commit the change set (and so the dependency check) is computed against. By default it is the merge-base of `HEAD` with `origin/integration`, so a branch cut from an earlier wave and the integration branch before its push are compared only with what they add (run `git fetch origin` first). Without an `origin/integration` ref it falls back to the local `integration` branch, then `main`. Override it with the environment, e.g. `BASE=main scripts/verify-wp.sh --all`.
 
 ## Frontend lists, search and shortcuts
 

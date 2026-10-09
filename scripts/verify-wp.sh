@@ -17,8 +17,9 @@
 #   deps      fails when package.json / requirements*.txt changed vs the base
 #             (only W0-TH may add dependencies; ALLOW_DEPS=1 to acknowledge)
 #
-# Env: WP_ID (default: from the branch name), BASE (default: integration if it
-# exists, else main), ALLOW_DEPS=1. Docker resources are named
+# Env: WP_ID (default: from the branch name), BASE (default: the merge-base of
+# HEAD with origin/integration; falls back to the local integration branch,
+# then main), ALLOW_DEPS=1. Docker resources are named
 # sheetstorm-verify-<WP_ID>-<rand>-* and removed on exit; nothing touches the
 # docker compose stack or publishes ports.
 set -euo pipefail
@@ -30,7 +31,16 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 WP_ID="${WP_ID:-$(printf '%s' "${BRANCH##*/}" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_.-' '-')}"
 WP_ID="${WP_ID:0:30}"
 if [ -z "${BASE:-}" ]; then
-  if git rev-parse --verify -q integration >/dev/null; then BASE=integration; else BASE=main; fi
+  # The merge-base with the published integration branch: a WP cut from an
+  # earlier wave (or the integration branch itself before its push) is then
+  # compared only with what it adds, not with main.
+  if git rev-parse --verify -q origin/integration >/dev/null; then
+    BASE="$(git merge-base origin/integration HEAD)"
+  elif git rev-parse --verify -q integration >/dev/null; then
+    BASE=integration
+  else
+    BASE=main
+  fi
 fi
 RUN_ID="${WP_ID}-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 PY_IMAGE='python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258'
@@ -43,7 +53,7 @@ for arg in "$@"; do
     --mcp) run_mcp=1 explicit=1 ;;
     --frontend) run_frontend=1 explicit=1 ;;
     --e2e) run_e2e=1 explicit=1 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done

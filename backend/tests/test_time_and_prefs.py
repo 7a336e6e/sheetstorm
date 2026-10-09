@@ -231,3 +231,40 @@ def test_preferences_change_is_audited(admin, users, reset_prefs):
         .order_by(AuditLog.created_at.desc()).first()
     assert row.event_type == 'data_modification' and row.resource_type == 'user'
     assert row.user_id == uid
+
+
+@pytest.mark.parametrize('value', [
+    '2026-01-15T10:00:00Z',
+    '2026-01-15T10:00:00+00:00',
+    '2026-01-15T12:00:00+02:00',
+    '2026-01-15T10:00:00',
+    ' 2026-01-15 10:00:00 ',
+])
+def test_import_service_parses_iso_with_zone(value):
+    from app.services.import_service import ImportService
+    assert ImportService._parse_date(value) == UTC_10
+
+
+@pytest.mark.parametrize('value', ['garbage', '2026-13-45T99:99', 42])
+def test_import_service_rejects_unparseable_dates(value):
+    """Unrecognised values used to silently become "now"."""
+    from app.services.import_service import ImportService
+    with pytest.raises(ValueError):
+        ImportService._parse_date(value)
+
+
+def test_import_submit_reports_bad_date_and_imports_nothing(admin, inc):
+    from app.models import TimelineEvent
+    resp = admin.post(f'/api/v1/incidents/{inc.id}/import/submit', json={'timeline_events': [
+        {'activity': 'good', 'timestamp': '2026-01-15T10:00:00Z'},
+        {'activity': 'bad', 'timestamp': 'not-a-date'},
+    ]})
+    assert resp.status_code == 400
+    assert 'not-a-date' in resp.get_json()['message']
+    assert TimelineEvent.query.filter_by(incident_id=inc.id).count() == 0
+
+    resp = admin.post(f'/api/v1/incidents/{inc.id}/import/submit', json={'timeline_events': [
+        {'activity': 'good', 'timestamp': '2026-01-15T12:00:00+02:00'}]})
+    assert resp.status_code == 200, resp.get_json()
+    ev = TimelineEvent.query.filter_by(incident_id=inc.id).one()
+    assert ev.timestamp == UTC_10

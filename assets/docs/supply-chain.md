@@ -97,9 +97,11 @@ detected and unpublished within hours to a few days.
   releases it published five versions in August-September 2026
   (checklist item 3); re-evaluate later.
 - Dependabot (`.github/dependabot.yml`) opens PRs only for versions past a
-  7-day cooldown (14 for npm/pip majors), groups minor/patch bumps, and covers
-  npm, pip (backend, mcp-server, mcp-bridge), Dockerfiles, docker-compose and
-  GitHub Actions.
+  7-day cooldown and covers npm, pip (backend, mcp-server, mcp-bridge),
+  Dockerfiles, docker-compose and GitHub Actions. Version updates arrive as one
+  grouped weekly PR of minor/patch bumps per ecosystem/directory (at most 2
+  open per entry); semver-major bumps are ignored and done manually. Security
+  updates are grouped into one PR per ecosystem/directory.
 
 ### 4. Vetting checklist for a new or bumped dependency
 

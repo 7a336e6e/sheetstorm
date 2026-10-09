@@ -24,8 +24,21 @@ def main() -> None:
     logger.info("Starting SheetStorm MCP server v%s (transport=%s)", "0.1.0", cfg.transport)
 
     if cfg.transport == "sse":
+        if cfg.api_key or cfg.api_token or (cfg.username and cfg.password):
+            logger.warning(
+                "SHEETSTORM_API_KEY / SHEETSTORM_API_TOKEN / SHEETSTORM_USERNAME+PASSWORD are "
+                "ignored on the remote transport: every user signs in through the OAuth flow."
+            )
         _run_sse_with_oauth(cfg, logger)
     else:
+        if cfg.auth_mode is None:
+            logger.warning(
+                "No credentials configured. Set SHEETSTORM_API_KEY (recommended; create a key "
+                "in SheetStorm under Profile > API keys), SHEETSTORM_API_TOKEN or "
+                "SHEETSTORM_USERNAME/SHEETSTORM_PASSWORD."
+            )
+        else:
+            logger.info("stdio authentication: %s", cfg.auth_mode)
         mcp.run(transport="stdio")
 
 

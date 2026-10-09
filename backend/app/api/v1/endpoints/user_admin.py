@@ -15,12 +15,12 @@ from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import get_current_user, require_permission
 from app.models import AuditLog, User, UserInvite
-from app.services import invite_service, user_lifecycle
+from app.services import audit_service, invite_service, user_lifecycle
 from app.services.rbac_guard import GuardError, guard_error_response
 from app.services.token_revocation import SessionRevocationError, revocation_failed_response
 from app.services.user_lifecycle import LifecycleError
 from app.utils.audit_diff import record_changes, snapshot
-from app.utils.pagination import list_response
+from app.utils.pagination import list_response, paginate_response, parse_list_args
 
 STATE_FIELDS = ('is_active', 'deactivation_reason', 'must_change_password', 'mfa_enabled', 'locked_until')
 INVITE_STATUSES = ('pending', 'accepted', 'revoked', 'expired', 'all')
@@ -260,16 +260,6 @@ def user_admin_bulk():
 
 # ── Activity ────────────────────────────────────────────────────────
 
-def _audit_query(org_id):
-    """Org-pinned audit query from the audit service (AUD-BE), with a plain
-    org filter until that service is merged."""
-    try:
-        from app.services.audit_service import build_audit_query
-    except ImportError:
-        return AuditLog.query.filter(AuditLog.organization_id == org_id)
-    return build_audit_query(org_id, {})
-
-
 @api_bp.route('/users/<uuid:user_id>/activity', methods=['GET'])
 @jwt_required()
 @require_permission('audit_logs:read')
@@ -283,9 +273,12 @@ def user_admin_activity(user_id):
         return jsonify({'error': 'invalid_filter', 'message': 'scope must be actor, target or all'}), 400
     by_actor = AuditLog.user_id == target.id
     about = sa.and_(AuditLog.resource_type.in_(('user', 'user_invite')), AuditLog.resource_id == target.id)
-    q = _audit_query(current.organization_id)
+    sortable = {'created_at': AuditLog.created_at}
+    la = parse_list_args(sortable=sortable, default_sort='-created_at', default_per_page=20, max_per_page=100)
+    audit_service.check_page_depth(la.page, la.per_page)
+    # Org-pinned audit query; the audit filters (event_type, dates, action, q, ...) apply on top.
+    q = audit_service.build_audit_query(current.organization_id, request.args)
     q = q.filter(by_actor if scope == 'actor' else about if scope == 'target' else sa.or_(by_actor, about))
-    body = list_response(q, sortable={'created_at': AuditLog.created_at}, default_sort='-created_at',
-                         id_col=AuditLog.id, serialize=lambda r: r.to_dict(), max_per_page=100,
-                         default_per_page=20, extra={'scope': scope})
+    body = paginate_response(q, la, serialize=lambda r: r.to_dict(), sortable=sortable, id_col=AuditLog.id,
+                             extra={'scope': scope})
     return jsonify(body), 200

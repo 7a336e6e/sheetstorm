@@ -29,6 +29,7 @@ def get_system_status():
 
 def _user_overview(org):
     from app.services.rbac_guard import admin_holders
+    from app.services.user_lifecycle import overview_counts
 
     base = User.query.filter(User.organization_id == org.id)
     total = base.count()
@@ -57,9 +58,7 @@ def _user_overview(org):
         'mfa_enabled': mfa_enabled,
         'mfa_adoption_pct': round(100 * mfa_enabled / active, 1) if active else None,
         'admins_without_mfa': admins_without_mfa,
-        # Filled by the user-lifecycle work (lockout columns, invites).
-        'locked': None,
-        'pending_invites': None,
+        **overview_counts(org.id),  # {locked, pending_invites}
     }, len(admin_ids)
 
 

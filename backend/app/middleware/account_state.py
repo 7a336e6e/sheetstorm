@@ -26,8 +26,11 @@ from typing import Callable
 from flask import g, jsonify, request
 
 # Endpoints a restricted user still needs: read their own state, leave the
-# restriction, end the session.
+# restriction, end the session. `api_key_exchange` (POST /auth/token)
+# authenticates by the API key alone and never reads the JWT identity; the
+# token it issues is still gated on every other route.
 BASE_ALLOWLIST = frozenset({
+    'api_v1.api_key_exchange',
     'api_v1.get_current_user',
     'api_v1.change_password',
     'api_v1.logout',

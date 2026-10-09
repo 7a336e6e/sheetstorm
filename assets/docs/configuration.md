@@ -14,6 +14,9 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `FERNET_KEY` | Yes | - | Fernet key encrypting integration credentials at rest |
 | `CUSTODY_SIGNING_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key for chain-of-custody signatures. See [Custody signing key](#custody-signing-key-and-rotation) |
 | `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
+| `API_KEY_PEPPER` | Recommended | derived from `SECRET_KEY` (startup warning) | Pepper of the API key hashes (HMAC-SHA256). Generate with `openssl rand -hex 32` and keep it outside the database; changing it (or `SECRET_KEY` while unset) invalidates every API key |
+| `API_KEY_TOKEN_TTL_MINUTES` | No | `15` | Lifetime (1..60) of the access token `POST /auth/token` mints for an API key |
+| `API_KEY_MAX_PER_USER` / `API_KEY_MAX_PER_SERVICE_ACCOUNT` / `API_KEY_MAX_PER_ORG` | No | `10` / `25` / `200` | Caps on active API keys |
 | `DATABASE_URL` | Yes | built by compose | PostgreSQL connection (compose builds it from `POSTGRES_*`) |
 | `REDIS_URL` | Yes | `redis://redis:6379/0` | Redis connection (rate limiting, MCP OAuth state) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | No | `sheetstorm` / `changeme` / `sheetstorm` | PostgreSQL credentials - change the password for any shared deployment |
@@ -92,7 +95,7 @@ Without S3 or Google Drive, evidence is stored on the local `artifacts_data` Doc
 | `MCP_ALLOWED_REDIRECT_HOSTS` | empty | Extra hostnames MCP OAuth clients may redirect to after login (comma-separated). Loopback redirects are always allowed. |
 | `MCP_LOG_LEVEL` | `INFO` | MCP server log level |
 
-MCP authentication is OAuth 2.1 (users sign in with their SheetStorm account); there is no static transport token. See `mcp-server/.env.example` for stdio-bridge settings.
+MCP authentication is OAuth 2.1 (users sign in with their SheetStorm account); there is no static transport token. See `mcp-server/.env.example` for stdio-bridge settings. On stdio (local server or bridge) the recommended credential is a scoped API key in `SHEETSTORM_API_KEY`; the organization settings `api_keys_enabled` (kill switch) and `api_key_max_lifetime_days` (1..365) control keys per organization.
 
 ## HTTPS and cookies
 

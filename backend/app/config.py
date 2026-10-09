@@ -95,6 +95,18 @@ class BaseConfig:
     # the organization setting `auto_enrich_iocs` overrides it).
     IOC_AUTO_ENRICH = _env_bool('IOC_AUTO_ENRICH', False)
 
+    # API keys (services/api_key_service.py). Secrets are stored only as
+    # HMAC-SHA256(API_KEY_PEPPER, secret). Without a pepper one is derived
+    # from SECRET_KEY (startup warning); set a dedicated random value
+    # (`openssl rand -hex 32`) so rotating SECRET_KEY keeps keys valid.
+    API_KEY_PEPPER = os.getenv('API_KEY_PEPPER', '')
+    # Lifetime of the access token minted by POST /auth/token (1..60 minutes).
+    API_KEY_TOKEN_TTL_MINUTES = int(os.getenv('API_KEY_TOKEN_TTL_MINUTES', '15'))
+    # Caps on active (not revoked, not expired) keys.
+    API_KEY_MAX_PER_USER = int(os.getenv('API_KEY_MAX_PER_USER', '10'))
+    API_KEY_MAX_PER_SERVICE_ACCOUNT = int(os.getenv('API_KEY_MAX_PER_SERVICE_ACCOUNT', '25'))
+    API_KEY_MAX_PER_ORG = int(os.getenv('API_KEY_MAX_PER_ORG', '200'))
+
     # Slug of the platform organization. Only holders of `system:manage` in
     # this org are platform admins (instance-wide settings and status).
     PLATFORM_ORG_SLUG = os.getenv('PLATFORM_ORG_SLUG', 'default')
@@ -181,6 +193,7 @@ class TestingConfig(BaseConfig):
     JWT_SECRET_KEY = 'test-only-jwt-secret-key-not-for-production'
     CUSTODY_SIGNING_KEY = 'test-only-custody-signing-key'
     AUDIT_CHAIN_KEY = 'test-only-audit-chain-key'
+    API_KEY_PEPPER = 'test-only-api-key-pepper'
     # Valid Fernet key (urlsafe base64 of 32 bytes), test-only.
     FERNET_KEY = 'dGVzdC1vbmx5LWZlcm5ldC1rZXktMzJieXRlcyEhISE='
     SQLALCHEMY_DATABASE_URI = os.getenv(

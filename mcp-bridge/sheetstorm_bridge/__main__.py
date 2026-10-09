@@ -23,14 +23,16 @@ def main() -> None:
 
     if not cfg.has_credentials:
         logger.error(
-            "No credentials configured! Set SHEETSTORM_USERNAME/SHEETSTORM_PASSWORD "
-            "or SHEETSTORM_API_TOKEN in your .env file.\n"
+            "No credentials configured! Set SHEETSTORM_API_KEY (recommended; create a key "
+            "in SheetStorm under Profile > API keys), or the legacy SHEETSTORM_API_TOKEN / "
+            "SHEETSTORM_USERNAME+SHEETSTORM_PASSWORD, in your environment or .env file.\n"
             "See .env.example for details."
         )
         sys.exit(1)
 
     logger.info(
-        "Starting SheetStorm MCP Bridge v0.1.0 (stdio) → %s",
+        "Starting SheetStorm MCP Bridge v0.1.0 (stdio, auth=%s) → %s",
+        cfg.auth_mode,
         cfg.api_url,
     )
 

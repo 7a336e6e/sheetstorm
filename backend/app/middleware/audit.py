@@ -149,14 +149,23 @@ def _write_audit_row(**fields):
     flushes the caller's pending changes (so their row locks are taken
     before the chain-head lock, never after), locks the org's chain head
     (``ledger.advance``), stamps id / created_at / chain_seq / prev_hash,
-    canonicalizes ``details`` (so the stored JSONB hashes identically when
+    adds ``details.auth_context`` for API-key requests, canonicalizes
+    ``details`` (so the stored JSONB hashes identically when
     read back), computes the keyed ``row_hash``, inserts the row, moves the
     head and commits. Raises on failure; callers roll back and log.
     """
     from app.services import ledger
 
     details = fields.pop('details', None)
-    details = json.loads(canonical_json(details if isinstance(details, dict) else {}, strict=False))
+    details = dict(details) if isinstance(details, dict) else {}
+    # API-key attribution: a row written while serving a key token records
+    # which key acted, next to the owner user (no new column).
+    if has_request_context() and 'auth_context' not in details:
+        from app.utils.token_scopes import api_key_auth_context
+        auth_context = api_key_auth_context()
+        if auth_context:
+            details['auth_context'] = auth_context
+    details = json.loads(canonical_json(details, strict=False))
     for name in _UUID_FIELDS:
         value = fields.get(name)
         try:

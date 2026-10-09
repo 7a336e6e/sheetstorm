@@ -11,7 +11,7 @@ from app.api.v1 import api_bp
 from app import db, limiter
 from app.models import User, Role, UserRole, Session, Organization
 from app.middleware.audit import audit_log, log_auth_event
-from app.middleware.rbac import get_current_user as rbac_current_user
+from app.middleware.rbac import get_current_user as rbac_current_user, require_interactive_session
 from app.utils.validation import check_choice, json_body
 
 
@@ -83,6 +83,12 @@ def _dummy_password_check(password) -> None:
 def _invalid_credentials():
     """The one 401 for unknown email, wrong password, locked or disabled."""
     return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+
+
+def _service_account_rejected(user, action):
+    """Service accounts never sign in or refresh; they only own API keys.
+    Audited, then answered like any other refused sign-in."""
+    log_auth_event(action, user=user, success=False, details={'reason': 'service_account'})
 
 
 def _revoke_jti(jti, exp) -> None:
@@ -231,6 +237,13 @@ def login():
                            details={'until': user.locked_until.isoformat()})
         return _invalid_credentials()
 
+    # Service accounts (API-key owners) never log in. Same generic 401 and
+    # bcrypt cost; no lockout count (there is no password to guess).
+    if user.is_service_account:
+        _dummy_password_check(data.password)
+        _service_account_rejected(user, 'login')
+        return _invalid_credentials()
+
     # An OAuth/SSO-only account (no password hash) can't log in with a
     # password. Same generic 401, bcrypt and lockout count as a wrong
     # password, so the answer doesn't reveal that the account exists.
@@ -293,6 +306,9 @@ def refresh():
     user = User.query.get(identity)
 
     if not user or not user.is_active:
+        return jsonify({'error': 'unauthorized', 'message': 'Invalid user'}), 401
+    if user.is_service_account:
+        _service_account_rejected(user, 'refresh')
         return jsonify({'error': 'unauthorized', 'message': 'Invalid user'}), 401
 
     # Rotate: revoke the presented refresh token and issue a fresh pair, so a
@@ -360,7 +376,24 @@ def get_current_user():
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
-    return jsonify(user.to_dict(include_permissions=True)), 200
+    body = user.to_dict(include_permissions=True)
+    # API-key tokens: which key, its scopes and expiry (permissions above are
+    # already the owner's permissions intersected with the scopes).
+    claims = get_jwt()
+    if claims.get('api_key_id'):
+        from app.models.api_key import ApiKey
+        key = db.session.get(ApiKey, claims['api_key_id'])
+        exp = claims.get('exp')
+        body['auth'] = {
+            'method': 'api_key',
+            'api_key_id': str(claims['api_key_id']),
+            'prefix': claims.get('api_key_prefix'),
+            'name': key.name if key else None,
+            'scopes': list(claims.get('scopes') or []),
+            'expires_at': key.expires_at.isoformat() if key else None,
+            'token_expires_at': datetime.fromtimestamp(exp, timezone.utc).isoformat() if exp else None,
+        }
+    return jsonify(body), 200
 
 
 # Allowlist of users.preferences keys -> allowed values. New preference keys
@@ -373,6 +406,7 @@ PREFERENCE_KEYS = {
 @api_bp.route('/auth/me/preferences', methods=['PATCH'])
 @limiter.limit("30 per minute")  # rl-group: api_default
 @jwt_required()
+@require_interactive_session
 @audit_log('data_modification', 'update_preferences', 'user')
 def update_my_preferences():
     """Merge allowlisted keys into the caller's own preferences."""
@@ -399,6 +433,7 @@ def update_my_preferences():
 @api_bp.route('/auth/change-password', methods=['POST'])
 @limiter.limit("5 per hour")
 @jwt_required()
+@require_interactive_session
 def change_password():
     """Change user password."""
     data = request.get_json()
@@ -535,6 +570,10 @@ def supabase_auth():
                     db.session.add(user_role)
 
             db.session.commit()
+
+        if user.is_service_account:
+            _service_account_rejected(user, 'supabase_login')
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
 
         if not user.is_active:
             log_auth_event('supabase_login', user=user, success=False, details={'reason': 'account_disabled'})
@@ -737,6 +776,10 @@ def github_auth_callback():
         user = User.query.filter_by(email=primary_email.lower()).first()
         github_id = str(gh_user.get('id', ''))
 
+        if user and user.is_service_account:
+            _service_account_rejected(user, 'github_login')
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
+
         if user:
             # Existing user — update provider info if needed
             if user.auth_provider == 'local':
@@ -839,6 +882,7 @@ def github_auth_callback():
 @api_bp.route('/auth/mfa/setup', methods=['POST'])
 @limiter.limit("5 per hour")
 @jwt_required()
+@require_interactive_session
 def mfa_setup():
     """
     Generate a TOTP secret and provisioning URI for QR code.
@@ -883,6 +927,7 @@ def mfa_setup():
 @api_bp.route('/auth/mfa/verify', methods=['POST'])
 @limiter.limit("10 per hour")
 @jwt_required()
+@require_interactive_session
 def mfa_verify():
     """
     Verify a TOTP code to confirm MFA setup and enable it.
@@ -950,7 +995,6 @@ def mfa_complete_oauth():
     user = User.query.get(user_id)
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
-
     if not user.mfa_enabled or not user.mfa_secret:
         return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled for this user'}), 400
 
@@ -960,6 +1004,11 @@ def mfa_complete_oauth():
         log_security_event('login_while_locked', resource_type='user', resource_id=user.id, user=user,
                            details={'until': user.locked_until.isoformat(), 'flow': 'mfa_complete'})
         return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
+    # C1 order: lockout, then the service-account reject.
+    if user.is_service_account:
+        _service_account_rejected(user, 'mfa_complete_oauth')
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(str(mfa_code), valid_window=1):
@@ -996,6 +1045,7 @@ def mfa_complete_oauth():
 @api_bp.route('/auth/mfa/disable', methods=['POST'])
 @limiter.limit("5 per hour")
 @jwt_required()
+@require_interactive_session
 def mfa_disable():
     """Disable MFA for the current user. Requires password confirmation."""
     data = request.get_json() or {}

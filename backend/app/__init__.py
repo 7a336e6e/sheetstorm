@@ -29,12 +29,16 @@ def _get_rate_limit_key():
     """
     from flask import request
 
-    # For authenticated users, key by user ID
+    # For authenticated users, key by user ID; API-key tokens get their own
+    # bucket per key, so automation never drains its owner's UI bucket.
     try:
-        from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+        from flask_jwt_extended import get_jwt, get_jwt_identity, verify_jwt_in_request
         verify_jwt_in_request(optional=True)
         identity = get_jwt_identity()
         if identity:
+            api_key_id = (get_jwt() or {}).get('api_key_id')
+            if api_key_id:
+                return f"apikey:{api_key_id}"
             return f"user:{identity}"
     except Exception:
         pass
@@ -118,8 +122,9 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
     """Shared revocation check (HTTP blocklist loader + WebSocket auth).
 
     Fails CLOSED when the blocklist store is unavailable. Rejects MFA-pending
-    pre-auth tokens, blocklisted jtis and tokens minted before the user's
-    current token epoch. A just-rotated refresh token is accepted exactly once
+    pre-auth tokens, blocklisted jtis, tokens of a revoked API key
+    (`revoked_api_key:<id>`) and tokens minted before the user's current
+    token epoch. A just-rotated refresh token is accepted exactly once
     during its short grace window when `consume_refresh_grace` is set.
     """
     from flask import current_app
@@ -135,6 +140,10 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
                     and redis_client.delete(f'refresh_grace:{jti}')):
                 # Concurrent refresh inside the grace window: allow once.
                 return False
+            return True
+        # API-key tokens die with their key (marker written on revoke/rotate).
+        api_key_id = jwt_payload.get('api_key_id')
+        if api_key_id and redis_client.get(f'revoked_api_key:{api_key_id}') is not None:
             return True
         # Per-user token epoch: tokens minted before the user's current epoch
         # (bumped on password change / reset / disable) are revoked.
@@ -189,6 +198,13 @@ def create_app(config_name=None):
             'AUDIT_CHAIN_KEY is not set; the audit log hash chain falls back to '
             'SECRET_KEY. Set a dedicated AUDIT_CHAIN_KEY so rotating SECRET_KEY '
             'keeps the audit chain verifiable.'
+        )
+
+    if not app.config.get('API_KEY_PEPPER'):
+        app.logger.warning(
+            'API_KEY_PEPPER is not set; API key hashes use a pepper derived from '
+            'SECRET_KEY. Set a dedicated API_KEY_PEPPER (openssl rand -hex 32) so '
+            'rotating SECRET_KEY does not invalidate every API key.'
         )
 
     # Fix request.remote_addr when behind nginx reverse proxy.

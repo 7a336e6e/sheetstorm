@@ -22,9 +22,14 @@ class Config:
 
     # SheetStorm backend
     api_url: str = field(default_factory=lambda: os.getenv("SHEETSTORM_API_URL", "http://localhost:5000/api/v1"))
-    api_token: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_API_TOKEN"))
+    # Credentials (stdio transport only). Preferred: a scoped API key
+    # (SHEETSTORM_API_KEY, `ssk_...`), exchanged for short-lived tokens. The
+    # pre-issued JWT and username/password (no MFA support) are legacy.
+    # repr=False keeps secrets out of logs and tracebacks.
+    api_key: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_API_KEY") or None, repr=False)
+    api_token: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_API_TOKEN"), repr=False)
     username: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_USERNAME"))
-    password: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_PASSWORD"))
+    password: str | None = field(default_factory=lambda: os.getenv("SHEETSTORM_PASSWORD"), repr=False)
 
     # MCP transport
     transport: str = field(default_factory=lambda: os.getenv("MCP_TRANSPORT", "stdio"))
@@ -52,9 +57,20 @@ class Config:
     http_max_retries: int = field(default_factory=lambda: int(os.getenv("HTTP_MAX_RETRIES", "2")))
 
     @property
+    def auth_mode(self) -> str | None:
+        """Static credential in use on stdio: api_key > api_token > password."""
+        if self.api_key:
+            return "api_key"
+        if self.api_token:
+            return "api_token"
+        if self.username and self.password:
+            return "password"
+        return None
+
+    @property
     def has_credentials(self) -> bool:
-        """Whether we have credentials for auto-login (legacy fallback)."""
-        return bool(self.api_token) or (bool(self.username) and bool(self.password))
+        """Whether static (stdio) credentials are configured."""
+        return self.auth_mode is not None
 
 
 def get_config() -> Config:

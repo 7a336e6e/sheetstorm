@@ -1,7 +1,10 @@
 """Compromised assets endpoints"""
+import uuid
 from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
+from sqlalchemy import func
+from werkzeug.exceptions import BadRequest
 from app.api.v1 import api_bp
 from app import db
 from app.models import CompromisedHost, CompromisedAccount, TimelineEvent
@@ -9,7 +12,8 @@ from app.models.compromised import PASSWORD_MASK
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
-from app.utils.pagination import list_response
+from app.utils.audit_diff import record_changes
+from app.utils.pagination import ListArgsError, in_list, list_response
 from app.services import realtime
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.validation import parse_datetime, check_choice, json_body
@@ -24,8 +28,62 @@ HOST_SORTABLE = {
     'last_seen': CompromisedHost.last_seen,
     'hostname': CompromisedHost.hostname,
     'containment_status': CompromisedHost.containment_status,
+    'triage_status': CompromisedHost.triage_status,
     'created_at': CompromisedHost.created_at,
 }
+HOST_FILTERS = {
+    'containment_status': (CompromisedHost.containment_status, 'eq'),
+    'triage_status': (CompromisedHost.triage_status, in_list(CompromisedHost.TRIAGE_STATUSES)),
+}
+
+# acquisition_status allowlist: four booleans plus `acquired_at`.
+ACQUISITION_FLAGS = ('disk_imaged', 'memory_captured', 'logs_collected', 'forensically_sound')
+ACQUISITION_KEYS = ACQUISITION_FLAGS + ('acquired_at',)
+BULK_HOST_MAX = 500
+BULK_HOST_FIELDS = ('triage_status', 'containment_status')
+
+
+def _validate_acquisition_status(value):
+    """Validated acquisition_status dict (unknown keys / wrong types -> 400).
+
+    Flags must be booleans; ``acquired_at`` is an ISO-8601 datetime (naive =
+    UTC) or null and is stored as a UTC ISO string. ``None`` means ``{}``.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise BadRequest('acquisition_status must be an object')
+    unknown = sorted(k for k in value if k not in ACQUISITION_KEYS)
+    if unknown:
+        raise BadRequest(f"Unknown acquisition_status key(s): {', '.join(str(k)[:50] for k in unknown)}. "
+                         f"Allowed: {', '.join(ACQUISITION_KEYS)}")
+    out = {}
+    for key in ACQUISITION_FLAGS:
+        if key in value:
+            if not isinstance(value[key], bool):
+                raise BadRequest(f'acquisition_status.{key} must be true or false')
+            out[key] = value[key]
+    if 'acquired_at' in value:
+        acquired_at = parse_datetime(value['acquired_at'], 'acquisition_status.acquired_at')
+        out['acquired_at'] = acquired_at.isoformat() if acquired_at else None
+    return out
+
+
+def _acquisition_filter(query, raw):
+    """``acquisition=memory_captured,!disk_imaged``: every listed flag must be
+    true (``!flag``: not true, i.e. false or unset)."""
+    tokens = [t.strip() for t in raw.split(',') if t.strip()]
+    if not tokens or len(tokens) > len(ACQUISITION_FLAGS):
+        raise ListArgsError(f'acquisition must list 1..{len(ACQUISITION_FLAGS)} flags', 'invalid_filter')
+    for token in tokens:
+        negate = token.startswith('!')
+        key = token[1:] if negate else token
+        if key not in ACQUISITION_FLAGS:
+            raise ListArgsError(f"invalid acquisition flag {key!r}; allowed: {', '.join(ACQUISITION_FLAGS)} "
+                                f"(prefix ! to negate)", 'invalid_filter')
+        flag = func.coalesce(CompromisedHost.acquisition_status[key].astext, 'false')
+        query = query.filter(flag != 'true' if negate else flag == 'true')
+    return query
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/hosts', methods=['GET'])
@@ -33,16 +91,89 @@ HOST_SORTABLE = {
 @require_incident_access('hosts:read')
 def list_compromised_hosts(incident_id):
     """List compromised hosts (utils/pagination.py contract; q/search over
-    hostname, IP, system_type, notes; filter containment_status)."""
+    hostname, IP, system_type, notes).
+
+    Filters: containment_status, triage_status (comma list), acquisition
+    (comma list of disk_imaged|memory_captured|logs_collected|
+    forensically_sound, each optionally prefixed with ``!``). Sort:
+    first_seen (default -first_seen), last_seen, hostname,
+    containment_status, triage_status, created_at.
+    """
     incident = g.incident
     query = CompromisedHost.query.filter_by(incident_id=incident.id)
+    if request.args.get('acquisition'):
+        query = _acquisition_filter(query, request.args['acquisition'])
     return jsonify(list_response(
         query, sortable=HOST_SORTABLE, default_sort='-first_seen', id_col=CompromisedHost.id,
-        filters={'containment_status': (CompromisedHost.containment_status, 'eq')},
+        filters=HOST_FILTERS,
         search_columns=(CompromisedHost.hostname, CompromisedHost.ip_address,
                         CompromisedHost.system_type, CompromisedHost.notes),
         serialize=lambda h: h.to_dict(),
     )), 200
+
+
+@api_bp.route('/incidents/<uuid:incident_id>/hosts/bulk', methods=['PATCH'])
+@jwt_required()
+@require_incident_access('hosts:update')
+@audit_log('data_modification', 'bulk_update', 'compromised_host')
+def bulk_update_hosts(incident_id):
+    """Set triage and/or containment status on up to 500 hosts at once.
+
+    Body ``{host_ids: [uuid] (1..500, deduped), triage_status?,
+    containment_status?}``; no other keys. Every id must be a host of this
+    incident, otherwise 400 ``invalid_host_ids`` lists the bad ids and nothing
+    changes. One transaction over the loaded rows (each row's version bumps);
+    clients get one ``incident:resync`` for the ``hosts`` scope.
+    """
+    incident = g.incident
+    data = json_body()
+
+    unknown = sorted(k for k in data if k not in ('host_ids',) + BULK_HOST_FIELDS)
+    if unknown:
+        return jsonify({'error': 'bad_request',
+                        'message': f"Unknown field(s): {', '.join(str(k)[:50] for k in unknown)}"}), 400
+    updates = {k: data[k] for k in BULK_HOST_FIELDS if data.get(k) is not None}
+    if not updates:
+        return jsonify({'error': 'bad_request',
+                        'message': 'Set at least one of triage_status, containment_status'}), 400
+    if 'triage_status' in updates:
+        check_choice(updates['triage_status'], CompromisedHost.TRIAGE_STATUSES, 'triage_status')
+    if 'containment_status' in updates:
+        check_choice(updates['containment_status'], CompromisedHost.CONTAINMENT_STATUSES, 'containment_status')
+
+    raw_ids = data.get('host_ids')
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({'error': 'bad_request', 'message': 'host_ids must be a non-empty list'}), 400
+    if len(raw_ids) > BULK_HOST_MAX:
+        return jsonify({'error': 'bad_request',
+                        'message': f'At most {BULK_HOST_MAX} hosts per request'}), 400
+    ids, bad = [], []
+    for raw in raw_ids:
+        try:
+            host_id = uuid.UUID(str(raw))
+        except (ValueError, TypeError, AttributeError):
+            bad.append(str(raw)[:64])
+            continue
+        if host_id not in ids:
+            ids.append(host_id)
+
+    hosts = {h.id: h for h in CompromisedHost.query.filter(
+        CompromisedHost.incident_id == incident.id, CompromisedHost.id.in_(ids)).all()} if ids else {}
+    bad += [str(i) for i in ids if i not in hosts]
+    if bad:
+        return jsonify({'error': 'invalid_host_ids',
+                        'message': 'Some host_ids are not hosts of this incident',
+                        'invalid': bad}), 400
+
+    ordered = [hosts[i] for i in ids]
+    for host in ordered:
+        for field, value in updates.items():
+            setattr(host, field, value)
+    record_changes({}, {}, host_ids=[str(i) for i in ids], updated=len(ordered), **updates)
+    db.session.commit()  # a concurrent edit -> StaleDataError -> 409 (global handler)
+
+    realtime.emit_resync(incident.id, ['hosts'], reason='bulk_update')
+    return jsonify({'updated': len(ordered), 'items': [h.to_dict() for h in ordered]}), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/hosts', methods=['POST'])
@@ -85,7 +216,7 @@ def create_compromised_host(incident_id):
         last_seen=last_seen,
         containment_status=status,
         triage_status=triage_status,
-        acquisition_status=data.get('acquisition_status') or {},
+        acquisition_status=_validate_acquisition_status(data.get('acquisition_status')),
         notes=data.get('notes'),
         extra_data=data.get('extra_data') or {},
         created_by=user.id
@@ -124,6 +255,8 @@ def update_compromised_host(incident_id, host_id):
         data['first_seen'] = parse_datetime(data['first_seen'], 'first_seen')
     if 'last_seen' in data:
         data['last_seen'] = parse_datetime(data['last_seen'], 'last_seen')
+    if 'acquisition_status' in data:
+        data['acquisition_status'] = _validate_acquisition_status(data['acquisition_status'])
 
     # Validate containment_status before applying
     if 'containment_status' in data and data['containment_status'] not in CompromisedHost.CONTAINMENT_STATUSES:

@@ -602,10 +602,17 @@ def test_delete_is_a_tombstone(app, db, users, auth, make_incident, fake_storage
     assert exp['chain_integrity_status'] == 'intact' and exp['deleted_at']
 
 
-def test_storage_stats_disk_usage_uses_local_artifact_dir(app, users, auth, monkeypatch, tmp_path):
+def test_storage_stats_disk_usage_uses_local_artifact_dir(app, users, auth, monkeypatch, tmp_path, platform_admin):
+    monkeypatch.setitem(app.config, 'LOCAL_ARTIFACT_DIR', str(tmp_path))
+    stats = auth(platform_admin).get('/api/v1/storage/stats').get_json()
+    assert stats['disk_usage']['path'] == str(tmp_path)
+
+
+def test_storage_stats_hides_the_server_path_from_org_admins(app, users, auth, monkeypatch, tmp_path):
     monkeypatch.setitem(app.config, 'LOCAL_ARTIFACT_DIR', str(tmp_path))
     stats = auth(users['Administrator']).get('/api/v1/storage/stats').get_json()
-    assert stats['disk_usage']['path'] == str(tmp_path)
+    assert stats['disk_usage']['total_bytes'] > 0
+    assert 'path' not in stats['disk_usage'] and str(tmp_path) not in str(stats)
 
 
 def test_download_and_verify_append_entries(app, db, users, auth, make_incident, fake_storage):

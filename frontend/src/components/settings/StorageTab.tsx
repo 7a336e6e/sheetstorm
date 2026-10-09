@@ -45,7 +45,8 @@ interface StorageStats {
     used_bytes: number
     free_bytes: number
     usage_percent: number
-    path: string
+    /** Server filesystem path: platform admins only. */
+    path?: string
   }
 }
 
@@ -260,7 +261,9 @@ export function StorageTab() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2"><Server className="h-4 w-4" /> Disk Usage</CardTitle>
-                <CardDescription>Local artifact storage volume ({stats.disk_usage.path})</CardDescription>
+                <CardDescription>
+                  Local artifact storage volume{stats.disk_usage.path ? ` (${stats.disk_usage.path})` : ''}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">

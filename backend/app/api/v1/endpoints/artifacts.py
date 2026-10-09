@@ -15,7 +15,7 @@ from app.api.v1 import api_bp
 from app import db
 from app.models import Artifact, Incident, Integration, ChainOfCustody, EvidenceItem
 from app.models.evidence import EVIDENCE_TYPES
-from app.middleware.rbac import require_incident_access, get_current_user
+from app.middleware.rbac import require_incident_access, get_current_user, is_platform_admin
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
 from app.services.storage_service import storage_service
@@ -760,8 +760,10 @@ def storage_stats():
             'used_bytes': usage.used,
             'free_bytes': usage.free,
             'usage_percent': round(usage.used / usage.total * 100, 1) if usage.total else 0,
-            'path': local_path,
         }
+        # The server filesystem path is infrastructure detail: platform admins only.
+        if is_platform_admin(user):
+            disk_usage['path'] = local_path
     except OSError:
         pass
 

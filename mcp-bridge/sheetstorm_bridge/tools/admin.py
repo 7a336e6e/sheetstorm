@@ -48,17 +48,18 @@ async def sheetstorm_list_users(page: int = 1, per_page: int = 20) -> str:
         return f"✗ Error: {exc}"
 
 
-ROLE_NAMES = ["Administrator", "Incident Responder", "Analyst", "Manager", "Operator", "Viewer"]
 _ROLE_ALIASES = {"admin": "Administrator", "responder": "Incident Responder", "ir": "Incident Responder"}
+_SYSTEM_ROLE_NAMES = ["Administrator", "Incident Responder", "Analyst", "Manager", "Operator", "Viewer"]
 
 
-def _canonical_role(role: str) -> str | None:
-    """Map user input (any case, common aliases) to a backend role name."""
+def _canonical_role(role: str) -> str:
+    """Map common aliases / casing of system roles; pass any other name through
+    (org custom roles exist) and let the server validate it."""
     key = " ".join(role.replace("_", " ").split()).lower()
-    for name in ROLE_NAMES:
+    for name in _SYSTEM_ROLE_NAMES:
         if name.lower() == key:
             return name
-    return _ROLE_ALIASES.get(key)
+    return _ROLE_ALIASES.get(key, role.strip())
 
 
 @mcp.tool()
@@ -69,28 +70,80 @@ async def sheetstorm_create_user(
     role: Optional[str] = None,
     organizational_role: Optional[str] = None,
 ) -> str:
-    """Create a new user in your organization. Requires users:manage; assigning a
-    role additionally requires roles:manage. Without a role the user gets Viewer.
+    """Create a new user in your organization. Requires users:create; assigning a
+    role additionally requires roles:manage, and you can only assign roles whose
+    permissions you hold yourself. Without a role the user gets Viewer.
 
     Args:
         email: User email address
         name: Display name
         password: Initial password (must meet the server password policy)
-        role: One of: Administrator, Incident Responder, Analyst, Manager, Operator, Viewer
+        role: A system role (Administrator, Incident Responder, Analyst, Manager,
+            Operator, Viewer; aliases admin/responder/ir) or one of your
+            organization's custom roles (see sheetstorm_list_roles)
         organizational_role: Optional job title (e.g. "DFIR Lead")
     """
     payload: dict = {"email": email, "name": name, "password": password}
-    if role:
-        canonical = _canonical_role(role)
-        if canonical is None:
-            return f"✗ Unknown role '{role}'. Valid roles: {', '.join(ROLE_NAMES)}."
-        payload["roles"] = [canonical]
+    if role and role.strip():
+        payload["roles"] = [_canonical_role(role)]
     if organizational_role:
         payload["organizational_role"] = organizational_role
     client = get_client()
     try:
         user = await client.post("/users", json=payload)
         return f"✓ User created:\n{_format_user(user)}"
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_roles() -> str:
+    """List the roles you can see: the built-in system roles and your
+    organization's custom roles. Requires users:read."""
+    client = get_client()
+    try:
+        data = await client.get("/roles")
+        items = data.get("items", []) if isinstance(data, dict) else data
+        if not items:
+            return "No roles found."
+        lines = [f"**Roles** ({len(items)})\n"]
+        for r in items:
+            tag = "system" if r.get("is_system") else "custom"
+            perms = r.get("permissions") or []
+            lines.append(
+                f"**{r.get('name', 'N/A')}** [{tag}] (ID: {r.get('id', 'N/A')})\n"
+                f"  {len(perms)} permission(s) | Users: {r.get('user_count', 'N/A')}"
+                + (f"\n  {r['description']}" if r.get("description") else "")
+            )
+        return "\n".join(lines)
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_permissions(group: Optional[str] = None) -> str:
+    """List the permission catalog (every permission key with its meaning).
+    Dangerous permissions are flagged.
+
+    Args:
+        group: Only show one group (e.g. "incidents", "users", "decisions")
+    """
+    client = get_client()
+    try:
+        data = await client.get("/permissions")
+        groups = {g.get("key"): g.get("label") for g in data.get("groups", [])}
+        items = [p for p in data.get("items", []) if not group or p.get("group") == group]
+        if not items:
+            return f"No permissions found{f' in group {group!r}' if group else ''}."
+        lines = ["**Permissions**\n"]
+        current = None
+        for p in items:
+            if p.get("group") != current:
+                current = p.get("group")
+                lines.append(f"\n__{groups.get(current, current)}__")
+            flag = " ⚠ dangerous" if p.get("dangerous") else ""
+            lines.append(f"- `{p.get('key')}` — {p.get('label', '')}{flag}: {p.get('description', '')}")
+        return "\n".join(lines)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
@@ -103,7 +156,9 @@ async def sheetstorm_update_user(
     organizational_role: Optional[str] = None,
 ) -> str:
     """Update a user's name, active flag or job title. (Email and roles cannot be
-    changed through this tool.) Deactivating requires users:manage.
+    changed through this tool.) Requires users:update and that the user holds no
+    permission you lack; deactivating also requires users:manage. You cannot
+    deactivate yourself or the organization's last administrator.
 
     Args:
         user_id: UUID of the user
@@ -132,7 +187,8 @@ async def sheetstorm_update_user(
 
 @mcp.tool()
 async def sheetstorm_delete_user(user_id: str) -> str:
-    """Delete a user (soft-delete).
+    """Delete a user. Requires users:delete and that the user holds no permission
+    you lack. You cannot delete yourself or the last administrator.
 
     Args:
         user_id: UUID of the user to delete

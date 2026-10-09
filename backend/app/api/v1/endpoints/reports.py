@@ -438,7 +438,7 @@ def _simple_markdown_to_html(md: str) -> str:
                     html_lines.append('</tbody></table>')
                     in_table = False
                     table_header_done = False
-                lang = stripped[3:].strip()
+                lang = re.sub(r'[^A-Za-z0-9_+-]', '', stripped[3:].strip())
                 html_lines.append(f'<pre><code class="language-{lang}">' if lang else '<pre><code>')
                 in_code_block = True
             continue
@@ -545,8 +545,24 @@ def _simple_markdown_to_html(md: str) -> str:
     return '\n'.join(html_lines)
 
 
+_SAFE_LINK = re.compile(r'^(https?://|mailto:|#)', re.IGNORECASE)
+
+
+def _md_link(m) -> str:
+    label, href = m.group(1), m.group(2)
+    # Text is already escaped; only plain web/mail/anchor targets become links.
+    if not _SAFE_LINK.match(html_module.unescape(href).strip()):
+        return label
+    return f'<a href="{href}">{label}</a>'
+
+
 def _inline_md(text: str) -> str:
-    """Convert inline Markdown formatting to HTML (bold, italic, code, links)."""
+    """Convert inline Markdown formatting to HTML (bold, italic, code, links).
+
+    The text (AI or user supplied) is HTML-escaped first, so only the markup
+    produced here reaches the PDF renderer.
+    """
+    text = html_module.escape(text, quote=True)
     # Code spans
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     # Bold + italic
@@ -556,7 +572,7 @@ def _inline_md(text: str) -> str:
     # Italic
     text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
     # Links
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _md_link, text)
     return text
 
 

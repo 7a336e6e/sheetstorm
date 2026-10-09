@@ -125,6 +125,8 @@ def test_permissions_changed_emitted_on_assign(app, db, users, auth, org_a):
     viewer = Role.query.filter(Role.organization_id.is_(None), Role.name == 'Viewer').one()
     resp = auth(users['Administrator']).post(f'/api/v1/users/{target.id}/roles', json={'role_id': str(viewer.id)})
     assert resp.status_code == 201
-    assert 'permissions_changed' in [e['name'] for e in c.get_received()]
+    # realtime.notify_permissions_changed: event to user_<id>, then the
+    # user's sockets are disconnected so rooms are recomputed on reconnect.
+    assert not c.is_connected()
     UserRole.query.filter_by(user_id=target.id).delete()
     db.session.commit()

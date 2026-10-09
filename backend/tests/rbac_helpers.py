@@ -79,7 +79,8 @@ def emitted(monkeypatch):
     from app import socketio
     calls = []
     monkeypatch.setattr(socketio, 'emit',
-                        lambda event, payload=None, room=None, **kw: calls.append((event, payload, room)))
+                        lambda event, payload=None, room=None, to=None, **kw:
+                        calls.append((event, payload, room or to)))
     return calls
 
 

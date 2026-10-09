@@ -136,7 +136,8 @@ def test_role_update_emits_permissions_changed_to_holders(app, users, auth, new_
                                                          monkeypatch):
     from app import socketio
     calls = []
-    monkeypatch.setattr(socketio, 'emit', lambda e, p=None, room=None, **kw: calls.append((e, room)))
+    monkeypatch.setattr(socketio, 'emit',
+                        lambda e, p=None, room=None, to=None, **kw: calls.append((e, room or to)))
     holder = make_user(new_org(), perms=[])
     # A holder in org A of a fresh org-A role.
     from app.models import Role, UserRole

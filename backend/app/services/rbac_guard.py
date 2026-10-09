@@ -213,14 +213,15 @@ def assert_no_self_lockout(caller, *, resource_type='user', resource_id=None, **
 def emit_permissions_changed(user_ids) -> None:
     """Tell clients to refetch /auth/me. Call after commit.
 
-    Raw emit for now; W1-RT-EMIT swaps it for realtime.notify_permissions_changed.
+    Delegates to realtime.notify_permissions_changed (emits
+    `permissions_changed` to `user_<id>`, then disconnects the user's sockets
+    so their incident rooms are recomputed on reconnect).
     """
     ids = list(dict.fromkeys(str(u) for u in user_ids))
     if not ids or len(ids) > PERMISSIONS_CHANGED_FANOUT_CAP:
         return
     try:
-        from app import socketio
-        for uid in ids:
-            socketio.emit('permissions_changed', {}, room=f'user_{uid}')
+        from app.services.realtime import notify_permissions_changed
+        notify_permissions_changed(ids)
     except Exception:  # never fail the request on a notification
         pass

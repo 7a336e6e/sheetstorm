@@ -3,7 +3,8 @@ from flask import jsonify
 from flask_jwt_extended import jwt_required
 from sqlalchemy import func
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.rbac import get_current_user, is_platform_admin, require_permission
 from app.models import AuditLog, Organization, Role, User, UserRole
@@ -15,7 +16,7 @@ RECENT_ADMIN_ACTIONS = 10
 @api_bp.route('/admin/system-status', methods=['GET'])
 @jwt_required()
 @require_permission('organizations:manage')
-@limiter.limit("30 per minute")  # rl-group: admin_status
+@limited('admin_status')
 def get_system_status():
     """Organization status sections; deployment-global infra sections
     (database, migrations, disk, Redis, rate limiter, version) only for

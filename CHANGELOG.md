@@ -187,6 +187,12 @@
 
 ### New
 
+- **Admin-configurable rate limits:** every rate-limited route belongs to a
+  named group; platform administrators can change limits, disable groups or turn
+  rate limiting off from Settings → Security → Rate limiting, without a restart.
+  Weakening changes need confirmation and are logged as security events;
+  `RATE_LIMIT_SETTINGS_LOCKED=true` pins the limits to the environment. Report
+  generation (PDF/AI) gains its own limit (`reports_generate`, 10/minute).
 - **Decision & response-action log:** a "Decisions & Actions" incident tab
   records decisions (D-NNN) and response actions (A-NNN) with lifecycle steps,
   approvals/authorizations by name, and optional host/account state changes with

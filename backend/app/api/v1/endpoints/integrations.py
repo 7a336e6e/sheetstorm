@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
@@ -423,7 +424,7 @@ def _test_ollama(config):
 @api_bp.route('/integrations/ollama/models', methods=['GET'])
 @jwt_required()
 @require_permission('integrations:read')
-@limiter.limit("10 per minute")
+@limited('integrations_discovery')
 def list_ollama_models():
     """Discover locally available Ollama models."""
     from app.services.ai_service import ai_service

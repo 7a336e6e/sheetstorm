@@ -37,7 +37,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 from werkzeug.exceptions import BadRequest
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log, log_audit_event, log_security_event
 from app.middleware.rbac import (get_current_user, require_incident_access, require_permission,
@@ -955,7 +956,7 @@ def list_custody(incident_id, evidence_item_id):
 @api_bp.route(ITEM + '/custody/verify', methods=['GET'])
 @jwt_required()
 @require_incident_access(EVIDENCE_PERMS['read'])
-@limiter.limit("20 per minute")  # rl-group: custody_verify
+@limited('custody_verify')
 @_api_errors
 def verify_item_custody(incident_id, evidence_item_id):
     """``CustodyLedger.verify(item=...)`` (audited as custody_chain_verified)."""
@@ -966,7 +967,7 @@ def verify_item_custody(incident_id, evidence_item_id):
 @api_bp.route(BASE + '/custody/verify', methods=['GET'])
 @jwt_required()
 @require_incident_access(EVIDENCE_PERMS['read'])
-@limiter.limit("20 per minute")  # rl-group: custody_verify
+@limited('custody_verify')
 @_api_errors
 def verify_incident_custody(incident_id):
     """Full incident chain plus every item chain."""
@@ -984,7 +985,7 @@ def _anchor_view(anchor):
 @api_bp.route(BASE + '/custody/anchor', methods=['POST'])
 @jwt_required()
 @require_incident_access(EVIDENCE_PERMS['write'])
-@limiter.limit("20 per minute")  # rl-group: custody_verify
+@limited('custody_verify')
 @audit_log('data_modification', 'anchor_custody_head', 'incident')
 @_api_errors
 def anchor_incident_custody(incident_id):
@@ -1056,7 +1057,7 @@ def _blank_rows():
 @api_bp.route(ITEM + '/custody/export', methods=['GET'])
 @jwt_required()
 @require_incident_access(EVIDENCE_PERMS['read'])
-@limiter.limit("30 per minute")  # rl-group: exports
+@limited('exports')
 @audit_log('data_access', 'export_custody', 'evidence_item')
 @_api_errors
 def export_item_custody(incident_id, evidence_item_id):
@@ -1109,7 +1110,7 @@ def export_item_custody(incident_id, evidence_item_id):
 @api_bp.route(BASE + '/export', methods=['GET'])
 @jwt_required()
 @require_incident_access(EVIDENCE_PERMS['read'])
-@limiter.limit("30 per minute")  # rl-group: exports
+@limited('exports')
 @audit_log('data_access', 'export_evidence_register', 'incident')
 @_api_errors
 def export_register(incident_id):

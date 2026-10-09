@@ -7,6 +7,7 @@ from flask import jsonify, request, g, send_file, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db
+from app.services.rate_limit_settings import limited
 from app.models import Report, Incident, TimelineEvent, CompromisedHost, CompromisedAccount
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.middleware.rbac import require_incident_access, get_current_user
@@ -62,6 +63,7 @@ def list_reports(incident_id):
 @api_bp.route('/incidents/<uuid:incident_id>/reports/generate-pdf', methods=['POST'])
 @jwt_required()
 @require_incident_access('reports:generate')
+@limited('reports_generate')
 @audit_log('data_modification', 'generate', 'report')
 def generate_pdf_report(incident_id):
     """Generate an AI-powered PDF report for an incident.
@@ -220,6 +222,7 @@ def generate_pdf_report(incident_id):
 @api_bp.route('/incidents/<uuid:incident_id>/reports/ai-generate', methods=['POST'])
 @jwt_required()
 @require_incident_access('reports:generate')
+@limited('reports_generate')
 @audit_log('data_modification', 'generate_ai_summary', 'report')
 def generate_ai_summary(incident_id):
     """Generate an AI summary for an incident (returns JSON text, not PDF)."""

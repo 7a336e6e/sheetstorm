@@ -14,7 +14,8 @@ from flask_jwt_extended import jwt_required
 from sqlalchemy import case, column, func, or_, true
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.rbac import accessible_incidents_query, get_current_user, require_permission
 from app.models import CompromisedHost, Incident, Task, TimelineEvent
@@ -108,7 +109,7 @@ def _mitre_stats(incident_ids):
 @api_bp.route('/dashboard/stats', methods=['GET'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit("30 per minute")  # rl-group: metrics
+@limited('metrics')
 def get_dashboard_stats():
     """Aggregated counts over every non-archived incident the caller can see.
 

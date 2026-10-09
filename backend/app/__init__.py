@@ -52,13 +52,25 @@ def _get_rate_limit_key():
     return request.remote_addr or get_remote_address()
 
 
+def _default_limit():
+    from app.services.rate_limit_settings import effective_limit
+    return effective_limit('api_default')
+
+
+def _default_limit_exempt():
+    from app.services.rate_limit_settings import is_exempt
+    return is_exempt('api_default')
+
+
 limiter = Limiter(
     key_func=_get_rate_limit_key,
     storage_uri=os.getenv('REDIS_URL', 'memory://'),
-    # Generous per-key safety net against runaway abuse. Specific expensive
-    # endpoints (auth, bulk enrichment, search, report generation) declare
-    # their own stricter limits.
-    default_limits=[os.getenv('RATE_LIMIT_DEFAULT', '600 per minute')],
+    # Per-key safety net (group `api_default`, 600/minute unless an admin or
+    # RATE_LIMIT_DEFAULT changes it). Expensive or sensitive routes use
+    # stricter named groups via @limited('<group>'); every group is configurable
+    # from Settings → Security (services/rate_limit_settings.py).
+    default_limits=[_default_limit],
+    default_limits_exempt_when=_default_limit_exempt,
 )
 
 # Redis client (initialized in create_app)

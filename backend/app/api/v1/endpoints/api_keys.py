@@ -13,7 +13,8 @@ from flask import jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log, log_auth_event
 from app.middleware.rbac import (
@@ -111,8 +112,8 @@ def _exchange_prefix_key():
 
 
 @api_bp.route('/auth/token', methods=['POST'])
-@limiter.limit('10 per minute', key_func=_exchange_ip_key)  # rl-group: api_key_exchange
-@limiter.limit('30 per hour', key_func=_exchange_prefix_key)  # rl-group: api_key_exchange
+@limited('api_key_exchange', key_func=_exchange_ip_key)
+@limited('api_key_exchange_prefix', key_func=_exchange_prefix_key)
 def api_key_exchange():
     """Exchange an API key for a short-lived access token (Bearer only).
 
@@ -216,7 +217,7 @@ def list_api_keys():
 
 
 @api_bp.route('/api-keys', methods=['POST'])
-@limiter.limit('30 per hour')  # rl-group: api_default
+@limited('api_keys_write')
 @jwt_required()
 @require_interactive_session
 @require_any_permission(['api_keys:own', 'api_keys:manage'])
@@ -270,7 +271,7 @@ def get_api_key(api_key_id):
 
 
 @api_bp.route('/api-keys/<uuid:api_key_id>/rotate', methods=['POST'])
-@limiter.limit('30 per hour')  # rl-group: api_default
+@limited('api_keys_write')
 @jwt_required()
 @require_interactive_session
 @require_any_permission(['api_keys:own', 'api_keys:manage'])
@@ -376,7 +377,7 @@ def list_service_accounts():
 
 
 @api_bp.route('/service-accounts', methods=['POST'])
-@limiter.limit('30 per hour')  # rl-group: api_default
+@limited('api_keys_write')
 @jwt_required()
 @require_interactive_session
 @require_permission('api_keys:manage')

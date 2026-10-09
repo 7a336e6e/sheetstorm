@@ -19,7 +19,8 @@ from flask import g, jsonify, request
 from flask_jwt_extended import jwt_required
 from sqlalchemy.orm.exc import StaleDataError
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log, log_audit_event
 from app.middleware.rbac import get_current_user, require_incident_access
@@ -507,7 +508,7 @@ def response_timeline(incident_id):
 @api_bp.route('/incidents/<uuid:incident_id>/decision-log/export', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:export')
-@limiter.limit('30 per minute')  # rl-group: exports
+@limited('exports')
 @audit_log('data_access', 'export', 'decision_log')
 def export_decision_log(incident_id):
     """``?format=json|csv|pdf&kind=decisions|actions|all&include_revisions=0|1

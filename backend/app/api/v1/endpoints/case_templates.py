@@ -12,7 +12,8 @@ from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import get_current_user, require_incident_access, require_permission
@@ -248,7 +249,7 @@ def clone_case_template(template_ref):
 # ── Apply to an incident ─────────────────────────────────────────────────
 
 @api_bp.route('/incidents/<uuid:incident_id>/case-templates/<string:template_ref>/apply', methods=['POST'])
-@limiter.limit("20 per minute")  # rl-group: template_apply
+@limited('template_apply')
 @jwt_required()
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'apply_case_template', 'incident')

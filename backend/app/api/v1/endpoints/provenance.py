@@ -11,7 +11,8 @@ import uuid
 from flask import g, jsonify
 from flask_jwt_extended import jwt_required
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import check_permission, get_current_user, require_incident_access
@@ -111,7 +112,7 @@ def unverify_provenance(incident_id):
 
 @api_bp.route('/incidents/<uuid:incident_id>/provenance/normalize-preview', methods=['POST'])
 @jwt_required()
-@limiter.limit("60 per minute")  # rl-group: normalize_preview
+@limited('normalize_preview')
 @require_incident_access('timeline:read')
 def normalize_preview(incident_id):
     """Preview the UTC value for a raw timestamp (read-only; nothing stored).

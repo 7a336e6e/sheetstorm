@@ -1,6 +1,7 @@
 /**
  * MITRE Pattern Management — CRUD for YAML detection patterns.
- * Shows current patterns, allows add/edit/delete, inline editing.
+ * Anyone with incidents:read sees the patterns; add/edit/delete need
+ * admin:manage ("Manage MITRE detection patterns").
  */
 
 "use client"
@@ -12,10 +13,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
-import { Loader2, Plus, Trash2, Search, Save, X, FileCode2 } from 'lucide-react'
+import { Loader2, Plus, Trash2, Search, Save, FileCode2, Lock } from 'lucide-react'
 import { api } from '@/lib/api'
-import { useToast } from '@/components/ui/use-toast'
+import { notifyError, notifySuccess } from '@/lib/errors'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -58,8 +60,8 @@ const TACTIC_LABELS: Record<string, string> = {
 }
 
 export function MitrePatternManager() {
-  const { toast } = useToast()
   const confirm = useConfirm()
+  const canEdit = usePermission('admin:manage')
   const [loading, setLoading] = useState(true)
   const [patterns, setPatterns] = useState<Pattern[]>([])
   const [search, setSearch] = useState('')
@@ -79,7 +81,7 @@ export function MitrePatternManager() {
     try {
       const res = await api.get<{ patterns: Pattern[] }>('/mitre/patterns')
       setPatterns(res.patterns || [])
-    } catch { toast({ title: 'Failed to load patterns', variant: 'destructive' }) }
+    } catch (err) { notifyError(err, 'load the MITRE patterns') }
     finally { setLoading(false) }
   }
 
@@ -149,8 +151,8 @@ export function MitrePatternManager() {
       await api.put('/mitre/patterns', { patterns: newPatterns })
       setPatterns(newPatterns)
       setShowModal(false)
-      toast({ title: editingIdx !== null ? 'Pattern updated' : 'Pattern added' })
-    } catch { toast({ title: 'Error saving', variant: 'destructive' }) }
+      notifySuccess(editingIdx !== null ? 'Pattern updated' : 'Pattern added')
+    } catch (err) { notifyError(err, 'save the pattern') }
   }
 
   const handleDelete = async (pattern: Pattern) => {
@@ -165,8 +167,8 @@ export function MitrePatternManager() {
     try {
       await api.delete(`/mitre/patterns/${pattern.technique}`)
       setPatterns(prev => prev.filter(p => p.technique !== pattern.technique))
-      toast({ title: 'Pattern removed' })
-    } catch { toast({ title: 'Error', variant: 'destructive' }) }
+      notifySuccess('Pattern removed')
+    } catch (err) { notifyError(err, 'delete the pattern') }
   }
 
   if (loading) {
@@ -185,8 +187,15 @@ export function MitrePatternManager() {
             {patterns.length} patterns across {new Set(patterns.map(p => p.tactic)).size} tactics
           </p>
         </div>
-        <Button onClick={openAddModal}><Plus className="mr-2 h-4 w-4" /> Add Pattern</Button>
+        {canEdit && <Button onClick={openAddModal}><Plus className="mr-2 h-4 w-4" /> Add Pattern</Button>}
       </div>
+
+      {!canEdit && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="mitre-read-only">
+          <Lock className="h-4 w-4 shrink-0" aria-hidden />
+          Read-only. Editing detection patterns requires the Manage MITRE detection patterns permission.
+        </p>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
@@ -209,7 +218,7 @@ export function MitrePatternManager() {
           <CardContent className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
             <FileCode2 className="h-8 w-8 mb-3 opacity-50" />
             <p className="font-medium">No patterns found</p>
-            <p className="text-sm mt-1">Add detection patterns to enable MITRE auto-suggest.</p>
+            <p className="text-sm mt-1">{canEdit ? 'Add detection patterns to enable MITRE auto-suggest.' : 'No detection patterns match.'}</p>
           </CardContent>
         </Card>
       ) : (
@@ -243,10 +252,12 @@ export function MitrePatternManager() {
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button variant="ghost" size="sm" onClick={() => openEditModal(p)}>Edit</Button>
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(p)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" onClick={() => openEditModal(p)}>Edit</Button>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" aria-label={`Delete ${p.technique}`} onClick={() => handleDelete(p)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

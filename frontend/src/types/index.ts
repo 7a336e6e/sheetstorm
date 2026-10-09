@@ -36,14 +36,6 @@ export interface TeamMemberEntry {
   joined_at: string
 }
 
-export interface Role {
-  id: string
-  name: string
-  description: string
-  permissions: string[]
-  is_system: boolean
-}
-
 export type TLPLevel = 'white' | 'green' | 'amber' | 'amber_strict' | 'red'
 
 export interface Incident {
@@ -703,3 +695,4 @@ export interface CustomFieldOption {
 
 export * from './preferences'
 export * from './search'
+export * from './rbac'

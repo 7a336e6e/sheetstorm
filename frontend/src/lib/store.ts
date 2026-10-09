@@ -25,6 +25,9 @@ interface AuthState {
   logout: () => Promise<void>
   checkAuth: () => Promise<void>
   hasPermission: (permission: string) => boolean
+  /** True when the user holds at least one of `permissions` (false for an empty list). */
+  hasAnyPermission: (permissions: readonly string[]) => boolean
+  /** @deprecated Display only (e.g. a role badge). Never authorize by role name. */
   hasRole: (role: string) => boolean
   refreshUser: () => Promise<void>
 }
@@ -154,6 +157,11 @@ export const useAuthStore = create<AuthState>()(
       hasPermission: (permission: string) => {
         const { user } = get()
         return user?.permissions?.includes(permission) ?? false
+      },
+
+      hasAnyPermission: (permissions: readonly string[]) => {
+        const granted = get().user?.permissions ?? []
+        return permissions.some((p) => granted.includes(p))
       },
 
       hasRole: (role: string) => {

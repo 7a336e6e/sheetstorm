@@ -61,8 +61,6 @@ def test_frontend_permission_strings_in_catalog():
     src_dir = os.path.join(os.path.dirname(BACKEND_DIR), 'frontend', 'src')
     if not os.path.isdir(src_dir):
         pytest.skip('frontend sources not present (backend-only test container)')
-    # artifacts:verify is removed by W1-RBAC-UI (ArtifactsTab.tsx:46, C5).
-    pending = {'artifacts:verify'}
     pattern = re.compile(r"""(?:hasPermission|hasAnyPermission|usePermission|anyOf)\W{0,3}['"]([a-z_]+:[a-z_]+)['"]""")
     found = set()
     for root, _, files in os.walk(src_dir):
@@ -70,7 +68,7 @@ def test_frontend_permission_strings_in_catalog():
             if name.endswith(('.ts', '.tsx')):
                 with open(os.path.join(root, name), encoding='utf-8') as fh:
                     found.update(pattern.findall(fh.read()))
-    assert not (found - PERMISSION_KEYS - pending)
+    assert not (found - PERMISSION_KEYS)
 
 
 def test_system_roles_match_registry(app, db):

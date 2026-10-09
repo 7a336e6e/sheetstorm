@@ -26,6 +26,18 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v : undefined
 }
 
+/** `a, b` from a string array, or undefined when empty / not an array. */
+function keyList(v: unknown): string | undefined {
+  if (!Array.isArray(v)) return undefined
+  const keys = v.filter((x): x is string => typeof x === 'string' && x.length > 0)
+  return keys.length ? keys.join(', ') : undefined
+}
+
+function withKeys(text: string, label: string, keys: unknown): string {
+  const list = keyList(keys)
+  return list ? `${text.replace(/\.$/, '')}. ${label}: ${list}.` : text
+}
+
 /** Copy for specific server error codes, independent of the HTTP status. */
 function describeCode(
   code: string,
@@ -62,6 +74,58 @@ function describeCode(
       return {
         title: 'Changed by someone else',
         description: 'This item was modified after you opened it. Review the latest version and try again.',
+      }
+    // RBAC guardrails (backend services/rbac_guard.py): the server message is shown as is.
+    case 'privilege_escalation': {
+      const platformOnly = keyList(details?.platform_only)
+      if (platformOnly) {
+        return {
+          title: 'Platform-only permission',
+          description: `${message ?? 'Platform-only permissions cannot be granted in this organization.'} (${platformOnly})`,
+        }
+      }
+      return {
+        title: 'Exceeds your permissions',
+        description: withKeys(message ?? "You can't grant permissions you don't hold.", 'Missing', details?.missing),
+      }
+    }
+    case 'insufficient_privilege':
+      return {
+        title: 'Insufficient privilege',
+        description: withKeys(message ?? "This user holds permissions you don't have.", 'Missing', details?.missing),
+      }
+    case 'last_admin':
+      return {
+        title: 'Last administrator',
+        description: message ?? 'This change would leave the organization without an active administrator.',
+      }
+    case 'self_lockout':
+      return {
+        title: 'Would lock you out',
+        description:
+          message ?? 'This change would remove your own ability to manage users and roles. Ask another administrator.',
+      }
+    case 'self_action': {
+      const action = str(details?.action)
+      return {
+        title: 'Not allowed on your own account',
+        description: message ?? `You can't ${action ?? 'do that to'} your own account.`,
+      }
+    }
+    case 'use_change_password':
+      return {
+        title: 'Use Change password',
+        description: 'Change your own password from your profile; it asks for your current password.',
+      }
+    case 'unknown_permissions':
+      return {
+        title: 'Unknown permissions',
+        description: withKeys(message ?? 'Unknown permission key(s).', 'Unknown', details?.unknown),
+      }
+    case 'system_role_immutable':
+      return {
+        title: 'Built-in role',
+        description: message ?? "Built-in roles can't be changed. Clone the role and edit the copy.",
       }
     default:
       return null

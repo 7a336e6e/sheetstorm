@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, it, jest } from '@jest/globals'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import api from '@/lib/api'
 import { useAuthStore } from '@/lib/store'
 
@@ -138,6 +138,24 @@ describe('tab-specific gating', () => {
     setPermissions(READ_ONLY)
     await renderTab('Storage')
     expect(screen.getByText('Local artifact storage volume')).toBeInTheDocument()
+  })
+
+  it('Threat Intel: the MITRE suggest tester needs incidents:read', async () => {
+    setPermissions(READ_ONLY)
+    await renderTab('Threat Intel')
+    const input = screen.getByPlaceholderText(/test MITRE auto-mapping/i)
+    act(() => {
+      fireEvent.change(input, { target: { value: 'powershell -enc' } })
+    })
+    expect(screen.getByRole('button', { name: /test suggestions/i })).toBeDisabled()
+    expect(screen.getByText('Requires the incidents:read permission.')).toBeInTheDocument()
+    cleanup()
+    setPermissions([...READ_ONLY, 'incidents:read'])
+    await renderTab('Threat Intel')
+    act(() => {
+      fireEvent.change(screen.getByPlaceholderText(/test MITRE auto-mapping/i), { target: { value: 'powershell -enc' } })
+    })
+    expect(screen.getByRole('button', { name: /test suggestions/i })).toBeEnabled()
   })
 
   it.each([

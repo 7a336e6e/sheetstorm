@@ -59,6 +59,8 @@ function MitreAutoSuggestTester() {
   const [results, setResults] = useState<{ technique: string; tactic: string; name: string; score: number }[]>([])
   const [loading, setLoading] = useState(false)
   const [patternCount, setPatternCount] = useState<number | null>(null)
+  // POST /mitre/suggest needs incidents:read; this tab is shown for integrations:read.
+  const canSuggest = usePermission('incidents:read')
 
   useEffect(() => {
     api.get<{ patterns: any[] }>('/mitre/patterns').then(d => setPatternCount(d.patterns?.length ?? 0)).catch(() => {})
@@ -83,10 +85,11 @@ function MitreAutoSuggestTester() {
       <CardContent className="space-y-3">
         <Textarea value={text} onChange={e => setText(e.target.value)} placeholder="Paste a timeline activity description to test MITRE auto-mapping..." rows={2} />
         <div className="flex items-center gap-3">
-          <Button size="sm" onClick={testSuggest} disabled={loading || !text.trim()}>
+          <Button size="sm" onClick={testSuggest} disabled={!canSuggest || loading || !text.trim()}>
             {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
             Test Suggestions
           </Button>
+          {!canSuggest && <span className="text-xs text-muted-foreground">Requires the incidents:read permission.</span>}
           {results.length > 0 && <span className="text-xs text-muted-foreground">{results.length} match{results.length !== 1 ? 'es' : ''}</span>}
         </div>
         {results.length > 0 && (

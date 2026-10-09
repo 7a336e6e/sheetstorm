@@ -21,11 +21,6 @@ import { useAllPages } from '@/hooks/use-paginated-query'
 import type { CompromisedHost, TimelineEvent } from '@/types'
 import type { IncidentTabProps } from './tabs'
 
-// `useAllPages().items` is a fresh [] on every render until data arrives;
-// hand children a stable empty list so their prop-driven effects settle.
-const NO_HOSTS: CompromisedHost[] = []
-const NO_EVENTS: TimelineEvent[] = []
-
 export function OverviewPanel({ incident, incidentId, onNavigate, onIncidentChanged }: IncidentTabProps) {
   return (
     <OverviewTab
@@ -99,8 +94,8 @@ export function GraphPanel({ incidentId }: IncidentTabProps) {
       <CardContent>
         <AttackGraphViewer
           incidentId={incidentId}
-          hosts={hosts.items.length ? hosts.items : NO_HOSTS}
-          timeline={timeline.items.length ? timeline.items : NO_EVENTS}
+          hosts={hosts.items}
+          timeline={timeline.items}
         />
       </CardContent>
     </Card>
@@ -123,7 +118,7 @@ export function MitrePanel({ incidentId }: IncidentTabProps) {
             Showing the first {timeline.items.length.toLocaleString()} of {timeline.total.toLocaleString()} events.
           </p>
         )}
-        <MitreNavigator events={timeline.items.length ? timeline.items : NO_EVENTS} incidentId={incidentId} />
+        <MitreNavigator events={timeline.items} incidentId={incidentId} />
       </CardContent>
     </Card>
   )

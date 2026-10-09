@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { Sidebar } from '@/components/layout/sidebar'
 import { useAuth } from '@/components/providers/auth-provider'
 import { SocketProvider } from '@/components/providers/socket-provider'
+import { ConflictProvider } from '@/components/providers/conflict-provider'
 import { PrimaryActionProvider } from '@/lib/primary-action'
 import { CommandPalette } from '@/components/layout/command-palette'
 import { ShortcutsHelp } from '@/components/layout/shortcuts-help'
@@ -35,6 +36,7 @@ export default function DashboardLayout({
 
   return (
     <SocketProvider>
+      <ConflictProvider>
       <PrimaryActionProvider>
       <div className="flex h-screen bg-background">
         {/* Mobile top bar */}
@@ -79,6 +81,7 @@ export default function DashboardLayout({
       <CommandPalette />
       <ShortcutsHelp />
       </PrimaryActionProvider>
+      </ConflictProvider>
     </SocketProvider>
   )
 }

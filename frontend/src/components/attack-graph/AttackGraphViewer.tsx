@@ -53,6 +53,8 @@ import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { usePermission } from '@/components/auth/permission-gate'
 import { useAllPages } from '@/hooks/use-paginated-query'
+import { useIncidentRealtimeContext } from '@/hooks/use-incident-realtime'
+import { subscribeEntity, subscribeResync } from '@/lib/realtime/live'
 import type {
   AttackGraphNode as BaseGraphNode,
   AttackGraphEdge as BaseGraphEdge,
@@ -229,6 +231,9 @@ function transformToReactFlowData(
 }
 
 type GraphNodeUpdate = Partial<AttackGraphNode>
+
+/** Live drag previews are relayed at most this often (server allows 15/s). */
+const NODE_DRAG_THROTTLE_MS = 100
 
 function GraphInner({ incidentId }: { incidentId: string }) {
   const { toast } = useToast()
@@ -561,6 +566,60 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     },
     [canUpdate, incidentId, setNodes]
   )
+
+  // ── Live node drag (W2-RT-FE) ──────────────────────────────────────────
+  // While I drag, others see a throttled preview (`graph:node_drag`); the
+  // drop is saved by handleNodeDragStop, whose `graph_node` update moves the
+  // node for everyone. Bulk graph changes arrive as an `attack_graph` resync.
+  const realtime = useIncidentRealtimeContext()
+  const sendNodeDrag = realtime?.sendNodeDrag
+  const onRemoteNodeDrag = realtime?.onNodeDrag
+  const lastDragSentRef = useRef(0)
+  const handleNodeDrag = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (!canUpdate || !sendNodeDrag) return
+      const now = Date.now()
+      if (now - lastDragSentRef.current < NODE_DRAG_THROTTLE_MS) return
+      lastDragSentRef.current = now
+      sendNodeDrag(node.id, node.position.x, node.position.y)
+    },
+    [canUpdate, sendNodeDrag]
+  )
+
+  useEffect(() => {
+    if (!onRemoteNodeDrag) return
+    return onRemoteNodeDrag((ev) => {
+      setNodes((nds) =>
+        nds.some((n) => n.id === ev.node_id && !n.dragging)
+          ? nds.map((n) => (n.id === ev.node_id && !n.dragging ? { ...n, position: { x: ev.x, y: ev.y } } : n))
+          : nds
+      )
+    })
+  }, [onRemoteNodeDrag, setNodes])
+
+  useEffect(() => {
+    const offMove = subscribeEntity('graph_node', (change) => {
+      if (change.incident_id !== incidentId || change.op !== 'updated' || !change.data) return
+      const { position_x: x, position_y: y } = change.data as { position_x?: unknown; position_y?: unknown }
+      if (typeof x !== 'number' || typeof y !== 'number') return
+      setNodes((nds) => {
+        const node = nds.find((n) => n.id === change.id)
+        if (!node || node.dragging) return nds
+        const local = node.data.version
+        if (typeof local === 'number' && typeof change.version === 'number' && change.version <= local) return nds
+        return nds.map((n) =>
+          n.id === change.id
+            ? { ...n, position: { x, y }, data: { ...n.data, version: change.version ?? n.data.version } }
+            : n
+        )
+      })
+    })
+    const offResync = subscribeResync('attack_graph', (iid) => (iid === incidentId ? fetchGraph() : undefined))
+    return () => {
+      offMove()
+      offResync()
+    }
+  }, [incidentId, setNodes, fetchGraph])
 
   const handleAutoLayout = useCallback(async () => {
     if (nodes.length === 0) return
@@ -944,6 +1003,7 @@ function GraphInner({ incidentId }: { incidentId: string }) {
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
         onPaneClick={handlePaneClick}
+        onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
         onBeforeDelete={onBeforeDelete}
         onNodesDelete={onNodesDelete}

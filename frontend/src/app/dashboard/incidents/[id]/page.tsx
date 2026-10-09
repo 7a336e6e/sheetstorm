@@ -12,6 +12,9 @@ import { describeError } from '@/lib/errors'
 import { isApiError } from '@/lib/api'
 import { subscribe } from '@/lib/query-cache'
 import { usePermission, usePermissionCheck } from '@/components/auth/permission-gate'
+import { IncidentRealtimeContext, useIncidentRealtime } from '@/hooks/use-incident-realtime'
+import { PresenceAvatars } from '@/components/incidents/PresenceAvatars'
+import { LiveStatusDot } from '@/components/incidents/LiveStatusDot'
 import type { Incident, Versioned } from '@/types'
 import { ArrowLeft, Upload, Zap, Edit2, Download } from 'lucide-react'
 
@@ -41,6 +44,8 @@ function IncidentDetail() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { currentIncident, fetchIncident } = useIncidentStore()
+  // Live updates + presence for every tab below (W2-RT-FE).
+  const realtime = useIncidentRealtime(incidentId)
   const can = usePermissionCheck()
   const canUpdateIncident = usePermission('incidents:update')
   const canGenerateReport = usePermission('reports:generate')
@@ -135,7 +140,7 @@ function IncidentDetail() {
   // ─── Render ────────────────────────────────────────────────────────────
 
   return (
-    <>
+    <IncidentRealtimeContext.Provider value={realtime}>
       <div className="p-6 lg:p-8 space-y-6">
         {/* Header */}
         <div>
@@ -158,6 +163,10 @@ function IncidentDetail() {
                 <PhaseBadge phase={incident.phase} />
                 <TLPBadge tlp={incident.tlp || 'amber'} />
                 <TimeModeToggle />
+                <div className="flex items-center gap-2">
+                  <LiveStatusDot status={realtime.status} />
+                  <PresenceAvatars users={realtime.presence} selfUserId={realtime.selfUserId} />
+                </div>
               </div>
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{incident.title}</h1>
               {incident.description && (
@@ -265,6 +274,6 @@ function IncidentDetail() {
           incidentNumber={incident.incident_number}
         />
       )}
-    </>
+    </IncidentRealtimeContext.Provider>
   )
 }

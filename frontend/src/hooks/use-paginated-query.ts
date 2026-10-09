@@ -15,11 +15,17 @@
  *   `.sort`, `.q` and `.f.<name>` (only non-default values), so lists are
  *   shareable and survive reloads. The component must render inside a
  *   <Suspense> boundary (Next requires it for `useSearchParams`).
+ * - With `live: '<entity>'`, realtime `entity:changed` events for that entity
+ *   are merged into the cached pages (version-guarded; see
+ *   `lib/realtime/merge.ts`) and `incident:resync` / seq gaps refetch the list
+ *   (`lib/realtime/live.ts`). Events only arrive while `useIncidentRealtime`
+ *   has joined the incident.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import api, { ApiError, isAbortError, isApiError, withQuery } from '@/lib/api'
 import { getCached, invalidate, setCached, subscribe } from '@/lib/query-cache'
+import { registerLiveList } from '@/lib/realtime/live'
 import { useSocket } from '@/hooks/use-socket'
 import type { PaginatedResponse } from '@/types'
 
@@ -67,7 +73,7 @@ export interface PaginatedQueryOptions {
   mode?: 'page' | 'append'
   /** Socket event names that invalidate this endpoint. */
   invalidateOn?: string[]
-  /** Realtime entity for live merge. Reserved: no-op until W2-RT-FE. */
+  /** Realtime entity (e.g. `'host'`) whose live changes merge into this list. */
   live?: string
 }
 
@@ -76,6 +82,8 @@ export const MAX_PER_PAGE = 200
 export const QUERY_DEBOUNCE_MS = 300
 /** Cache entries younger than this are not revalidated on mount/param change. */
 export const FRESH_MS = 2000
+/** A list a live change could not be merged into refetches after this quiet time. */
+export const LIVE_STALE_DEBOUNCE_MS = 300
 
 type ParamsLike = Pick<URLSearchParams, 'get' | 'forEach'>
 
@@ -338,18 +346,59 @@ export function usePaginatedQuery<T>(opts: PaginatedQueryOptions): PaginatedQuer
     requestKeyRef.current = requestKey
   }, [requestKey])
 
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+    },
+    []
+  )
+
   useEffect(() => {
+    // Page number of `key` when it is one of this append list's pages.
+    const appendPageOf = (key: string): number | null => {
+      if (!append) return null
+      const n = Number(new URLSearchParams(key.split('?')[1] ?? '').get('page'))
+      if (!Number.isInteger(n) || n < 1 || n > stateRef.current.page) return null
+      return withQuery(endpoint, listParams({ ...stateRef.current, page: n })) === key ? n : null
+    }
     return subscribe(endpointPath, (ev) => {
       if (ev.type === 'invalidate') {
         if (append && stateRef.current.page !== 1) update((s) => ({ ...s, page: 1 }))
         forceRef.current = true
         setTick((t) => t + 1)
+      } else if (ev.type === 'stale') {
+        // A live change could not be placed: refetch, coalescing bursts.
+        const own = ev.key === requestKeyRef.current
+        const earlierPage = !own && appendPageOf(ev.key) !== null
+        if (!own && !earlierPage) return
+        if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+        staleTimerRef.current = setTimeout(() => {
+          staleTimerRef.current = null
+          if (earlierPage) update((s) => ({ ...s, page: 1 }))
+          forceRef.current = true
+          setTick((t) => t + 1)
+        }, LIVE_STALE_DEBOUNCE_MS)
       } else if (ev.key === requestKeyRef.current) {
         const entry = getCached<PaginatedResponse<T>>(ev.key)
         if (entry) accept(ev.key, entry.data)
+      } else {
+        // Live merge into an earlier page of a "load more" list.
+        const n = appendPageOf(ev.key)
+        const entry = n !== null ? getCached<PaginatedResponse<T>>(ev.key) : undefined
+        if (n !== null && entry) {
+          setPagesAcc((prev) => (prev ? { ...prev, pages: { ...prev.pages, [n]: entry.data.items } } : prev))
+        }
       }
     })
-  }, [endpointPath, append, update, accept])
+  }, [endpoint, endpointPath, append, update, accept])
+
+  // ── Live merge registration ──────────────────────────────────────────
+  const live = opts.live
+  useEffect(() => {
+    if (!live || !enabled) return
+    return registerLiveList({ entity: live, path: endpointPath, key: () => requestKeyRef.current, refetch })
+  }, [live, enabled, endpointPath, refetch])
 
   // ── Socket events → invalidate ───────────────────────────────────────
   const { socket } = useSocket()
@@ -408,14 +457,20 @@ export function usePaginatedQuery<T>(opts: PaginatedQueryOptions): PaginatedQuer
   const current =
     result && (result.key === requestKey || pathOf(result.key) === endpointPath) ? result.data : null
 
-  let items: T[] = current?.items ?? []
-  if (append && pagesAcc) {
-    items = Object.keys(pagesAcc.pages)
-      .map(Number)
-      .sort((a, b) => a - b)
-      .filter((p) => p <= state.page)
-      .flatMap((p) => pagesAcc.pages[p])
-  }
+  // Stable references: a new array every render would re-run consumers' effects.
+  const [emptyItems] = useState<T[]>(() => [])
+  const appendItems = useMemo(
+    () =>
+      append && pagesAcc
+        ? Object.keys(pagesAcc.pages)
+            .map(Number)
+            .sort((a, b) => a - b)
+            .filter((p) => p <= state.page)
+            .flatMap((p) => pagesAcc.pages[p])
+        : null,
+    [append, pagesAcc, state.page]
+  )
+  const items: T[] = appendItems ?? current?.items ?? emptyItems
 
   return {
     items,
@@ -551,11 +606,27 @@ export function useAllPages<T>(
     keyRef.current = key
   }, [key])
 
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+    },
+    []
+  )
+
   useEffect(() => {
     return subscribe(endpointPath, (ev) => {
       if (ev.type === 'invalidate') {
         forceRef.current = true
         setTick((t) => t + 1)
+      } else if (ev.type === 'stale') {
+        if (ev.key !== keyRef.current) return
+        if (staleTimerRef.current) clearTimeout(staleTimerRef.current)
+        staleTimerRef.current = setTimeout(() => {
+          staleTimerRef.current = null
+          forceRef.current = true
+          setTick((t) => t + 1)
+        }, LIVE_STALE_DEBOUNCE_MS)
       } else if (ev.key === keyRef.current) {
         const entry = getCached<AllPagesData<T>>(ev.key)
         if (entry) setResult({ key: ev.key, data: entry.data })
@@ -571,9 +642,17 @@ export function useAllPages<T>(
     })
   }, [])
 
+  const live = opts.live
+  useEffect(() => {
+    if (!live || !enabled) return
+    return registerLiveList({ entity: live, path: endpointPath, key: () => keyRef.current, refetch })
+  }, [live, enabled, endpointPath, refetch])
+
+  // Stable while loading: a fresh `[]` per render re-ran consumers' effects.
+  const [emptyItems] = useState<T[]>(() => [])
   const current = result && result.key === key ? result.data : null
   return {
-    items: current?.items ?? [],
+    items: current?.items ?? emptyItems,
     total: current?.total ?? 0,
     isLoading: enabled && !current && !error,
     isFetching,

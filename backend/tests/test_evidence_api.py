@@ -398,7 +398,8 @@ def test_tampered_chain_is_audited_as_security_event(app, db, admin, make_incide
 
 def test_custody_parties_crud_scoping_and_versioning(app, db, users, auth, admin, org_b):
     analyst = auth(users['Analyst'])
-    created = analyst.post('/api/v1/custody-parties', json={'name': 'Det. Smith', 'role': 'law_enforcement',
+    name = f'Det. Smith {uuid.uuid4().hex[:8]}'
+    created = analyst.post('/api/v1/custody-parties', json={'name': name, 'role': 'law_enforcement',
                                                             'organization_name': 'City PD'})
     assert created.status_code == 201, created.get_json()
     p = created.get_json()
@@ -410,8 +411,8 @@ def test_custody_parties_crud_scoping_and_versioning(app, db, users, auth, admin
     assert auth(users['Viewer']).get('/api/v1/custody-parties').status_code == 403
     assert auth(users['admin_b']).get(url).status_code == 404
     assert auth(users['admin_b']).patch(url, json={'phone': '1'}).status_code == 404
-    names = [x['name'] for x in admin.get('/api/v1/custody-parties?q=smith').get_json()['items']]
-    assert names == ['Det. Smith']
+    names = [x['name'] for x in admin.get(f'/api/v1/custody-parties?q={name[-8:]}').get_json()['items']]
+    assert names == [name]
 
     resp = admin.patch(url, json={'is_active': False, 'phone': '555-0100'}, headers={'If-Match': f'"{p["version"]}"'})
     assert resp.status_code == 200 and resp.headers['ETag'] == f'"{resp.get_json()["version"]}"'

@@ -136,3 +136,92 @@ def list_jobs_command():
 def register_cli(app):
     """Attach the ``sheetstorm`` command group to the Flask CLI."""
     app.cli.add_command(sheetstorm_cli)
+
+
+# ---------------------------------------------------------------------------
+# Audit log maintenance (retention purge + hash-chain verification).
+# Both run daily as jobs and are also available as commands.
+# ---------------------------------------------------------------------------
+
+AUDIT_JOB_INTERVAL = 24 * 3600
+
+
+def _audit_orgs(org_slug=None):
+    from app.models import Organization
+    query = Organization.query.order_by(Organization.slug)
+    if org_slug:
+        query = query.filter(Organization.slug == org_slug)
+    orgs = query.all()
+    if org_slug and not orgs:
+        raise click.BadParameter(f'unknown organization {org_slug!r}', param_hint='--org')
+    return orgs
+
+
+def purge_audit_logs(org_slug=None, dry_run=False, batch_size=None):
+    """Apply each organization's audit retention. Returns per-org summaries;
+    an org that fails gets ``{'status': 'error'}`` and the others still run."""
+    from app import db
+    from app.services.audit_service import purge_org
+    results = []
+    for org in _audit_orgs(org_slug):
+        try:
+            results.append(purge_org(org, dry_run=dry_run, batch_size=batch_size))
+        except Exception:
+            current_app.logger.exception('Audit purge failed for %s', org.slug)
+            db.session.rollback()
+            results.append({'organization': org.slug, 'status': 'error'})
+    return results
+
+
+def verify_audit_chains(org_slug=None):
+    """Verify each organization's audit chain (and the global chain when no
+    org is given). Returns the summaries."""
+    from app.services.audit_service import verify_chain
+    summaries = [verify_chain(org.id) for org in _audit_orgs(org_slug)]
+    if not org_slug:
+        summaries.append(verify_chain(None))
+    return summaries
+
+
+def _print_summary(summary):
+    import json
+    click.echo(json.dumps(summary, default=str, sort_keys=True))
+
+
+@sheetstorm_cli.command('purge-audit-logs')
+@click.option('--org', 'org_slug', default=None, help='Only this organization (slug).')
+@click.option('--dry-run', is_flag=True, help='Report what would be deleted; delete nothing.')
+@click.option('--batch-size', type=click.IntRange(1, 100000), default=None, help='Rows per transaction.')
+def purge_audit_logs_command(org_slug, dry_run, batch_size):
+    """Delete audit rows older than each organization's retention (legal holds win)."""
+    results = purge_audit_logs(org_slug, dry_run=dry_run, batch_size=batch_size)
+    for summary in results:
+        _print_summary(summary)
+    if any(r.get('status') == 'error' for r in results):
+        raise SystemExit(1)
+
+
+@sheetstorm_cli.command('verify-audit-chain')
+@click.option('--org', 'org_slug', default=None, help='Only this organization (slug).')
+def verify_audit_chain_command(org_slug):
+    """Verify the audit hash chain; exits non-zero when any chain fails."""
+    summaries = verify_audit_chains(org_slug)
+    for summary in summaries:
+        _print_summary({k: v for k, v in summary.items() if k != 'failures'} | {'failures': summary['failures'][:10]})
+    if not all(s['ok'] for s in summaries):
+        raise SystemExit(1)
+
+
+def _purge_audit_logs_job():
+    if any(r.get('status') == 'error' for r in purge_audit_logs()):
+        raise RuntimeError('audit purge failed for at least one organization')
+
+
+def _verify_audit_chain_job():
+    failed = [s['chain_key'] for s in verify_audit_chains() if not s['ok']]
+    if failed:
+        raise RuntimeError(f'audit chain verification failed: {", ".join(failed)}')
+
+
+register_job('purge-audit-logs', _purge_audit_logs_job, every_seconds=AUDIT_JOB_INTERVAL, lock_ttl=3600)
+register_job('verify-audit-chain', _verify_audit_chain_job, every_seconds=AUDIT_JOB_INTERVAL, lock_ttl=3600)

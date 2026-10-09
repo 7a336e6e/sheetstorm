@@ -104,7 +104,7 @@ class StorageService:
         """Store file to local filesystem."""
         try:
             # Use a local artifacts directory
-            local_path = os.path.join('/app/artifacts', storage_path)
+            local_path = os.path.join(current_app.config.get('LOCAL_ARTIFACT_DIR', '/app/artifacts'), storage_path)
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
             file_obj.seek(0)
@@ -148,7 +148,7 @@ class StorageService:
     def _retrieve_local(self, storage_path: str) -> Optional[BinaryIO]:
         """Retrieve file from local filesystem."""
         try:
-            local_path = os.path.join('/app/artifacts', storage_path)
+            local_path = os.path.join(current_app.config.get('LOCAL_ARTIFACT_DIR', '/app/artifacts'), storage_path)
             if os.path.exists(local_path):
                 return open(local_path, 'rb')
             return None
@@ -183,7 +183,7 @@ class StorageService:
     def _delete_local(self, storage_path: str) -> bool:
         """Delete file from local filesystem."""
         try:
-            local_path = os.path.join('/app/artifacts', storage_path)
+            local_path = os.path.join(current_app.config.get('LOCAL_ARTIFACT_DIR', '/app/artifacts'), storage_path)
             if os.path.exists(local_path):
                 os.remove(local_path)
             return True

@@ -17,6 +17,7 @@ from app.api.v1.endpoints import attack_graph
 from app.api.v1.endpoints import reports
 from app.api.v1.endpoints import integrations
 from app.api.v1.endpoints import audit
+from app.api.v1.endpoints import admin_status
 from app.api.v1.endpoints import notifications
 from app.api.v1.endpoints import organization
 from app.api.v1.endpoints import teams

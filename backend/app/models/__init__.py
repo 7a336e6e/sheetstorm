@@ -11,6 +11,7 @@ from app.models.attack_graph import AttackGraphNode, AttackGraphEdge
 from app.models.integration import Integration
 from app.models.notification import Notification
 from app.models.audit import AuditLog
+from app.models.ledger import LedgerHead
 from app.models.report import Report
 from app.models.team import Team, TeamMember
 from app.models.case_note import CaseNote
@@ -31,6 +32,7 @@ __all__ = [
     'Integration',
     'Notification',
     'AuditLog',
+    'LedgerHead',
     'Report',
     'Team', 'TeamMember',
     'CaseNote',

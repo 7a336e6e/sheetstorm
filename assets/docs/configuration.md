@@ -16,7 +16,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `DATABASE_URL` | Yes | built by compose | PostgreSQL connection (compose builds it from `POSTGRES_*`) |
 | `REDIS_URL` | Yes | `redis://redis:6379/0` | Redis connection (rate limiting, MCP OAuth state) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | No | `sheetstorm` / `changeme` / `sheetstorm` | PostgreSQL credentials - change the password for any shared deployment |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | No | `admin@sheetstorm.local` / `changeme` | Seeded admin account. Change the password after first login |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | No | `admin@sheetstorm.local` / empty | Seeded first admin (`python -m app.seed`, run by `start.sh` on a fresh database). Empty (or below the password policy) `ADMIN_PASSWORD`: a random password is generated and printed **once** by the seed step; it is not stored anywhere. The admin must change the password at first sign-in either way |
 
 ### Network, cookies and CORS
 
@@ -28,6 +28,8 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_REFRESH_GRACE_SECONDS` | `30` | How long a just-rotated refresh token is still accepted once (multi-tab refresh races) |
 | `TRUSTED_PROXY_CIDRS` / `REAL_IP_HEADER` | empty / `X-Forwarded-For` | Upstream proxies trusted for the client IP; see [Running behind a reverse proxy / CDN](#running-behind-a-reverse-proxy--cdn) |
 | `RATE_LIMIT_DEFAULT` | `600 per minute` | Default Flask-Limiter limit for API routes |
+| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` | `10` / `15` | Lock an account after this many consecutive bad passwords or MFA codes (bounded 3..20), for this many minutes (1..1440). Locked, disabled, unknown and wrong-password logins all get the same generic 401; an admin can unlock early (Users → Unlock) |
+| `PASSWORD_RESET_TTL_HOURS` | `24` | Lifetime of admin-issued one-time password reset links (1..72) |
 | `NEXT_PUBLIC_API_URL` | `/api/v1` | Backend API URL for the frontend (build-time). Relative paths work through the proxy on any host |
 | `NEXT_PUBLIC_WS_URL` | empty | WebSocket URL for the frontend (build-time); empty means same origin |
 

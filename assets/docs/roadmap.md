@@ -154,22 +154,26 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 
 | Module | Tools | Description |
 |--------|-------|-------------|
-| **auth** | 3 | Login, logout, session info |
-| **incidents** | 7 | Full incident CRUD + search |
-| **timeline** | 6 | Timeline events + MITRE tactic/technique lookup |
-| **tasks** | 7 | Task management with comments |
-| **assets** | 8 | Compromised hosts + accounts |
-| **iocs** | 9 | Network IOCs, host IOCs, malware |
-| **artifacts** | 5 | Evidence upload/download + chain of custody |
-| **attack_graph** | 9 | Nodes, edges, auto-generation |
-| **reports** | 3 | PDF + AI report generation |
-| **admin** | 5 | Users, notifications, audit logs |
+| **auth** | 2 | Current user, logout |
+| **incidents** | 10 | Incident CRUD, milestones, status, dashboard stats, archive, permanent delete |
+| **assignments** | 3 | Assign / unassign responders |
+| **timeline** | 7 | Timeline events, mark as IOC, MITRE tactic/technique lookup |
+| **tasks** | 7 | Tasks and investigative leads with evidence refs, lead queue, comments |
+| **assets** | 10 | Compromised hosts (triage, bulk update) + accounts |
+| **iocs** | 12 | Network IOCs, host IOCs, malware |
+| **artifacts** | 7 | Evidence upload/download, verify, chain of custody, legal hold, custody export |
+| **evidence** | 5 | Evidence register, custody transfers, ledger verification |
+| **attack_graph** | 10 | Nodes, edges, auto-generation, node/edge types |
 | **case_notes** | 5 | Case note CRUD |
+| **playbooks** | 7 | Templates, activation, phases, actions, tasks |
+| **reports** | 3 | PDF + AI report generation |
+| **admin** | 20 | Users and lifecycle, roles, permissions, notifications, audit logs, health, system status |
 | **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |
-| **knowledge_base** | 4 | LOLBAS, Event IDs, D3FEND |
+| **knowledge_base** | 6 | LOLBAS, Event IDs, D3FEND, MITRE ATT&CK |
+| **advanced_analysis** | 4 | Search, correlation, STIX export, bulk enrich |
 | **defang** | 2 | IOC defanging/refanging |
-| **prompts** | 5 | IR analysis templates |
-| **resources** | 5 | Reference data (phases, severities, MITRE) |
+| **prompts** | 9 | IR analysis templates |
+| **resources** | 7 | Reference data (phases, severities, statuses, MITRE, graph types) |
 
 **Transport:** SSE on port 8811 · **Auth:** OAuth 2.1 with Redis-backed client persistence · **Runtime:** Python 3.12 + FastMCP SDK
 

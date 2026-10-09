@@ -184,6 +184,12 @@ def create_app(config_name=None):
             'to SECRET_KEY. Set a dedicated CUSTODY_SIGNING_KEY so rotating '
             'SECRET_KEY does not invalidate existing custody signatures.'
         )
+    if not app.config.get('AUDIT_CHAIN_KEY'):
+        app.logger.warning(
+            'AUDIT_CHAIN_KEY is not set; the audit log hash chain falls back to '
+            'SECRET_KEY. Set a dedicated AUDIT_CHAIN_KEY so rotating SECRET_KEY '
+            'keeps the audit chain verifiable.'
+        )
 
     # Fix request.remote_addr when behind nginx reverse proxy.
     # This trusts 1 proxy (nginx) and uses X-Forwarded-For / X-Real-IP

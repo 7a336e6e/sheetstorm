@@ -92,6 +92,18 @@ services:
       LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
       # Lifetime of admin-issued password reset links, in hours (1..72).
       PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
+      # Audit log hash chain key (HMAC). Empty: falls back to SECRET_KEY with a
+      # startup warning. PREVIOUS_KEYS (comma list) keeps rows signed with
+      # rotated keys verifiable.
+      AUDIT_CHAIN_KEY: ${AUDIT_CHAIN_KEY:-}
+      AUDIT_CHAIN_PREVIOUS_KEYS: ${AUDIT_CHAIN_PREVIOUS_KEYS:-}
+      AUDIT_EXPORT_MAX_ROWS: ${AUDIT_EXPORT_MAX_ROWS:-100000}
+      AUDIT_PURGE_BATCH_SIZE: ${AUDIT_PURGE_BATCH_SIZE:-10000}
+      # Build metadata shown to platform admins in the system status.
+      APP_VERSION: ${APP_VERSION:-}
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      # Local evidence storage directory; must match the artifacts_data mount.
+      LOCAL_ARTIFACT_DIR: ${LOCAL_ARTIFACT_DIR:-/app/artifacts}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sheetstorm.local}
       # Empty: the seed generates a random admin password and prints it once.
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

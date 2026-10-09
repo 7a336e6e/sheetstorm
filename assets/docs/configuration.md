@@ -13,7 +13,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_SECRET_KEY` | Yes | - | JWT signing key |
 | `FERNET_KEY` | Yes | - | Fernet key encrypting integration credentials at rest |
 | `CUSTODY_SIGNING_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key for chain-of-custody signatures. See [Custody signing key](#custody-signing-key-and-rotation) |
-| `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (warning on first use) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
+| `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
 | `DATABASE_URL` | Yes | built by compose | PostgreSQL connection (compose builds it from `POSTGRES_*`) |
 | `REDIS_URL` | Yes | `redis://redis:6379/0` | Redis connection (rate limiting, MCP OAuth state) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | No | `sheetstorm` / `changeme` / `sheetstorm` | PostgreSQL credentials - change the password for any shared deployment |

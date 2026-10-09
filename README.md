@@ -104,7 +104,7 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 <td colspan="2">
 
 ### 🤖 MCP Server — AI Assistant Integration
-- **133 tools** across 20 modules for full platform control via natural language
+- **138 tools** across 21 modules for full platform control via natural language
 - Claude, Cursor, and custom AI agents can query incidents, enrich IOCs, build attack graphs, and generate reports
 - SSE transport with OAuth 2.1 authentication and Redis-backed client persistence
 - 5 IR-focused prompt templates (incident analysis, timeline summary, MITRE mapping, lateral movement, executive summary)
@@ -218,7 +218,7 @@ The full list (AI providers, storage, SSO, MCP) is in [assets/docs/configuration
 | Database | PostgreSQL 16, Redis |
 | AI | OpenAI GPT-4o, Google Gemini (configurable) |
 | Infra | Docker Compose, Nginx reverse proxy |
-| MCP | Model Context Protocol server (133 tools) |
+| MCP | Model Context Protocol server (138 tools) |
 
 ---
 

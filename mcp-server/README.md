@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **133 tools** covering the SheetStorm API surface (incidents, timeline, leads, investigative questions, case templates, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **138 tools** covering the SheetStorm API surface (incidents, timeline, leads, investigative questions, case templates, evidence & custody, playbooks, IOCs, attack graph, response metrics, exports, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
@@ -153,7 +153,7 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 
 - **Auth (2)**: `sheetstorm_get_current_user`, `sheetstorm_logout`
 - **Incidents (10)**: list/get (milestones, lead, overview summary)/create (`detected_at`, `lead_responder_id`)/update
-  (IR milestones, `clear_milestones`, `expected_version`), `sheetstorm_update_incident_status`, `sheetstorm_get_dashboard_stats`,
+  (IR milestones incl. `first_malicious_at` and `responded_at`, `clear_milestones`, `expected_version`), `sheetstorm_update_incident_status`, `sheetstorm_get_dashboard_stats`,
   `sheetstorm_archive_incident`, `sheetstorm_unarchive_incident`, `sheetstorm_list_archived_incidents`,
   `sheetstorm_permanently_delete_incident` (Administrator, archived incidents only, requires `confirmation="DELETE PERMANENTLY"`)
 - **Assignments (3)**: list/assign/remove responders
@@ -175,7 +175,7 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
   close durations; out-of-order timestamps are reported as anomalies), `sheetstorm_list_improvement_actions`,
   `sheetstorm_add_improvement_action` (no `If-Match`: edits are last-write-wins)
 - **Case notes (5)**, **Reports (3)**, **Threat intel (7)**, **Knowledge base (6)**,
-  **Advanced analysis (4)**, **Defang (2)**
+  **Advanced analysis (5)** (search, correlate, STIX and CSV export via `sheetstorm_export_csv`, bulk enrich), **Defang (2)**
 - **Admin (21)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who
   authored records cannot be deleted, the error lists them), roles, permissions, notifications, audit logs,
   health, system status (`sheetstorm_get_system_status`), the org security policy (read-only,

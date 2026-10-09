@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **133 tools** covering the full SheetStorm IR workflow (incl. playbooks, investigative questions, case templates, legal hold, custody export)
+- **138 tools** covering the full SheetStorm IR workflow (incl. playbooks, investigative questions, case templates, response metrics and improvement actions, legal hold, custody export, CSV/STIX export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
@@ -164,6 +164,7 @@ mcp-bridge/
         ├── auth.py
         ├── incidents.py
         ├── timeline.py
+        ├── assignments.py
         ├── tasks.py
         ├── assets.py
         ├── iocs.py
@@ -172,11 +173,16 @@ mcp-bridge/
         ├── attack_graph.py
         ├── case_notes.py
         ├── reports.py
+        ├── playbooks.py
+        ├── questions.py
+        ├── case_templates.py
+        ├── metrics.py
         ├── admin.py
         ├── threat_intel.py
         ├── knowledge_base.py
         ├── advanced_analysis.py
         ├── defang.py
+        ├── _provenance.py  # shared provenance parameters (timeline, IOCs)
         ├── resources.py    # MCP resources
         └── prompts.py      # MCP prompts
 ```

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Dict, List, Optional
@@ -189,6 +190,16 @@ def _load_core(path):
     return index, [group]
 
 
+def check_dfiq_doc(doc, label):
+    """Validate one DFIQ document (any source); raises LibraryError."""
+    if not isinstance(doc, dict) or not isinstance(doc.get('id'), str) or not DFIQ_ID_RE.match(doc['id']):
+        raise LibraryError(f'{label}: missing or invalid id')
+    version = str(doc.get('dfiq_version', ''))
+    if version.split('.')[0] != '1':
+        raise LibraryError(f'{label}: unsupported dfiq_version {version!r}')
+    return doc
+
+
 def _dfiq_docs(base, subdir):
     folder = os.path.join(base, subdir)
     if not os.path.isdir(folder):
@@ -197,13 +208,7 @@ def _dfiq_docs(base, subdir):
     for name in sorted(os.listdir(folder)):
         if not name.endswith(('.yaml', '.yml')):
             continue
-        doc = _read_yaml(os.path.join(folder, name))
-        if not isinstance(doc, dict) or not isinstance(doc.get('id'), str) or not DFIQ_ID_RE.match(doc['id']):
-            raise LibraryError(f'dfiq/{subdir}/{name}: missing or invalid id')
-        version = str(doc.get('dfiq_version', ''))
-        if version.split('.')[0] != '1':
-            raise LibraryError(f'dfiq/{subdir}/{name}: unsupported dfiq_version {version!r}')
-        docs.append(doc)
+        docs.append(check_dfiq_doc(_read_yaml(os.path.join(folder, name)), f'dfiq/{subdir}/{name}'))
     return docs
 
 
@@ -219,9 +224,13 @@ def _guidance(approaches):
 
 
 def _load_dfiq(base):
-    """Parse a vendored DFIQ subset; dangling parents are dropped (the files
-    themselves stay verbatim)."""
-    scenarios, facets, questions = (_dfiq_docs(base, d) for d in ('scenarios', 'facets', 'questions'))
+    """Parse a vendored DFIQ subset from files."""
+    return dfiq_from_docs(*(_dfiq_docs(base, d) for d in ('scenarios', 'facets', 'questions')))
+
+
+def dfiq_from_docs(scenarios, facets, questions):
+    """Build the DFIQ part of the library from parsed documents (files or an
+    import stored in the database); dangling parents are dropped."""
     if not questions:
         return {}, []
     key = lambda d: {d['id'], str(d.get('uuid') or '')}  # noqa: E731
@@ -259,12 +268,56 @@ def _load_dfiq(base):
     return index, [g for g in groups.values() if g['facets']]
 
 
+# DFIQ imported at runtime (services/dfiq_import.py) lives in
+# system_settings[DFIQ_SETTING_KEY] = {commit, sha256, ..., scenarios, facets,
+# questions}. Each worker re-reads its version at most every DB_TTL seconds,
+# so an import or removal reaches every worker without a restart.
+DFIQ_SETTING_KEY = 'dfiq_library'
+DB_TTL = 30.0
+_db_cache = {'at': 0.0, 'version': 0, 'docs': None}
+
+
+def _db_dfiq():
+    """(version, docs|None) of the imported DFIQ library; (0, None) when none
+    or unreadable (the library then works with core questions only)."""
+    now = time.monotonic()
+    if now - _db_cache['at'] < DB_TTL:
+        return _db_cache['version'], _db_cache['docs']
+    try:
+        from app.models.system_setting import SystemSetting
+        row = SystemSetting.query.filter_by(key=DFIQ_SETTING_KEY).first()
+        version, docs = (row.version, row.value) if row is not None else (0, None)
+    except Exception:  # no app context / DB down: keep what we had
+        version, docs = _db_cache['version'], _db_cache['docs']
+    _db_cache.update(at=now, version=version, docs=docs)
+    return version, docs
+
+
+def invalidate_db_cache():
+    _db_cache.update(at=0.0)
+
+
+def library() -> Library:
+    """The library in force now (core + vendored or imported DFIQ)."""
+    version, _ = _db_dfiq()
+    return load_library(db_version=version)
+
+
 @lru_cache(maxsize=4)
-def load_library(core_file=CORE_FILE, dfiq_dir=DFIQ_DIR) -> Library:
-    """The validated library (cached). The arguments exist for tests only."""
+def load_library(core_file=CORE_FILE, dfiq_dir=DFIQ_DIR, db_version=0) -> Library:
+    """The validated library (cached per imported-DFIQ version). The file
+    arguments exist for tests only. Vendored files win over an import."""
     index, groups = _load_core(core_file)
     sources = [dict(CORE_SOURCE)]
     dfiq_index, dfiq_groups = _load_dfiq(dfiq_dir)
+    if not dfiq_index and db_version:
+        docs = _db_cache['docs'] or {}
+        try:
+            dfiq_index, dfiq_groups = dfiq_from_docs(docs.get('scenarios') or [], docs.get('facets') or [],
+                                                     docs.get('questions') or [])
+        except LibraryError:
+            logger.exception('Ignoring an invalid imported DFIQ library')
+            dfiq_index, dfiq_groups = {}, []
     if dfiq_index:
         overlap = set(index) & set(dfiq_index)
         if overlap:
@@ -286,7 +339,7 @@ def reload_library():
 # ---------------------------------------------------------------------------
 
 def get(ref) -> Optional[QuestionDef]:
-    return load_library().get(ref)
+    return library().get(ref)
 
 
 def to_question_kwargs(ref, overrides=None) -> dict:

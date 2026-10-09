@@ -28,6 +28,7 @@ import type {
   CaseTemplateWriteInput,
   CustomFieldsResponse,
   CustomFieldValue,
+  DfiqStatus,
   IncidentCaseTemplateRow,
   IncidentPlaybook,
   InvestigativeQuestion,
@@ -139,4 +140,17 @@ export const playbooksApi = {
       `/incidents/${incidentId}/${path}/activate`
     )
   },
+}
+
+/** DFIQ library import (platform admins); see backend services/dfiq_import.py. */
+export const dfiqApi = {
+  status: (opts?: { signal?: AbortSignal }) => api.get<DfiqStatus>('/questions/library/dfiq', opts),
+  /** Without a file the server downloads the pinned archive from GitHub. */
+  importLibrary: (archive?: File) => {
+    if (!archive) return api.post<DfiqStatus>('/questions/library/dfiq/import', {})
+    const form = new FormData()
+    form.append('archive', archive)
+    return api.uploadFile<DfiqStatus>('/questions/library/dfiq/import', form)
+  },
+  remove: () => api.delete<DfiqStatus>('/questions/library/dfiq'),
 }

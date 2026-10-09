@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { TemplateEditorDialog } from '@/components/templates/TemplateEditorDialog'
+import { DfiqLibraryCard } from '@/components/templates/DfiqLibraryCard'
 import { caseTemplatesApi } from '@/lib/endpoints/questions'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { templateSummaryText } from '@/lib/template-definition'
@@ -145,6 +146,8 @@ export default function TemplatesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <DfiqLibraryCard />
 
       <TemplateEditorDialog open={editorOpen} onOpenChange={setEditorOpen} template={editing} onSaved={load} />
     </div>

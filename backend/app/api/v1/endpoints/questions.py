@@ -352,7 +352,7 @@ def list_all_questions():
 def question_library_tree():
     """The built-in library: groups (scenarios / core) -> facets -> questions,
     plus the sources with their licence and attribution text."""
-    return jsonify(question_library.load_library().tree()), 200
+    return jsonify(question_library.library().tree()), 200
 
 
 @api_bp.route('/questions/library/<string:ref>', methods=['GET'])

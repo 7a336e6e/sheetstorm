@@ -81,6 +81,7 @@ GROUPS: dict[str, GroupDef] = {
     'audit_export': GroupDef('10 per hour', 'Audit log export.', 'admin', routes=('GET /audit-logs/export',)),
     'audit_integrity': GroupDef('6 per hour', 'Audit chain integrity check.', 'admin', routes=('GET /admin/audit-integrity',)),
     'admin_status': GroupDef('30 per minute', 'System status page.', 'admin', routes=('GET /admin/system-status',)),
+    'library_import': GroupDef('5 per hour', 'Importing the DFIQ question library.', 'admin', routes=('POST /questions/library/dfiq/import',)),
     'integrations_discovery': GroupDef('10 per minute', 'Listing models of a local AI server.', 'admin', routes=('GET /integrations/ollama/models',)),
     # Features.
     'search': GroupDef('60 per minute', 'Global search.', routes=('GET /search',)),

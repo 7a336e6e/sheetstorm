@@ -6,6 +6,9 @@ from app import db
 from app.models import Team, TeamMember, User
 from app.middleware.rbac import require_permission, require_all_permissions, get_current_user
 from app.middleware.audit import audit_log
+from app.utils.audit_diff import record_changes, snapshot
+
+_TEAM_AUDIT_FIELDS = ('name', 'description')
 
 
 @api_bp.route('/teams', methods=['GET'])
@@ -48,6 +51,7 @@ def create_team():
     )
     db.session.add(team)
     db.session.commit()
+    record_changes({}, snapshot(team, _TEAM_AUDIT_FIELDS))
 
     return jsonify(team.to_dict()), 201
 
@@ -79,6 +83,7 @@ def update_team(team_id):
         return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
 
     data = request.get_json()
+    before = snapshot(team, _TEAM_AUDIT_FIELDS)
 
     if 'name' in data:
         name = data['name'].strip()
@@ -94,6 +99,7 @@ def update_team(team_id):
         team.description = data['description'].strip() or None
 
     db.session.commit()
+    record_changes(before, snapshot(team, _TEAM_AUDIT_FIELDS))
 
     return jsonify(team.to_dict()), 200
 
@@ -110,8 +116,11 @@ def delete_team(team_id):
     if not team:
         return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
 
+    before = snapshot(team, _TEAM_AUDIT_FIELDS)
+    before['members'] = sorted(str(m.user_id) for m in TeamMember.query.filter_by(team_id=team.id))
     db.session.delete(team)
     db.session.commit()
+    record_changes(before, {})
 
     return jsonify({'message': 'Team deleted successfully'}), 200
 
@@ -144,6 +153,7 @@ def add_team_member(team_id):
     member = TeamMember(team_id=team.id, user_id=user.id)
     db.session.add(member)
     db.session.commit()
+    record_changes({'members': []}, {'members': [str(user.id)]}, member_email=user.email)
 
     return jsonify({'message': 'User added to team'}), 201
 
@@ -166,5 +176,6 @@ def remove_team_member(team_id, user_id):
 
     db.session.delete(member)
     db.session.commit()
+    record_changes({'members': [str(user_id)]}, {'members': []})
 
     return jsonify({'message': 'User removed from team'}), 200

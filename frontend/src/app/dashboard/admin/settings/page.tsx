@@ -8,7 +8,7 @@
 
 import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2 } from 'lucide-react'
+import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2, ScrollText } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab'
@@ -18,6 +18,7 @@ import { ThreatIntelTab } from '@/components/settings/ThreatIntelTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { AuthenticationTab } from '@/components/settings/AuthenticationTab'
 import { MitrePatternManager } from '@/components/settings/MitrePatternManager'
+import { AuditRetentionTab } from '@/components/settings/AuditRetentionTab'
 import { useAuthStore } from '@/lib/store'
 
 const TAB_CONFIG = [
@@ -30,6 +31,7 @@ const TAB_CONFIG = [
     { value: 'mitre-patterns', label: 'MITRE Patterns', icon: FileCode2, anyOf: ['incidents:read', 'admin:manage'] },
     { value: 'notifications', label: 'Notifications', icon: Bell, anyOf: ['integrations:read'] },
     { value: 'authentication', label: 'Authentication', icon: Shield, anyOf: ['integrations:read'] },
+    { value: 'audit-retention', label: 'Audit Retention', icon: ScrollText, anyOf: ['organizations:manage'] },
 ]
 
 /** Tabs a user holding `permissions` may see, in display order. */
@@ -113,6 +115,11 @@ function SettingsInner() {
                 {show('authentication') && (
                     <TabsContent value="authentication" className="mt-6 max-w-4xl">
                         <AuthenticationTab />
+                    </TabsContent>
+                )}
+                {show('audit-retention') && (
+                    <TabsContent value="audit-retention" className="mt-6 max-w-4xl">
+                        <AuditRetentionTab />
                     </TabsContent>
                 )}
             </Tabs>

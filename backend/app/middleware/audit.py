@@ -316,6 +316,17 @@ def _collect_request_context() -> dict:
     }
 
 
+def _response_status(result):
+    """HTTP status of a view's return value: ``(body, status[, headers])``,
+    ``(response, headers)``, a ``Response`` or a bare body (200)."""
+    if isinstance(result, tuple):
+        if len(result) >= 2 and isinstance(result[1], int):
+            return result[1]
+        result = result[0] if result else None
+    status = getattr(result, 'status_code', None)
+    return status if isinstance(status, int) else 200
+
+
 def audit_log(event_type, action, resource_type=None):
     """Decorator to log actions to audit trail.
 
@@ -374,7 +385,7 @@ def audit_log(event_type, action, resource_type=None):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     incident_id=incident.id if incident else kwargs.get('incident_id'),
-                    status_code=result[1] if isinstance(result, tuple) and len(result) >= 2 else 200,
+                    status_code=_response_status(result),
                     duration_ms=duration_ms,
                     details=details,
                     **ctx,

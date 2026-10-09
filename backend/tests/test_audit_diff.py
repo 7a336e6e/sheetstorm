@@ -2,6 +2,7 @@
 import datetime
 import uuid
 
+import pytest
 from flask import g
 
 from app.utils.audit_diff import audit_changes, record_changes, snapshot
@@ -92,3 +93,37 @@ def test_log_audit_event_system_kwargs(app, org_a):
     row = AuditLog.query.filter_by(action=f'sys_{marker}').one()
     assert row.organization_id == org_a.id and row.user_email == 'system:purge' and row.user_id is None
     assert row.details['changes'] == {'x': {'from': 1, 'to': 2}}
+
+
+def _status_probe_response(kind):
+    from flask import jsonify, make_response
+    if kind == 'tuple':
+        return jsonify(ok=False), 409
+    if kind == 'response':
+        resp = jsonify(ok=False)
+        resp.status_code = 403
+        return resp
+    if kind == 'response_headers':
+        return make_response(jsonify(ok=True), 202), {'X-Probe': '1'}
+    return jsonify(ok=True)
+
+
+@pytest.mark.parametrize('kind,expected', [('tuple', 409), ('response', 403), ('response_headers', 202),
+                                           ('plain', 200)])
+def test_audit_log_records_the_real_status(app, users, kind, expected):
+    """A view may return (body, status) or a Response carrying its own status."""
+    from app.middleware.audit import audit_log
+    from app.models import AuditLog
+    marker = uuid.uuid4().hex
+
+    @audit_log('data_modification', f'status_probe_{marker}', 'incident')
+    def handler():
+        return _status_probe_response(kind)
+
+    with app.test_request_context('/api/v1/probe', method='POST'):
+        g.current_user = users['Administrator']
+        try:
+            handler()
+        finally:
+            g.pop('current_user', None)
+    assert AuditLog.query.filter_by(action=f'status_probe_{marker}').one().status_code == expected

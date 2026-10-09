@@ -28,6 +28,23 @@ async def test_update_incident_rejects_unknown_or_conflicting_clears(client, bac
     assert backend.calls == []
 
 
+async def test_update_incident_sets_and_clears_rt_post_milestones(client, backend):
+    backend.set("PUT", f"/incidents/{I}", {"id": I, "title": "T"})
+    out = await incidents.sheetstorm_update_incident(
+        incident_id=I, first_malicious_at="2026-01-01T00:00:00Z", clear_milestones="responded_at")
+    assert out.startswith("✓")
+    body = backend.find("PUT", f"/incidents/{I}")["json"]
+    assert body == {"first_malicious_at": "2026-01-01T00:00:00Z", "responded_at": None}
+
+
+async def test_get_incident_shows_first_malicious_and_responded(client, backend):
+    backend.set("GET", f"/incidents/{I}", {"id": I, "title": "T", "first_malicious_at": "2026-01-01T00:00:00+00:00",
+                                          "responded_at": "2026-01-02T00:00:00+00:00"})
+    out = await incidents.sheetstorm_get_incident(incident_id=I)
+    assert "- First Malicious: 2026-01-01T00:00:00+00:00" in out
+    assert "- Responded: 2026-01-02T00:00:00+00:00" in out
+
+
 async def test_update_incident_reports_milestone_400(client, backend):
     backend.set("PUT", f"/incidents/{I}", {"error": "invalid_milestones", "code": "milestone_order",
                                           "message": "detected_at must not be after contained_at"}, status=400)

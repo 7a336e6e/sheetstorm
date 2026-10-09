@@ -8,7 +8,8 @@ from sheetstorm_mcp.client import SheetStormAPIError
 from sheetstorm_mcp.server import get_client, mcp
 
 # IR milestones in the order the backend enforces (each <= the next).
-MILESTONE_FIELDS = ("detected_at", "contained_at", "eradicated_at", "recovered_at", "closed_at")
+MILESTONE_FIELDS = ("first_malicious_at", "detected_at", "responded_at", "contained_at", "eradicated_at",
+                    "recovered_at", "closed_at")
 
 
 def _format_incident(inc: dict) -> str:
@@ -222,7 +223,9 @@ async def sheetstorm_update_incident(
     tlp: Optional[str] = None,
     team_id: Optional[str] = None,
     lead_responder_id: Optional[str] = None,
+    first_malicious_at: Optional[str] = None,
     detected_at: Optional[str] = None,
+    responded_at: Optional[str] = None,
     contained_at: Optional[str] = None,
     eradicated_at: Optional[str] = None,
     recovered_at: Optional[str] = None,
@@ -232,9 +235,10 @@ async def sheetstorm_update_incident(
 ) -> str:
     """Update incident details and IR milestones.
 
-    Milestones must be in order detected <= contained <= eradicated <=
-    recovered <= closed and not more than 5 minutes in the future; the
-    server rejects violations (nothing is saved).
+    Milestones must be in order first_malicious <= detected <= contained <=
+    eradicated <= recovered <= closed, responded must not precede detected,
+    and none may be more than 5 minutes in the future; the server rejects
+    violations (nothing is saved).
 
     Args:
         incident_id: UUID of the incident
@@ -247,7 +251,9 @@ async def sheetstorm_update_incident(
         tlp: Traffic Light Protocol level (white, green, amber, amber_strict, red)
         team_id: UUID of the owning team
         lead_responder_id: UUID of the new lead responder (notified, gets the "Lead Responder" assignment)
+        first_malicious_at: Earliest known malicious activity, ISO 8601 (no offset = UTC)
         detected_at: Detection time, ISO 8601 (no offset = UTC)
+        responded_at: First response time, ISO 8601 (set automatically on the first assignment or status change)
         contained_at: Containment time, ISO 8601
         eradicated_at: Eradication time, ISO 8601
         recovered_at: Recovery time, ISO 8601
@@ -268,7 +274,9 @@ async def sheetstorm_update_incident(
             ("tlp", tlp),
             ("team_id", team_id),
             ("lead_responder_id", lead_responder_id),
+            ("first_malicious_at", first_malicious_at),
             ("detected_at", detected_at),
+            ("responded_at", responded_at),
             ("contained_at", contained_at),
             ("eradicated_at", eradicated_at),
             ("recovered_at", recovered_at),

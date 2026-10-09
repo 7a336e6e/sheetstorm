@@ -1,0 +1,68 @@
+# Built-in case template: generic intrusion (SheetStorm, MIT).
+# Validated by schemas/case_template.CaseTemplateDefinition and
+# services/case_template_service at load time.
+schema: sheetstorm-case-template
+key: generic-intrusion
+name: Generic intrusion
+description: Starting point for an unauthorized-access incident of unknown type, with the core scoping, containment and root-cause questions and a handful of first leads.
+incident_type: unauthorized_access
+definition:
+  schema_version: 1
+  defaults: {severity: high, tlp: amber, classification: unauthorized_access}
+  questions:
+    - {ref: "ss:SSQ-001"}
+    - {ref: "ss:SSQ-002"}
+    - {ref: "ss:SSQ-003"}
+    - {ref: "ss:SSQ-004"}
+    - {ref: "ss:SSQ-005"}
+    - {ref: "ss:SSQ-006"}
+    - {ref: "ss:SSQ-007"}
+    - {ref: "ss:SSQ-008"}
+    - {ref: "ss:SSQ-009"}
+    - {ref: "ss:SSQ-010"}
+    - {ref: "ss:SSQ-011"}
+    - {ref: "ss:SSQ-012"}
+    - {ref: "ss:SSQ-013"}
+    - {ref: "ss:SSQ-014"}
+    - {ref: "ss:SSQ-015"}
+    - {ref: "ss:SSQ-016"}
+    - {ref: "ss:SSQ-017"}
+    - {ref: "ss:SSQ-018"}
+    - {ref: "ss:SSQ-019"}
+  leads:
+    - key: initial-access
+      title: Identify the initial access vector and earliest attacker activity
+      phase: 2
+      priority: high
+      investigation_direction: Start from the first alert or report and work backwards through authentication, VPN, email and perimeter logs.
+      answers: ["ss:SSQ-001", "ss:SSQ-002", "ss:SSQ-003"]
+    - key: affected-hosts
+      title: Build the list of affected hosts
+      phase: 2
+      priority: high
+      investigation_direction: Pivot on the known indicators and accounts across EDR, DNS, proxy and authentication logs.
+      answers: ["ss:SSQ-008", "ss:SSQ-009"]
+    - key: account-activity
+      title: Review activity of the compromised accounts
+      phase: 2
+      priority: high
+      investigation_direction: Look for logons from unusual sources, privilege changes and new accounts.
+      answers: ["ss:SSQ-006", "ss:SSQ-007"]
+    - key: persistence-hunt
+      title: Hunt for persistence mechanisms on affected hosts
+      phase: 3
+      priority: medium
+      answers: ["ss:SSQ-004", "ss:SSQ-005"]
+    - key: c2-infrastructure
+      title: Identify command-and-control infrastructure
+      phase: 2
+      priority: medium
+      investigation_direction: Review outbound connections from affected hosts for rare destinations and beacon-like timing.
+      answers: ["ss:SSQ-011"]
+    - key: data-exposure
+      title: Assess data access and exfiltration
+      phase: 2
+      priority: high
+      answers: ["ss:SSQ-012", "ss:SSQ-013"]
+  playbook: {builtin: picerl-generic}
+  custom_fields: []

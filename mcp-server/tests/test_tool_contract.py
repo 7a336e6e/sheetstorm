@@ -22,9 +22,11 @@ CASES: dict[str, tuple] = {
                                   {"status": "open", "q": "x", "sort": "-severity", "per_page": "200"}),
     "sheetstorm_get_incident": ({"incident_id": I}, "GET", f"/incidents/{I}", None, None),
     "sheetstorm_create_incident": ({"title": "T", "description": "D", "detected_at": "2026-01-01T00:00:00Z",
-                                    "lead_responder_id": "u1"}, "POST", "/incidents",
+                                    "lead_responder_id": "u1", "case_template": "builtin:ransomware"}, "POST",
+                                   "/incidents",
                                    {"title": "T", "description": "D", "severity": "medium",
-                                    "detected_at": "2026-01-01T00:00:00Z", "lead_responder_id": "u1"}, None),
+                                    "detected_at": "2026-01-01T00:00:00Z", "lead_responder_id": "u1",
+                                    "case_template": "builtin:ransomware"}, None),
     "sheetstorm_update_incident": ({"incident_id": I, "title": "N", "contained_at": "2026-01-02T00:00:00Z",
                                     "lead_responder_id": "u2", "expected_version": 3}, "PUT", f"/incidents/{I}",
                                    {"title": "N", "contained_at": "2026-01-02T00:00:00Z", "lead_responder_id": "u2",
@@ -273,6 +275,26 @@ CASES: dict[str, tuple] = {
     "sheetstorm_export_stix": ({"incident_id": I}, "GET", f"/incidents/{I}/export/stix", None, None),
     "sheetstorm_bulk_enrich": ({"ioc_values": "ip:1.2.3.4"}, "POST", "/bulk-enrich",
                                {"ioc_values": [{"type": "ip", "value": "1.2.3.4"}]}, None),
+    # questions
+    "sheetstorm_list_open_questions": ({"status": "open", "limit": 500}, "GET", "/questions", None,
+                                       {"status": "open", "per_page": "200"}),
+    "sheetstorm_answer_question": ({"incident_id": I, "question_id": "q1", "answer": "WS-01", "confidence": "high",
+                                    "evidence_refs": [{"evidence_type": "host", "evidence_id": "h1"}],
+                                    "expected_version": 2}, "PUT", f"/incidents/{I}/questions/q1",
+                                   {"answer": "WS-01", "confidence": "high", "status": "answered",
+                                    "evidence_refs": [{"evidence_type": "host", "evidence_id": "h1"}],
+                                    "expected_version": 2}, None),
+    "sheetstorm_add_question": ({"incident_id": I, "question": "Which accounts?", "phase": 2, "priority": "high"},
+                                "POST", f"/incidents/{I}/questions",
+                                {"question": "Which accounts?", "phase": 2, "priority": "high"}, None),
+    "sheetstorm_get_question_report": ({"incident_id": I}, "GET", f"/incidents/{I}/questions/report-data",
+                                       None, None),
+    # case templates
+    "sheetstorm_list_case_templates": ({}, "GET", "/case-templates", None, None),
+    "sheetstorm_apply_case_template": ({"incident_id": I, "template_id": "builtin:ransomware",
+                                        "apply_defaults": True, "dry_run": True}, "POST",
+                                       f"/incidents/{I}/case-templates/builtin:ransomware/apply",
+                                       {"apply_defaults": True, "dry_run": True}, None),
     # defang
     "sheetstorm_defang_iocs": ({"values": ["evil.com"]}, "POST", "/tools/defang", {"values": ["evil.com"]}, None),
     "sheetstorm_refang_iocs": ({"text": "evil[.]com"}, "POST", "/tools/refang", {"text": "evil[.]com"}, None),
@@ -298,7 +320,7 @@ def test_tool_names_are_unique(pkg):
 def _tool_fn(name: str):
     for mod in ("auth", "incidents", "assignments", "timeline", "tasks", "assets", "iocs", "artifacts",
                 "attack_graph", "case_notes", "playbooks", "reports", "admin", "threat_intel",
-                "knowledge_base", "advanced_analysis", "defang", "evidence"):
+                "knowledge_base", "advanced_analysis", "defang", "evidence", "questions", "case_templates"):
         m = importlib.import_module(f"{PKG}.tools.{mod}")
         if hasattr(m, name):
             return getattr(m, name)
@@ -325,6 +347,26 @@ async def test_tool_contract(name, client, backend, tmp_path):
         for k, v in params_subset.items():
             assert call["params"].get(k) == v, f"{name}: param {k}={call['params'].get(k)!r}, expected {v!r}"
     assert call["auth"] == "Bearer static-token"
+
+
+async def test_builtin_playbook_ids_route_to_builtin_endpoints(client, backend):
+    await _tool_fn("sheetstorm_get_playbook_template")(playbook_id="builtin:ransomware")
+    assert backend.find("GET", "/playbooks/builtin/ransomware") is not None
+    await _tool_fn("sheetstorm_activate_playbook")(incident_id=I, playbook_id="builtin:ransomware")
+    assert backend.find("POST", f"/incidents/{I}/playbooks/builtin/ransomware/activate") is not None
+    # org playbooks keep their uuid routes
+    await _tool_fn("sheetstorm_get_playbook_template")(playbook_id="p9")
+    assert backend.find("GET", "/playbooks/p9") is not None
+
+
+async def test_question_tools_per_incident_listing_and_input_guard(client, backend):
+    await _tool_fn("sheetstorm_list_open_questions")(incident_id=I)
+    call = backend.find("GET", f"/incidents/{I}/questions")
+    assert call is not None and call["params"]["status"] == "open,in_progress"
+    out = await _tool_fn("sheetstorm_add_question")(incident_id=I)
+    assert out.startswith("✗") and backend.find("POST", f"/incidents/{I}/questions") is None
+    await _tool_fn("sheetstorm_add_question")(incident_id=I, library_ref="ss:SSQ-006")
+    assert backend.find("POST", f"/incidents/{I}/questions")["json"]["library_ref"] == "ss:SSQ-006"
 
 
 async def test_every_prompt_renders_and_only_uses_known_routes(pkg, client, backend):

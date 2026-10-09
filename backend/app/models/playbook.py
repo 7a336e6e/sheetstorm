@@ -32,6 +32,7 @@ class Playbook(BaseModel):
     incident_type = Column(String(100))
     definition = Column(JSONB, default=dict)
     is_template = Column(Boolean, default=True)
+    cloned_from = Column(String(120))   # 'builtin:<key>' when cloned from a built-in playbook
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
 
@@ -56,6 +57,7 @@ class IncidentPlaybook(BaseModel):
 
     incident_id = Column(UUID(as_uuid=True), ForeignKey('incidents.id', ondelete='CASCADE'), nullable=False)
     playbook_id = Column(UUID(as_uuid=True), ForeignKey('playbooks.id', ondelete='SET NULL'), nullable=True)
+    builtin_key = Column(String(64))           # set when a built-in playbook was activated (playbook_id is NULL)
     name = Column(String(255))
     definition = Column(JSONB, default=dict)   # snapshot of the template at activation
     current_phase = Column(Integer, default=1)

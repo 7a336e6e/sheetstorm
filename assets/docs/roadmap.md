@@ -19,7 +19,7 @@
 | Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
 | Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
 | Auto-enrichment & soft fallback | ✅ 1/1 |
-| MCP server (127 tools, 9 prompts, 7 resources, OAuth, Docker) | ✅ 20/20 |
+| MCP server (133 tools, 9 prompts, 7 resources, OAuth, Docker) | ✅ 20/20 |
 | Testing | 🔜 0/4 deferred |
 
 ---
@@ -46,7 +46,7 @@
 | P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
 | P1 | Case notes & kill chain phase per event | ✅ Done |
 | P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
-| P1 | MCP server for AI assistant integration (127 tools) | ✅ Done |
+| P1 | MCP server for AI assistant integration (133 tools) | ✅ Done |
 | P1 | MITRE ATT&CK pattern model, suggest service & seed data | ✅ Done |
 | P1 | Test suite — pytest (started) · Vitest · Playwright | 🚧 In progress |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |
@@ -65,7 +65,7 @@
 | P1 | Investigative questions board linked to findings | 🔜 Planned |
 | P1 | Finding & timestamp provenance (source, tool, timezone, confidence) | 🔜 Planned |
 | P1 | Decision & response-action log | 🔜 Planned |
-| P2 | Case templates (ransomware, BEC, insider threat, cloud compromise) | 🔜 Planned |
+| P2 | Case templates (ransomware, BEC, insider threat, cloud compromise) | 🚧 Backend, API and MCP shipped (generic intrusion + ransomware); UI and remaining templates in progress |
 | P3 | VERIS incident classification & reporting | 🔜 Planned |
 | P2 | Global search UI across incidents, IOCs, notes, and evidence | 🔜 Planned |
 | P2 | Real-time collaboration (presence, conflict-safe concurrent edits) | 🔜 Planned |
@@ -165,7 +165,9 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 | **evidence** | 5 | Evidence register, custody transfers, ledger verification |
 | **attack_graph** | 10 | Nodes, edges, auto-generation, node/edge types |
 | **case_notes** | 5 | Case note CRUD |
-| **playbooks** | 7 | Templates, activation, phases, actions, tasks |
+| **playbooks** | 7 | Templates (incl. built-in `builtin:<key>`), activation, phases, actions, tasks |
+| **questions** | 4 | Investigative questions: list open, answer with evidence, add, report data |
+| **case_templates** | 2 | List templates, apply a template to an incident |
 | **reports** | 3 | PDF + AI report generation |
 | **admin** | 20 | Users and lifecycle, roles, permissions, notifications, audit logs, health, system status |
 | **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |

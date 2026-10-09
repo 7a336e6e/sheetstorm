@@ -29,7 +29,7 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 
 ## Current Implementation Status
 
-### Implemented Tools (127)
+### Implemented Tools (133)
 
 The MCP server is fully operational with the following tool modules:
 
@@ -50,6 +50,8 @@ The MCP server is fully operational with the following tool modules:
 | **threat_intel** | `virustotal_lookup`, `misp_push_iocs`, `cve_lookup`, `ip_reputation`, `domain_reputation`, `email_reputation`, `ransomware_lookup` | ✅ Complete |
 | **knowledge_base** | `kb_lolbas`, `kb_event_ids`, `kb_d3fend`, `kb_d3fend_suggest` | ✅ Complete |
 | **defang** | `defang_iocs`, `refang_iocs` | ✅ Complete |
+| **questions** | `list_open_questions`, `answer_question`, `add_question`, `get_question_report` | ✅ Complete |
+| **case_templates** | `list_case_templates`, `apply_case_template` | ✅ Complete |
 
 ### Implemented Prompts
 

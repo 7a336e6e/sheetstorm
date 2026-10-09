@@ -76,9 +76,17 @@ def _format_runs(runs: list) -> str:
     return "\n".join(lines)
 
 
+def _builtin_key(playbook_id: str) -> str | None:
+    """"builtin:<key>" -> "<key>" (built-in playbooks are addressed that way)."""
+    if isinstance(playbook_id, str) and playbook_id.startswith("builtin:"):
+        return playbook_id.split(":", 1)[1]
+    return None
+
+
 @mcp.tool()
 async def sheetstorm_list_playbook_templates() -> str:
-    """List the organization's IR playbook templates (phase-gated runbooks)."""
+    """List the IR playbook templates (phase-gated runbooks): the built-in ones
+    (ID "builtin:<key>") and the organization's own."""
     client = get_client()
     try:
         data = await client.get("/playbooks")
@@ -99,11 +107,13 @@ async def sheetstorm_get_playbook_template(playbook_id: str) -> str:
     """Get a playbook template with its phases, tasks and actions.
 
     Args:
-        playbook_id: UUID of the playbook template
+        playbook_id: UUID of the playbook template, or "builtin:<key>" for a built-in one
     """
     client = get_client()
     try:
-        return _format_template(await client.get(f"/playbooks/{playbook_id}"), detail=True)
+        key = _builtin_key(playbook_id)
+        path = f"/playbooks/builtin/{key}" if key else f"/playbooks/{playbook_id}"
+        return _format_template(await client.get(path), detail=True)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 
@@ -115,11 +125,14 @@ async def sheetstorm_activate_playbook(incident_id: str, playbook_id: str) -> st
 
     Args:
         incident_id: UUID of the incident
-        playbook_id: UUID of the playbook template
+        playbook_id: UUID of the playbook template, or "builtin:<key>" for a built-in one
     """
     client = get_client()
     try:
-        data = await client.post(f"/incidents/{incident_id}/playbooks/{playbook_id}/activate")
+        key = _builtin_key(playbook_id)
+        path = (f"/incidents/{incident_id}/playbooks/builtin/{key}/activate" if key
+                else f"/incidents/{incident_id}/playbooks/{playbook_id}/activate")
+        data = await client.post(path)
         return "✓ Playbook activated.\n" + _format_instance(data.get("incident_playbook")) + _format_runs(
             data.get("actions_executed") or []
         )

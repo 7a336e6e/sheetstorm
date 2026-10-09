@@ -25,6 +25,9 @@ class IncidentCreate(BaseSchema):
     tlp: Optional[str] = Field('amber', pattern=TLP_PATTERN)
     team_id: Optional[UUID4] = None
     team_ids: Optional[List[UUID4]] = Field(None, max_length=50)
+    # Start from a case template: "builtin:<key>" or an org template UUID.
+    case_template: Optional[str] = Field(
+        None, pattern=r'^(builtin:[a-z0-9][a-z0-9-]{1,63}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$')
 
     @field_validator('detected_at')
     @classmethod

@@ -1,6 +1,6 @@
 """Incident model"""
 from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Index, UniqueConstraint, CheckConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 
@@ -33,6 +33,9 @@ class Incident(BaseModel):
     closed_at = Column(DateTime(timezone=True))
     executive_summary = Column(Text)
     lessons_learned = Column(Text)
+    # Values of the custom fields defined by an applied case template
+    # ({field_key: value}); the definitions live in incident_case_templates.
+    custom_fields = Column(JSONB, nullable=False, default=dict, server_default='{}')
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
     # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE

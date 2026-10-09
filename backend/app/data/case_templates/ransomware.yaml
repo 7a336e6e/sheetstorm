@@ -1,0 +1,71 @@
+# Built-in case template: ransomware (SheetStorm, MIT). See generic-intrusion.yaml.
+schema: sheetstorm-case-template
+key: ransomware
+name: Ransomware
+description: Ransomware or extortion incident. Seeds the scoping, backup, impact and recovery questions, six starter leads, the ransomware playbook and ransomware-specific fields.
+incident_type: ransomware
+definition:
+  schema_version: 1
+  defaults: {severity: critical, tlp: amber, classification: ransomware}
+  questions:
+    - {ref: "ss:SSQ-001"}
+    - {ref: "ss:SSQ-002"}
+    - {ref: "ss:SSQ-003"}
+    - {ref: "ss:SSQ-004"}
+    - {ref: "ss:SSQ-006"}
+    - {ref: "ss:SSQ-007"}
+    - {ref: "ss:SSQ-008"}
+    - {ref: "ss:SSQ-009"}
+    - {ref: "ss:SSQ-010"}
+    - {ref: "ss:SSQ-011"}
+    - {ref: "ss:SSQ-013"}
+    - {ref: "ss:SSQ-014"}
+    - {ref: "ss:SSQ-015"}
+    - {ref: "ss:SSQ-016"}
+    - {ref: "ss:SSQ-017"}
+    - {ref: "ss:SSQ-019"}
+    - {ref: "ss:SSQ-025"}
+    - {ref: "ss:SSQ-026"}
+    - {ref: "ss:SSQ-027"}
+    - {ref: "ss:SSQ-028"}
+  leads:
+    - key: patient-zero
+      title: Identify the patient-zero host
+      phase: 2
+      priority: high
+      investigation_direction: Find the earliest encrypted or suspicious host by file-modification times, EDR telemetry and authentication logs.
+      answers: ["ss:SSQ-001", "ss:SSQ-002"]
+    - key: ransom-note-sample
+      title: Collect the ransom note and an encrypted sample
+      phase: 2
+      priority: high
+      investigation_direction: Preserve before cleanup. Record hashes, note text, contact addresses and extension.
+      answers: ["ss:SSQ-025"]
+    - key: initial-access-logs
+      title: Review VPN, RDP and remote-access authentication logs for initial access
+      phase: 2
+      priority: high
+      answers: ["ss:SSQ-001", "ss:SSQ-006"]
+    - key: backup-integrity
+      title: Verify backup infrastructure integrity
+      phase: 2
+      priority: critical
+      task_type: verification
+      investigation_direction: Check backup servers, snapshots and offline copies for deletion, encryption or tampering.
+      answers: ["ss:SSQ-026"]
+    - key: exfil-tooling
+      title: Hunt for exfiltration tooling (rclone, MEGAsync, WinSCP and similar)
+      phase: 2
+      priority: high
+      answers: ["ss:SSQ-013"]
+    - key: mass-deployment
+      title: Enumerate GPO, scheduled-task and service deployments of the encryptor
+      phase: 2
+      priority: high
+      answers: ["ss:SSQ-004", "ss:SSQ-008"]
+  playbook: {builtin: ransomware}
+  custom_fields:
+    - {key: ransomware_family, label: Ransomware family, type: text}
+    - {key: ransom_note_observed, label: Ransom note observed, type: boolean}
+    - {key: backups_impacted, label: Backups impacted, type: select, options: [none, partial, total]}
+    - {key: leak_site_listing, label: Leak-site listing, type: boolean}

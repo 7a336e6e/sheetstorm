@@ -1,0 +1,263 @@
+# SheetStorm core investigative questions (authored by the SheetStorm project, MIT).
+# DFIQ-shaped: facets group questions; ids are SSF-## (facets) and SSQ-### (questions).
+# Referenced from case templates as "ss:SSQ-###". Loaded with yaml.safe_load and
+# validated by app/services/question_library.py.
+schema: sheetstorm-question-library
+version: 1
+namespace: ss
+name: SheetStorm core questions
+license: MIT
+facets:
+  - {id: SSF-01, name: Initial access}
+  - {id: SSF-02, name: Execution and persistence}
+  - {id: SSF-03, name: Accounts and credentials}
+  - {id: SSF-04, name: Scope}
+  - {id: SSF-05, name: Command and control}
+  - {id: SSF-06, name: Data access and exfiltration}
+  - {id: SSF-07, name: Impact}
+  - {id: SSF-08, name: Containment and eradication}
+  - {id: SSF-09, name: Root cause and lessons}
+  - {id: SSF-10, name: Email and identity}
+  - {id: SSF-11, name: Ransomware}
+  - {id: SSF-12, name: Web application}
+  - {id: SSF-13, name: Cloud control plane}
+  - {id: SSF-14, name: Insider activity}
+  - {id: SSF-15, name: Malware outbreak}
+questions:
+  # SSF-01 Initial access
+  - id: SSQ-001
+    facet: SSF-01
+    question: What was the initial access vector?
+    description: Phishing, exposed service, stolen or reused credentials, supply chain, removable media, or something else. Cite the first evidence of attacker presence.
+    phase: 2
+    priority: high
+  - id: SSQ-002
+    facet: SSF-01
+    question: When did the earliest attacker activity occur (start of dwell time)?
+    description: The earliest event you can attribute to the attacker, not the time of detection. Record the source of the timestamp.
+    phase: 2
+    priority: high
+  - id: SSQ-003
+    facet: SSF-01
+    question: Which vulnerability (CVE) or misconfiguration was exploited, if any?
+    description: Include the affected product and version, and whether a patch or mitigation existed at the time.
+    phase: 2
+    priority: medium
+  # SSF-02 Execution and persistence
+  - id: SSQ-004
+    facet: SSF-02
+    question: What persistence mechanisms did the attacker establish?
+    description: Services, scheduled tasks, run keys, startup items, WMI subscriptions, new accounts, cloud keys, web shells, and similar.
+    phase: 3
+    priority: high
+  - id: SSQ-005
+    facet: SSF-02
+    question: Which tools or malware were executed, and on which systems?
+    description: Binaries, scripts, living-off-the-land tools. Link the hashes and the hosts where each was observed.
+    phase: 2
+    priority: medium
+  # SSF-03 Accounts and credentials
+  - id: SSQ-006
+    facet: SSF-03
+    question: Which accounts were used or compromised?
+    description: User, service, and administrative accounts, with the evidence that each was misused.
+    phase: 2
+    priority: high
+  - id: SSQ-007
+    facet: SSF-03
+    question: Were privileged credentials obtained (domain admin, root, cloud admin)?
+    description: Credential dumping, Kerberoasting, token theft, secrets read from vaults or configuration files.
+    phase: 2
+    priority: high
+  # SSF-04 Scope
+  - id: SSQ-008
+    facet: SSF-04
+    question: Which hosts did the attacker access?
+    description: Every system with evidence of interactive access, tool execution, or lateral movement.
+    phase: 2
+    priority: high
+  - id: SSQ-009
+    facet: SSF-04
+    question: Is scoping complete (all hosts, accounts and data stores identified)?
+    description: Answer only when sweeps for known indicators on all in-scope systems are finished and no open lead can still expand the scope.
+    phase: 3
+    priority: critical
+  - id: SSQ-010
+    facet: SSF-04
+    question: Is the attacker still active in the environment?
+    description: Evidence of current access, beaconing, or recent logins. Reassess before and after containment.
+    phase: 3
+    priority: critical
+  # SSF-05 Command and control
+  - id: SSQ-011
+    facet: SSF-05
+    question: What command-and-control infrastructure did the attacker use?
+    description: Domains, IPs, URLs, protocols, certificates, remote-access tools, and the hosts that talked to them.
+    phase: 2
+    priority: medium
+  # SSF-06 Data access and exfiltration
+  - id: SSQ-012
+    facet: SSF-06
+    question: What data was accessed?
+    description: Systems, shares, databases, mailboxes, and buckets the attacker read, with the data classification of each.
+    phase: 2
+    priority: high
+  - id: SSQ-013
+    facet: SSF-06
+    question: Was data exfiltrated (what, how much, to where)?
+    description: Staging locations, archive tools, transfer volume and destination, and the evidence for each.
+    phase: 2
+    priority: high
+  # SSF-07 Impact
+  - id: SSQ-014
+    facet: SSF-07
+    question: Which systems or data were encrypted, destroyed or modified?
+    description: Business impact, recoverability, and whether integrity of remaining data can be trusted.
+    phase: 2
+    priority: high
+  # SSF-08 Containment and eradication
+  - id: SSQ-015
+    facet: SSF-08
+    question: Has all attacker access been removed?
+    description: Persistence removed, C2 blocked, compromised hosts rebuilt or isolated, and monitoring confirms no return.
+    phase: 4
+    priority: critical
+  - id: SSQ-016
+    facet: SSF-08
+    question: Have all affected credentials been reset or revoked?
+    description: Passwords, tokens, API keys, certificates, and sessions, including service accounts and secrets stored on compromised hosts.
+    phase: 4
+    priority: high
+  # SSF-09 Root cause and lessons
+  - id: SSQ-017
+    facet: SSF-09
+    question: What is the root cause of the incident?
+    description: The underlying weakness that allowed the intrusion, beyond the initial vector.
+    phase: 6
+    priority: medium
+  - id: SSQ-018
+    facet: SSF-09
+    question: Which controls failed, or would have detected the attack earlier?
+    description: Preventive and detective controls that were missing, misconfigured, or ignored.
+    phase: 6
+    priority: medium
+  - id: SSQ-019
+    facet: SSF-09
+    question: Are there legal, regulatory or contractual notification obligations?
+    description: Regulators, customers, partners, insurers, and law enforcement, with deadlines and the decision owner.
+    phase: 3
+    priority: high
+  # SSF-10 Email and identity
+  - id: SSQ-020
+    facet: SSF-10
+    question: Were inbox rules, mail forwarding or delegates created?
+    description: Rules that hide or redirect mail, external forwarding, and mailbox delegation or permission changes.
+    phase: 2
+    priority: high
+  - id: SSQ-021
+    facet: SSF-10
+    question: Were OAuth consents or app passwords granted?
+    description: Malicious application consents, newly registered apps, app passwords and long-lived tokens.
+    phase: 2
+    priority: high
+  - id: SSQ-022
+    facet: SSF-10
+    question: How was MFA bypassed or defeated?
+    description: Adversary-in-the-middle phishing, token theft, push fatigue, SIM swap, a weak recovery process, or MFA not enforced.
+    phase: 2
+    priority: high
+  - id: SSQ-023
+    facet: SSF-10
+    question: Were fraudulent payment or data requests made, and was money moved?
+    description: Altered bank details, invoice fraud, gift-card requests; amounts, accounts, and recall status.
+    phase: 2
+    priority: high
+  - id: SSQ-024
+    facet: SSF-10
+    question: Who received malicious mail from the compromised account?
+    description: Internal and external recipients, to support notification and cleanup.
+    phase: 3
+    priority: medium
+  # SSF-11 Ransomware
+  - id: SSQ-025
+    facet: SSF-11
+    question: Which ransomware family or variant is it?
+    description: Ransom note, file extension, encryptor sample, and threat-intel attribution. Determines known tradecraft and decryptor availability.
+    phase: 2
+    priority: high
+  - id: SSQ-026
+    facet: SSF-11
+    question: Were backups targeted or destroyed?
+    description: Backup servers, snapshots, shadow copies, cloud backup consoles, and the integrity of offline copies.
+    phase: 2
+    priority: critical
+  - id: SSQ-027
+    facet: SSF-11
+    question: Is there a leak-site listing or an extortion demand?
+    description: Leak-site posts, contact from the actor, deadlines, and the sample data they have shown.
+    phase: 3
+    priority: high
+  - id: SSQ-028
+    facet: SSF-11
+    question: Is a decryptor or a clean restore path available?
+    description: Public decryptors, key recovery, tested backup restores, and the expected time to recover critical services.
+    phase: 5
+    priority: high
+  # SSF-12 Web application
+  - id: SSQ-029
+    facet: SSF-12
+    question: Which application component or endpoint was exploited?
+    description: Route, parameter, plugin, or dependency, with the request evidence from web and application logs.
+    phase: 2
+    priority: high
+  - id: SSQ-030
+    facet: SSF-12
+    question: Were web shells planted or application files modified?
+    description: Compare deployed files to a known-good build; review recently modified files and unexpected scripts.
+    phase: 2
+    priority: high
+  - id: SSQ-031
+    facet: SSF-12
+    question: Which data stores and secrets were reachable from the application?
+    description: Database credentials, API keys, cloud roles and internal services accessible to the compromised application.
+    phase: 3
+    priority: high
+  # SSF-13 Cloud control plane
+  - id: SSQ-032
+    facet: SSF-13
+    question: Which API actions did the compromised identity perform?
+    description: Control-plane audit logs (CloudTrail, Azure activity, GCP audit) for the identity, by time and source IP.
+    phase: 2
+    priority: high
+  - id: SSQ-033
+    facet: SSF-13
+    question: Were new keys, service principals or federation trusts created?
+    description: Persistence in the cloud control plane (access keys, role assignments, app registrations, and identity-provider changes).
+    phase: 3
+    priority: high
+  # SSF-14 Insider activity
+  - id: SSQ-034
+    facet: SSF-14
+    question: How does the access observed compare with the access the person was authorized to have?
+    description: Role entitlements versus actual access to systems, files, and data.
+    phase: 2
+    priority: high
+  - id: SSQ-035
+    facet: SSF-14
+    question: Does the activity window line up with HR or business events?
+    description: Resignation, disciplinary action, role change, or contract end. Handle with HR and legal guidance.
+    phase: 2
+    priority: medium
+  # SSF-15 Malware outbreak
+  - id: SSQ-036
+    facet: SSF-15
+    question: How is the malware propagating?
+    description: Network shares, remote execution, exploits, removable media, email, or software distribution tooling.
+    phase: 2
+    priority: high
+  - id: SSQ-037
+    facet: SSF-15
+    question: How many hosts are infected, and is the number still growing?
+    description: Count by confirmed indicator and track the trend after each containment step.
+    phase: 3
+    priority: critical

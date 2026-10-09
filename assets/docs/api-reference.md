@@ -233,6 +233,84 @@ Tasks:
   and must not create a cycle (400 `invalid_parent_task`).
   `investigation_direction` is capped at 5000 characters and `title` at 500.
 
+## Investigative questions
+
+Reads need `incidents:read`, writes `incidents:update` (a Viewer is read-only).
+
+| Method | Endpoint                                              | Description                                   |
+|--------|-------------------------------------------------------|-----------------------------------------------|
+| GET    | `/incidents/{id}/questions`                           | List (filters, `summary`)                     |
+| POST   | `/incidents/{id}/questions`                           | Add a manual question or a `library_ref`      |
+| POST   | `/incidents/{id}/questions/bulk`                      | Add up to 100 library questions (`{refs}`)    |
+| GET    | `/incidents/{id}/questions/{qid}`                     | One question (ETag)                           |
+| PUT    | `/incidents/{id}/questions/{qid}`                     | Edit / answer (`If-Match` or `expected_version`) |
+| DELETE | `/incidents/{id}/questions/{qid}`                     | Archive (soft delete)                         |
+| PUT    | `/incidents/{id}/questions/{qid}/leads`               | Replace the linked leads (`{task_ids}`)       |
+| GET    | `/incidents/{id}/question-links`                      | `[{question_id, task_id}]` for the lead queue |
+| GET    | `/incidents/{id}/questions/report-data`               | Answered / unanswerable / open for a report   |
+| GET    | `/questions`                                          | Questions across the incidents you can access |
+| GET    | `/questions/library`, `/questions/library/{ref}`      | Built-in library (tree, one question)         |
+
+- List filters: `status` and `priority` (comma lists), `phase`, `owner_id`, `owner=me`, `facet`,
+  `task_id` (questions linked to that lead), `include_archived`, `q`. The response adds `summary`
+  (`total`, per-status counts, `resolved`, `progress`, `open_high_priority`, `top_open`) computed over all
+  non-archived questions. Items carry `lead_ids` and server-resolved `evidence` (as for tasks).
+- Rules: `answered` needs `answer` and `confidence`; `unanswerable` needs an `answer` (the rationale);
+  confidence `confirmed` needs at least one evidence ref (400 `answer_required`, `confidence_required`,
+  `evidence_required`). Leaving answered/unanswerable clears `answered_at`/`answered_by` but keeps the text.
+  `answer` is at most 20000 characters and is plain text in the UI.
+- `evidence_refs`: at most 50 `{evidence_type, evidence_id}` refs to records of the same incident
+  (`timeline_event, host, account, network_ioc, host_ioc, malware, artifact, evidence_item, case_note,
+  task`); `owner_id` must be an active user of the organization who can see the incident
+  (400 `invalid_owner`); leads must be tasks of the incident (400 `invalid_leads`).
+- Adding a question that is already on the incident (same library ref, or the same text ignoring case and
+  spaces) is 409 `duplicate_question` with `existing_id`; bulk add skips such refs instead. An archived
+  question is never recreated by a library add or a template apply.
+- Library refs: `ss:SSQ-###` (SheetStorm core, MIT) and, when vendored, `dfiq:Q####` (DFIQ, Apache-2.0,
+  with attribution in `GET /questions/library` `sources`).
+
+## Case templates and playbooks
+
+| Method | Endpoint                                                          | Permission           |
+|--------|-------------------------------------------------------------------|----------------------|
+| GET    | `/case-templates`, `/case-templates/{ref}`                        | `incidents:read`     |
+| POST   | `/case-templates`                                                 | `templates:manage`   |
+| PUT/DELETE | `/case-templates/{ref}`                                       | `templates:manage`   |
+| POST   | `/case-templates/{ref}/clone`                                     | `templates:manage`   |
+| POST   | `/incidents/{id}/case-templates/{ref}/apply`                      | `incidents:update`   |
+| GET    | `/incidents/{id}/case-templates`                                  | `incidents:read`     |
+| GET/PUT | `/incidents/{id}/custom-fields`                                  | read / `incidents:update` |
+| GET    | `/playbooks` (org + built-in), `/playbooks/builtin/{key}`         | `incidents:read`     |
+| POST/PUT/DELETE | `/playbooks`, `/playbooks/{id}`                          | `templates:manage`   |
+| POST   | `/playbooks/builtin/{key}/clone`                                  | `templates:manage`   |
+| POST   | `/incidents/{id}/playbooks/builtin/{key}/activate`                | `incidents:update`   |
+
+- `{ref}` is `builtin:<key>` (shipped with the application, read-only: PUT/DELETE are 403, clone one to
+  edit) or the UUID of an organization template. `GET /case-templates` returns a `summary` of counts per
+  template (`include_definition=true` embeds the definitions; deactivated templates only with
+  `include_inactive=true` for `templates:manage`). Updating a template bumps `version`; send `If-Match` or
+  `expected_version` to avoid lost updates.
+- A template `definition` (`schema_version: 1`, unknown keys rejected) holds `defaults`
+  (`severity`, `tlp`, `classification`), `questions` (library `ref` or own `key` + `question`, up to
+  200), `leads` (up to 100, each `answers` questions), `playbook` (`{builtin}` or `{playbook_id}`) and
+  `custom_fields` (`text, number, boolean, date, select`; up to 30). Writes are capped at 256 KB; invalid
+  definitions are 400 `validation_error` with a `fields` map.
+- Apply (rate limited to 20 per minute) body, all optional: `apply_defaults`, `include`
+  (`questions, leads, playbook, custom_fields`), `dry_run`, `run_auto_actions`. It is an idempotent merge:
+  existing questions (including archived ones) and leads are skipped, an incident with an active playbook
+  keeps it, defaults only raise TLP/severity and fill an empty classification, leads need `tasks:create`
+  (otherwise skipped with reason `forbidden`). Response: `created {questions, leads, links}`, `skipped`,
+  `playbook`, `defaults_applied`, `custom_fields_added`, `template`.
+- `POST /incidents` accepts `case_template` (`builtin:<key>` or a UUID): the incident is created and seeded in
+  one transaction, defaults only fill `severity`/`tlp`/`classification` the request did not set, and the
+  response adds `case_template_result`. An unknown or inactive template is 400 `invalid_case_template` and
+  nothing is created.
+- Custom-field values: `PUT .../custom-fields` takes `{values: {key: value}}`; keys must be defined by an
+  applied template, types and select options are validated, `null` clears a key. Values are also on the
+  incident as `custom_fields`.
+- Playbook definitions: unique phase numbers 1-6, at most 50 tasks and 20 actions per phase, task `title`
+  required, `create_task` configs checked when saved. Built-in playbooks never set `auto_run`.
+
 ## Reports
 
 | Method | Endpoint                                  | Description                    |

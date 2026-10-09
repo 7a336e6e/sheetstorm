@@ -101,8 +101,14 @@ def test_register_list_search_and_detail(app, db, users, admin, make_incident):
     detail = resp.get_json()
     assert detail['chain_summary']['status'] == 'intact' and detail['chain_summary']['head_seq'] == 1
     assert detail['artifacts'] == [] and detail['children'] == []
+    # A healthy chain behind a plain detail / custody-list view writes no audit row.
+    assert admin.get(_url(inc, f"/{first['id']}/custody")).status_code == 200
+    assert _audit_rows('custody_chain_verified', resource_id=uuid.UUID(first['id'])) == []
+    # An explicit verify always does.
+    assert admin.get(_url(inc, f"/{first['id']}/custody/verify")).status_code == 200
     rows = _audit_rows('custody_chain_verified', resource_id=uuid.UUID(first['id']))
-    assert rows and rows[-1].details['context'] == 'detail' and rows[-1].details['status'] == 'intact'
+    assert len(rows) == 1 and rows[0].details['context'] == 'verify' and rows[0].details['status'] == 'intact'
+    assert rows[0].event_type == 'data_access'
 
 
 @pytest.mark.parametrize('body,needle', [
@@ -392,6 +398,11 @@ def test_tampered_chain_is_audited_as_security_event(app, db, admin, make_incide
     row = _audit_rows('custody_chain_verified', resource_id=uuid.UUID(item['id']))[-1]
     assert row.event_type == 'security_event' and row.details['status'] == 'compromised'
     assert row.details['context'] == 'verify' and row.details['break_count'] >= 1
+    # The implicit verification of a plain detail view audits an unhealthy chain.
+    assert admin.get(_url(inc, f"/{item['id']}")).status_code == 200
+    row = _audit_rows('custody_chain_verified', resource_id=uuid.UUID(item['id']))[-1]
+    assert row.event_type == 'security_event' and row.details['context'] == 'detail'
+    assert row.details['status'] == 'compromised'
 
 
 # ── Custody parties ─────────────────────────────────────────────────────────

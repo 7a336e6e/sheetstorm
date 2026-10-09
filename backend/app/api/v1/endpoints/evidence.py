@@ -16,9 +16,12 @@ Permissions (one mapping, ``EVIDENCE_PERMS``; C29 reuses ``artifacts:*``):
                               bundle and the item custody bundle
 
 Ledger writes go through ``CustodyLedger`` (one transaction per request);
-realtime ``emit_change`` runs after the commit. Every chain verification
-writes a ``custody_chain_verified`` audit row (``CustodyLedger.verify`` writes
-nothing); a broken/compromised result is logged as a security event.
+realtime ``emit_change`` runs after the commit. Explicit verifications
+(``/custody/verify``) and exports write a ``custody_chain_verified`` audit row
+(``CustodyLedger.verify`` writes nothing). The implicit verification behind the
+detail and custody-list views writes a row only when the chain is unhealthy, so
+plain reads stay quiet; a broken/compromised result is always logged as a
+security event.
 Optimistic concurrency: item mutations and party edits honour ``If-Match`` /
 body ``expected_version`` (409 ``conflict``); responses carry ``ETag``.
 """
@@ -395,11 +398,17 @@ def _commit(item):
     return commit_or_conflict(item)
 
 
-def _verify(*, item=None, incident=None, context):
-    """Run ``CustodyLedger.verify`` and audit it (``custody_chain_verified``)."""
+def _verify(*, item=None, incident=None, context, implicit=False):
+    """Run ``CustodyLedger.verify`` and audit it (``custody_chain_verified``).
+
+    ``implicit`` (detail / custody-list views) audits only an unhealthy result;
+    explicit verifies and exports are always audited.
+    """
     result = CustodyLedger.verify(item=item, incident=incident)
     chain = result.get('item_chain') if item is not None else result.get('incident_chain')
     healthy = result['status'] in exports.OK_STATUSES or result['status'] == 'unverifiable'
+    if implicit and healthy:
+        return result
     log_audit_event(
         event_type='data_access' if healthy else 'security_event',
         action='custody_chain_verified',
@@ -507,7 +516,7 @@ def get_evidence(incident_id, evidence_item_id):
     data = item.to_dict()
     data['artifacts'] = [a.to_dict() for a in item.artifacts.order_by(Artifact.created_at, Artifact.id)]
     data['children'] = [c.summary() for c in item.children.order_by(EvidenceItem.sequence_number)]
-    v = _verify(item=item, context='detail')
+    v = _verify(item=item, context='detail', implicit=True)
     data['chain_summary'] = {'status': v['status'], 'head_seq': v['item_chain']['head_seq'],
                              'head_hash': v['item_chain']['head_hash']}
     return set_etag(jsonify(data), item)
@@ -892,7 +901,7 @@ def list_custody(incident_id, evidence_item_id):
     ``signature_status``, ``link_status`` and ``acknowledged_by_entry_id``."""
     item = _get_item(g.incident, evidence_item_id)
     entries = CustodyLedger.entries(item=item)
-    v = _verify(item=item, context='custody_list')
+    v = _verify(item=item, context='custody_list', implicit=True)
     return jsonify({
         'evidence_item_id': str(item.id),
         'evidence_number': item.evidence_number,

@@ -173,6 +173,61 @@ Hosts:
 | PUT    | `/incidents/{id}/malware/{mid}`           | Update malware entry           |
 | DELETE | `/incidents/{id}/malware/{mid}`           | Delete malware entry           |
 
+## Record provenance and clock skew
+
+Timeline events, network IOCs, host IOCs and malware entries record where a
+fact came from and how its UTC time was derived. All keys are optional on the
+create/update bodies of those four resources; legacy rows have none of them.
+
+| Key | Meaning |
+|-----|---------|
+| `source_evidence_id` / `source_artifact_id` | Source evidence item / artifact. Must belong to the same incident, otherwise 400 `invalid_source_evidence` / `invalid_source_artifact`. The UI links evidence items; deleting the source sets the link to null. |
+| `source_record_type` | `file_path, evtx_record, offset, log_line, url, registry_key, db_row, other` |
+| `source_record_ref` | Exact record reference (<= 1000 chars, no control characters). Stored and shown as text; URLs are never fetched or rendered as links. |
+| `raw_timestamp` | The timestamp exactly as found (<= 100 chars). |
+| `source_timezone` | IANA key (`Europe/Berlin`), `UTC` or `UTC+HH:MM`. |
+| `timestamp_type` | `modified, accessed, changed, born, logged, first_seen, last_seen, observed, other` (malware: `modified`, `accessed`, `born` pick `modification_time`, `access_time`, `creation_time`). |
+| `extraction_tool`, `extraction_tool_version` | Tool and version that produced the record. |
+| `timestamp_derivation` (write: `manual` or `imported`) | `computed` is server-set. A null value reads as `manual`. |
+| `fold` (write only, 0 or 1) | Picks the occurrence of a daylight-saving fold. |
+
+Responses add `provenance_level` (`none | partial | full | verified`;
+`full` = evidence/artifact link + record ref + raw timestamp + time zone),
+`provenance_verifier {id, name}`, `clock_skew_applied_seconds` and the
+verification columns, which are read-only.
+
+IANA zone names need the system `tzdata` of the backend image (the pinned
+`python:3.12-slim-bookworm` base has it; `UTC`, `UTC+HH:MM` and offsets inside
+the raw string always work, and an unknown zone is 400 `invalid_timezone`).
+
+Normalization: `utc = raw (+ offset or source_timezone, else the host's
+timezone) - host clock_skew_seconds`. Create may omit `timestamp` (events) when
+`raw_timestamp` is sent; the server derives it and sets
+`timestamp_derivation: computed`. A `timestamp` that differs from the derived
+value by more than 1 second is 400 `timestamp_mismatch` (with `computed`)
+unless `timestamp_derivation: "manual"` is sent. A raw timestamp without an
+offset and without any time zone is 400 `source_timezone_required`; a time in a
+daylight-saving gap is 400 `nonexistent_local_time`, in a fold 400
+`ambiguous_local_time` (with `candidates`, resend with `fold`); day/month
+ambiguous or incomplete input is 400 `ambiguous_date` / `incomplete_raw_timestamp`.
+On update the derivation re-runs only when `raw_timestamp`, `source_timezone`
+or `timestamp_type` actually changed, so clients may resend whole records.
+Overriding a computed `timestamp` makes it `manual`. Any material change to a
+verified record clears its verification (the audit row carries
+`provenance_verification_cleared`).
+
+List filters on the four resources: `provenance_level`, `source_artifact_id`,
+`source_evidence_id`, `unverified=true` (provenance recorded, not yet
+verified).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST   | `/incidents/{id}/provenance/verify` | Second-analyst verification. Body `{record_type: timeline_event\|network_ioc\|host_ioc\|malware, record_id, expected_version?}`; needs the type's `:update` permission. 400 `same_analyst` for the creator, 400 `no_provenance`, 409 `already_verified`. |
+| DELETE | `/incidents/{id}/provenance/verify` | Withdraw (same body); only the verifier or a holder of `organizations:manage`. |
+| POST   | `/incidents/{id}/provenance/normalize-preview` | `{raw_timestamp, source_timezone?, host_id?, fold?}` -> `{utc, skew_applied, timezone_used, offset_seconds}` (`timeline:read`, 60/minute). |
+| PUT    | `/incidents/{id}/hosts/{hid}/clock-skew` | `{clock_skew_seconds?, clock_skew_basis?, timezone?}` (`hosts:update`, `If-Match`). Skew is host clock minus true UTC within +-604800 s; a non-zero skew needs a basis. Stamps who/when measured. Existing records keep the skew they snapshotted. |
+| POST   | `/incidents/{id}/hosts/{hid}/clock-skew/reapply` | `{dry_run: true}` (default) lists records whose time would move; `{dry_run: false}` applies it (`hosts:update` + `timeline:update`, `network_iocs:update`, `host_iocs:update`, `malware:update`). Only `computed` records move, by the skew difference; verification of changed rows is cleared; one audit row `renormalize`; clients receive `incident:resync` for timeline, network_iocs, host_iocs and malware. |
+
 ## Attack Graph
 
 | Method | Endpoint                                  | Description                    |

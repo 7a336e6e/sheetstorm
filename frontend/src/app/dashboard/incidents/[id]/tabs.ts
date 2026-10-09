@@ -21,6 +21,7 @@ import {
   BookOpen,
   Bug,
   CheckSquare,
+  CircleHelp,
   ClipboardCheck,
   Fingerprint,
   Globe,
@@ -43,6 +44,7 @@ import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { TasksTab } from '@/components/incidents/detail/TasksTab'
 import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
 import { PostIncidentReviewTab } from '@/components/incidents/detail/PostIncidentReviewTab'
+import { QuestionsTab } from '@/components/incidents/questions/QuestionsTab'
 import { EventsPanel, GraphPanel, MitrePanel, OverviewPanel } from './panels'
 
 export interface IncidentTabProps extends IncidentTabBaseProps {
@@ -68,6 +70,7 @@ export const TAB_REGISTRY: IncidentTabDef[] = [
   { id: 'overview', label: 'Overview', icon: Activity, permission: 'incidents:read', component: OverviewPanel, keepMounted: true },
   { id: 'events', label: 'Events', icon: LayoutList, permission: 'timeline:read', component: EventsPanel, keepMounted: true },
   { id: 'hosts', label: 'Hosts', icon: Server, permission: 'hosts:read', component: HostsTab, keepMounted: true },
+  { id: 'questions', label: 'Questions', icon: CircleHelp, permission: 'incidents:read', component: QuestionsTab, keepMounted: true },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, permission: 'tasks:read', component: TasksTab, keepMounted: true },
   { id: 'playbook', label: 'Playbook', icon: BookOpen, permission: 'incidents:read', component: IncidentPlaybookTab, keepMounted: true },
   { id: 'graph', label: 'Attack Graph', icon: Network, permission: 'attack_graph:read', component: GraphPanel, keepMounted: false },

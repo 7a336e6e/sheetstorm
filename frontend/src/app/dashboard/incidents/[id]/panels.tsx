@@ -14,6 +14,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { OverviewTab } from '@/components/incidents/detail/OverviewTab'
 import { IncidentMetricsCard } from '@/components/incidents/detail/IncidentMetricsCard'
+import { CustomFieldsCard } from '@/components/incidents/detail/CustomFieldsCard'
+import { QuestionsSummaryCard } from '@/components/incidents/questions/QuestionsSummaryCard'
+import { usePermission } from '@/components/auth/permission-gate'
 import { EventsTable } from '@/components/incidents/EventsTable'
 import { IOCVisualTimeline, PinnedTimelineTab } from '@/components/incidents/timeline/IOCVisualTimeline'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
@@ -23,6 +26,7 @@ import type { CompromisedHost, TimelineEvent } from '@/types'
 import type { IncidentTabProps } from './tabs'
 
 export function OverviewPanel({ incident, incidentId, onNavigate, onIncidentChanged }: IncidentTabProps) {
+  const canReadQuestions = usePermission('incidents:read')
   return (
     <OverviewTab
       incident={incident}
@@ -30,6 +34,14 @@ export function OverviewPanel({ incident, incidentId, onNavigate, onIncidentChan
       onViewEvents={() => onNavigate('events')}
       onIncidentUpdated={onIncidentChanged}
       metricsSlot={<IncidentMetricsCard incidentId={incidentId} version={incident.version} />}
+      questionsSlot={
+        canReadQuestions ? (
+          <div className="space-y-4">
+            <QuestionsSummaryCard incidentId={incidentId} onOpen={() => onNavigate('questions')} />
+            <CustomFieldsCard incidentId={incidentId} />
+          </div>
+        ) : null
+      }
     />
   )
 }

@@ -1,6 +1,6 @@
 """Incident management endpoints"""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
@@ -15,6 +15,7 @@ from app.services.notification_service import notify_incident_created, notify_us
 from app.services.import_service import ImportService
 from app.services import realtime
 from app.services.incident_purge import register_purge_step
+from app.utils.audit_diff import record_changes, snapshot
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
@@ -41,6 +42,160 @@ INCIDENT_FILTERS = {
     'classification': (Incident.classification, 'eq'),
 }
 INCIDENT_SEARCH = (Incident.title, Incident.description, Incident.incident_number)
+
+
+# --- IR milestones and lifecycle stamping (W2-DFIR-B, C20) ---
+
+# Every milestone in the order it must occur. Columns that do not exist yet
+# (first_malicious_at arrives with W3-RT-POST) are skipped automatically.
+MILESTONE_ORDER = ('first_malicious_at', 'detected_at', 'contained_at',
+                   'eradicated_at', 'recovered_at', 'closed_at')
+# Clock-skew allowance for "not in the future".
+MILESTONE_FUTURE_TOLERANCE = timedelta(minutes=5)
+
+STATUS_PHASE_MAP = {
+    'open': 1,
+    'investigating': 2,
+    'contained': 3,
+    'eradicated': 4,
+    'recovered': 5,
+    'closed': 6,
+}
+PHASE_STATUS_MAP = {v: k for k, v in STATUS_PHASE_MAP.items()}
+# Milestone stamped (if still empty) when the incident enters a status.
+STATUS_MILESTONE = {
+    'contained': 'contained_at',
+    'eradicated': 'eradicated_at',
+    'recovered': 'recovered_at',
+    'closed': 'closed_at',
+}
+# Fields whose before/after goes into the audit row of PUT / PATCH status.
+AUDITED_INCIDENT_FIELDS = (
+    'title', 'description', 'severity', 'classification', 'status', 'phase', 'tlp',
+    'team_id', 'lead_responder_id', 'executive_summary', 'lessons_learned',
+) + MILESTONE_ORDER
+
+
+def milestone_fields():
+    """MILESTONE_ORDER restricted to columns the Incident model has."""
+    return [f for f in MILESTONE_ORDER if hasattr(Incident, f)]
+
+
+def _milestone_error(code, message, **details):
+    return {'error': 'invalid_milestones', 'code': code, 'message': message, **details}
+
+
+def validate_milestones(incident, changes, now=None):
+    """Check milestone values about to be written. Returns an error body for a
+    400, or None.
+
+    ``changes`` maps milestone field -> aware datetime or None (cleared).
+    - A value more than 5 minutes in the future is rejected.
+    - Order first_malicious <= detected <= contained <= eradicated <=
+      recovered <= closed: every *changed* value is compared with every other
+      set value (stored or changed). Pairs where neither side changes are
+      legacy data and are left alone (metrics report them as anomalies).
+    """
+    now = now or datetime.now(timezone.utc)
+    for field, value in changes.items():
+        if value is not None and value > now + MILESTONE_FUTURE_TOLERANCE:
+            return _milestone_error('milestone_in_future',
+                                    f'{field} cannot be more than 5 minutes in the future', field=field)
+
+    order = milestone_fields()
+    merged = {f: (changes[f] if f in changes else getattr(incident, f, None)) for f in order}
+    for field in order:
+        if field not in changes or merged[field] is None:
+            continue
+        pos = order.index(field)
+        for other in order:
+            other_value = merged[other]
+            if other == field or other_value is None:
+                continue
+            earlier, later = (other, field) if order.index(other) < pos else (field, other)
+            if merged[earlier] > merged[later]:
+                return _milestone_error(
+                    'milestone_order',
+                    f'{earlier} must not be after {later}',
+                    field=field, conflicts_with=other, pair=[earlier, later])
+    return None
+
+
+def apply_status_change(incident, status=None, phase=None, now=None):
+    """Set status and/or phase on ``incident`` (each implies the other) and
+    stamp lifecycle milestones. Shared by every status/phase write.
+
+    - Entering contained / eradicated / recovered / closed stamps the matching
+      ``*_at`` milestone if it is still empty (an edited value is kept).
+    - Reopening (closed -> any other status) clears ``closed_at``.
+    """
+    now = now or datetime.now(timezone.utc)
+    if status is not None:
+        phase = STATUS_PHASE_MAP.get(status, phase)
+    elif phase is not None:
+        status = PHASE_STATUS_MAP.get(phase)
+    if status is None and phase is None:
+        return
+    was_closed = incident.status == 'closed'
+    if status is not None:
+        incident.status = status
+    if phase is not None:
+        incident.phase = phase
+
+    milestone = STATUS_MILESTONE.get(incident.status)
+    if milestone and getattr(incident, milestone) is None:
+        setattr(incident, milestone, now)
+    if was_closed and incident.status != 'closed':
+        incident.closed_at = None
+
+
+def incident_summary(incident_id, permissions):
+    """Overview aggregates for one incident (single GET only), computed with
+    grouped queries so they are never limited by list pagination. Each part
+    is null unless the caller may read the underlying entity."""
+    from sqlalchemy import func
+    from app.models import CompromisedHost, Task, TimelineEvent
+
+    iso = lambda v: v.isoformat() if v else None  # noqa: E731
+    summary = {'first_event_at': None, 'last_event_at': None, 'earliest_detection_at': None,
+               'leads': None, 'hosts_by_triage': None, 'acquisition': None}
+
+    if 'timeline:read' in permissions:
+        first_event, last_event, earliest_detection = db.session.query(
+            func.min(TimelineEvent.timestamp), func.max(TimelineEvent.timestamp),
+            func.min(TimelineEvent.detection_time),
+        ).filter(TimelineEvent.incident_id == incident_id).one()
+        summary.update(first_event_at=iso(first_event), last_event_at=iso(last_event),
+                       earliest_detection_at=iso(earliest_detection))
+
+    if 'tasks:read' in permissions:
+        by_outcome = {}
+        for outcome, count in db.session.query(Task.lead_outcome, func.count(Task.id)).filter(
+                Task.incident_id == incident_id, Task.task_type == 'investigative_lead',
+        ).group_by(Task.lead_outcome):
+            by_outcome[outcome or 'open'] = by_outcome.get(outcome or 'open', 0) + count
+        summary['leads'] = {
+            'total': sum(by_outcome.values()),
+            'open': by_outcome.get('open', 0),
+            'by_outcome': by_outcome,
+        }
+
+    if 'hosts:read' in permissions:
+        acq_keys = ('disk_imaged', 'memory_captured', 'logs_collected', 'forensically_sound')
+        acq_cols = [func.count(CompromisedHost.id).filter(
+            CompromisedHost.acquisition_status[k].astext == 'true') for k in acq_keys]
+        hosts_by_triage = {}
+        acquisition = dict.fromkeys(acq_keys, 0)
+        for row in db.session.query(CompromisedHost.triage_status, func.count(CompromisedHost.id),
+                                    *acq_cols).filter(
+                CompromisedHost.incident_id == incident_id).group_by(CompromisedHost.triage_status):
+            triage = row[0] or 'under_analysis'
+            hosts_by_triage[triage] = hosts_by_triage.get(triage, 0) + row[1]
+            for key, n in zip(acq_keys, row[2:]):
+                acquisition[key] += n
+        summary.update(hosts_by_triage=hosts_by_triage, acquisition=acquisition)
+
+    return summary
 
 
 @api_bp.route('/incidents', methods=['GET'])
@@ -76,13 +231,51 @@ def list_incidents():
 @require_permission('incidents:create')
 @audit_log('data_modification', 'create', 'incident')
 def create_incident():
-    """Create a new incident."""
+    """Create a new incident.
+
+    The owning team (`team_id`), access teams (`team_ids`) and the lead
+    responder must belong to the caller's organization (400 otherwise; they
+    were silently dropped before). `detected_at` defaults to now and may not
+    be more than 5 minutes in the future. A lead gets the "Lead Responder"
+    assignment, exactly like a lead change through PUT. One transaction.
+    """
+    from app.models import Team
     user = get_current_user()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
         from app.schemas.incident import IncidentCreate
-        data = IncidentCreate(**request.get_json())
+        data = IncidentCreate(**payload)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+
+    now = datetime.now(timezone.utc)
+    if data.detected_at and data.detected_at > now + MILESTONE_FUTURE_TOLERANCE:
+        return jsonify(_milestone_error('milestone_in_future',
+                                        'detected_at cannot be more than 5 minutes in the future',
+                                        field='detected_at')), 400
+
+    def org_team(team_id):
+        return Team.query.filter_by(id=team_id, organization_id=user.organization_id).first()
+
+    if data.team_id and not org_team(data.team_id):
+        return jsonify({'error': 'invalid_team', 'message': 'team_id is not a team of your organization'}), 400
+    access_teams = []
+    for tid in dict.fromkeys(data.team_ids or []):
+        team = org_team(tid)
+        if not team:
+            return jsonify({'error': 'invalid_team', 'message': 'team_ids contains a team outside your organization',
+                            'team_id': str(tid)}), 400
+        access_teams.append(team)
+
+    lead = None
+    if data.lead_responder_id:
+        lead = User.query.filter_by(id=data.lead_responder_id, organization_id=user.organization_id,
+                                    is_active=True).first()
+        if not lead:
+            return jsonify({'error': 'invalid_lead_responder',
+                            'message': 'lead_responder_id is not an active user of your organization'}), 400
 
     incident = Incident(
         organization_id=user.organization_id,
@@ -93,43 +286,34 @@ def create_incident():
         phase=1,  # Start in Preparation phase
         status='open',
         tlp=data.tlp or 'amber',
-        team_id=str(data.team_id) if data.team_id else None,
-        detected_at=data.detected_at or datetime.now(timezone.utc),
+        team_id=data.team_id,
+        lead_responder_id=lead.id if lead else None,
+        detected_at=data.detected_at or now,
         created_by=user.id
     )
-
-    # Assign lead responder if provided
-    if data.lead_responder_id:
-        lead = User.query.filter_by(id=data.lead_responder_id, organization_id=user.organization_id).first()
-        if lead:
-            incident.lead_responder_id = lead.id
-
     db.session.add(incident)
-    db.session.commit()
+    db.session.flush()  # incident.id for the rows below
 
-    # Associate teams with incident
-    team_ids = request.get_json().get('team_ids', [])
-    if team_ids:
-        from app.models import Team
-        for tid in team_ids:
-            team = Team.query.filter_by(id=tid, organization_id=user.organization_id).first()
-            if team:
-                it = IncidentTeam(incident_id=incident.id, team_id=team.id)
-                db.session.add(it)
+    for team in access_teams:
+        db.session.add(IncidentTeam(incident_id=incident.id, team_id=team.id))
 
-    # Assign creator to incident
-    assignment = IncidentAssignment(
-        incident_id=incident.id,
-        user_id=user.id,
-        role='Creator',
-        assigned_by=user.id,
-        assigned_at=datetime.now(timezone.utc)
-    )
-    db.session.add(assignment)
+    # Creator assignment; a creator who is also the lead gets the lead role.
+    db.session.add(IncidentAssignment(
+        incident_id=incident.id, user_id=user.id,
+        role='Lead Responder' if lead and lead.id == user.id else 'Creator',
+        assigned_by=user.id, assigned_at=now,
+    ))
+    if lead and lead.id != user.id:
+        db.session.add(IncidentAssignment(
+            incident_id=incident.id, user_id=lead.id, role='Lead Responder',
+            assigned_by=user.id, assigned_at=now,
+        ))
     db.session.commit()
 
     # Send notifications
     notify_incident_created(incident)
+    if lead and lead.id != user.id:
+        notify_user_assigned(str(lead.id), incident)
     realtime.emit_change(incident.id, 'incident', 'created', obj=incident,
                          data=incident.to_dict(include_counts=True))
 
@@ -140,9 +324,12 @@ def create_incident():
 @jwt_required()
 @require_incident_access('incidents:read')
 def get_incident(incident_id):
-    """Get incident details."""
+    """Get incident details, plus the Overview `summary` block (timeline
+    span, lead and host triage counts; single GET only, never in lists)."""
     incident = g.incident  # Set by require_incident_access
-    return set_etag(jsonify(incident.to_dict(include_counts=True)), incident), 200
+    data = incident.to_dict(include_counts=True)
+    data['summary'] = incident_summary(incident.id, set(get_current_user().permissions))
+    return set_etag(jsonify(data), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>', methods=['PUT'])
@@ -150,19 +337,51 @@ def get_incident(incident_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'update', 'incident')
 def update_incident(incident_id):
-    """Update an incident."""
+    """Update an incident.
+
+    IR milestones (`detected_at` … `closed_at`; null clears one) are rejected
+    with 400 `invalid_milestones` when more than 5 minutes in the future or
+    out of order (see validate_milestones). A new lead responder must be an
+    active user of the organization and is notified after commit.
+    """
+    from app.models import Team
+    from app.schemas.incident import IncidentUpdate
     incident = g.incident
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
-        from app.schemas.incident import IncidentUpdate
         # Exclude unset fields (None) to treat them as "not updated"
-        data = IncidentUpdate(**request.get_json())
+        data = IncidentUpdate(**payload)
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
     conflict = precondition(incident)
     if conflict:
         return conflict, conflict.status_code
+
+    milestone_changes = {f: update_data[f] for f in milestone_fields() if f in update_data}
+    if milestone_changes:
+        error = validate_milestones(incident, milestone_changes)
+        if error:
+            return jsonify(error), 400
+    if update_data.get('team_id') and not Team.query.filter_by(
+            id=update_data['team_id'], organization_id=incident.organization_id).first():
+        return jsonify({'error': 'invalid_team', 'message': 'team_id is not a team of your organization'}), 400
+
+    previous_lead_id = incident.lead_responder_id
+    new_lead = None
+    if update_data.get('lead_responder_id'):
+        new_lead = User.query.filter_by(id=update_data['lead_responder_id'],
+                                        organization_id=incident.organization_id).first()
+        if new_lead is None or (not new_lead.is_active and new_lead.id != previous_lead_id):
+            return jsonify({'error': 'invalid_lead_responder',
+                            'message': 'lead_responder_id is not an active user of your organization'}), 400
+
+    # Validation is complete: nothing below returns before the commit.
+    before = snapshot(incident, AUDITED_INCIDENT_FIELDS)
     access_before = (incident.tlp, incident.team_id)
+    notify_lead = None
     # Lead changes rewrite assignments: (op, assignment) to emit after commit,
     # and users whose access must be re-checked then.
     assignment_changes = []
@@ -184,7 +403,9 @@ def update_incident(incident_id):
     if 'lead_responder_id' in update_data:
         user = get_current_user()
         new_lead_id = update_data['lead_responder_id']
-        lead = User.query.filter_by(id=new_lead_id, organization_id=user.organization_id).first() if new_lead_id else None
+        lead = new_lead
+        if lead and lead.id != previous_lead_id:
+            notify_lead = lead
         if lead or new_lead_id is None:
             access_recheck.append(incident.lead_responder_id)
         if lead:
@@ -237,11 +458,17 @@ def update_incident(incident_id):
     if 'tlp' in update_data:
         incident.tlp = update_data['tlp']
     if 'team_id' in update_data:
-        incident.team_id = str(update_data['team_id']) if update_data['team_id'] else None
+        incident.team_id = update_data['team_id']
+    for field, value in milestone_changes.items():
+        setattr(incident, field, value)
+    record_changes(before, snapshot(incident, AUDITED_INCIDENT_FIELDS))
 
     conflict = commit_or_conflict(incident)
     if conflict:
         return conflict, conflict.status_code
+    if notify_lead is not None:
+        # Same "you were assigned" notification as POST /assignments.
+        notify_user_assigned(str(notify_lead.id), incident)
     realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
                          data=incident.to_dict(include_counts=True))
     for op, assignment in assignment_changes:
@@ -261,11 +488,19 @@ def update_incident(incident_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'update_status', 'incident')
 def update_incident_status(incident_id):
-    """Update incident status and/or phase."""
+    """Update incident status and/or phase (each implies the other).
+
+    Entering contained / eradicated / recovered / closed stamps that
+    milestone if it is empty; reopening a closed incident clears `closed_at`
+    (apply_status_change).
+    """
     incident = g.incident
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
         from app.schemas.incident import IncidentStatusUpdate
-        data = IncidentStatusUpdate(**request.get_json())
+        data = IncidentStatusUpdate(**payload)
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
@@ -273,43 +508,12 @@ def update_incident_status(incident_id):
     if conflict:
         return conflict, conflict.status_code
 
-    STATUS_PHASE_MAP = {
-        'open': 1,
-        'investigating': 2,
-        'contained': 3,
-        'eradicated': 4,
-        'recovered': 5,
-        'closed': 6,
-    }
-
-    now = datetime.now(timezone.utc)
-
-    # Update status and sync phase
-    if 'status' in update_data:
-        new_status = update_data['status']
-        incident.status = new_status
-
-        # Auto-sync phase from status
-        if new_status in STATUS_PHASE_MAP:
-            incident.phase = STATUS_PHASE_MAP[new_status]
-
-        # Set timestamp for status change
-        if new_status == 'contained' and not incident.contained_at:
-            incident.contained_at = now
-        elif new_status == 'eradicated' and not incident.eradicated_at:
-            incident.eradicated_at = now
-        elif new_status == 'recovered' and not incident.recovered_at:
-            incident.recovered_at = now
-        elif new_status == 'closed' and not incident.closed_at:
-            incident.closed_at = now
-
-    # Update phase (and sync status from phase)
-    elif 'phase' in update_data:
-        incident.phase = update_data['phase']
-        # Reverse-map phase to status
-        phase_status_map = {v: k for k, v in STATUS_PHASE_MAP.items()}
-        if update_data['phase'] in phase_status_map:
-            incident.status = phase_status_map[update_data['phase']]
+    before = snapshot(incident, AUDITED_INCIDENT_FIELDS)
+    if update_data.get('status') is not None:
+        apply_status_change(incident, status=update_data['status'])
+    elif update_data.get('phase') is not None:
+        apply_status_change(incident, phase=update_data['phase'])
+    record_changes(before, snapshot(incident, AUDITED_INCIDENT_FIELDS))
 
     conflict = commit_or_conflict(incident)
     if conflict:
@@ -490,9 +694,15 @@ def assign_user(incident_id):
         ).all()
         for old_lead in old_leads:
             old_lead.role = None
+        lead_changed = incident.lead_responder_id != target_user.id
         incident.lead_responder_id = target_user.id
     else:
         old_leads = []
+        # Re-assigning the current lead with another role ends their lead
+        # role: keep incident.lead_responder_id consistent with assignments.
+        lead_changed = incident.lead_responder_id == target_user.id
+        if lead_changed:
+            incident.lead_responder_id = None
 
     db.session.commit()
 
@@ -501,7 +711,7 @@ def assign_user(incident_id):
     realtime.emit_change(incident.id, 'assignment', 'updated' if existing else 'created', obj=assignment)
     for old_lead in old_leads:
         realtime.emit_change(incident.id, 'assignment', 'updated', obj=old_lead)
-    if new_role == 'Lead Responder':
+    if new_role == 'Lead Responder' or lead_changed:
         realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
                              data=incident.to_dict(include_counts=True))
 

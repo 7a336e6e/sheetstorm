@@ -39,8 +39,10 @@ import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
 import { useAllPages } from '@/hooks/use-paginated-query'
 import type { TimelineEvent, Task, Incident, IncidentOverviewFields, Versioned } from '@/types'
 
-/** Query param of the Tasks tab's "All tasks | Leads" view (W2-DFIR-A). */
-export const TASKS_VIEW_PARAM = 'tasks.view'
+// Query param of the Tasks tab's "All tasks | Leads" view: single source in
+// TasksTab (W2-DFIR-A), so the Overview deep link always matches it.
+import { TASKS_VIEW_PARAM } from './TasksTab'
+export { TASKS_VIEW_PARAM }
 
 // ─── Overview Tab ────────────────────────────────────────────────────────
 

@@ -103,14 +103,31 @@ security event `ws_rate_limited` and disconnects the socket. Denied joins log
 resync that scope. `seq` is `null` when Redis is unavailable. Apply `updated`
 only when `version` is newer than the local copy.
 
-### Legacy events (until W1-RT-EMIT)
+### Removed legacy events
 
-Endpoints still emit the legacy `*_added` / `*_updated` / `*_deleted` events to
-`incident_<id>`; they have no frontend consumer and are removed when the
-endpoints switch to `realtime.emit_change`. The old client events
+Incident endpoints no longer emit the per-entity events `incident_updated`,
+`timeline_event_added|updated|deleted`, `task_added|updated|deleted`,
+`task_comment_added`, `case_note_created|updated|deleted`, `host_added`,
+`graph_node_added|updated|deleted` and `graph_edge_added|updated|deleted`.
+Every create/update/delete of an incident entity emits one `entity:changed`
+(after the commit) instead, and bulk changes (spreadsheet import, attack-graph
+auto-generate, graph updates from a new timeline event on a host, playbook
+actions) emit `incident:resync` for the affected scopes. The old client events
 `join_incident`, `leave_incident`, `cursor_move`, `typing_*` and
 `graph_node_moved` (and `user_joined`, `user_left`, `users_in_room`,
-`cursor_moved`, `user_typing`, `graph_node_position`) were removed.
+`cursor_moved`, `user_typing`, `graph_node_position`) were removed earlier.
+
+### Revocation
+
+- Assignment removal, unlinking a team from an incident, linking the first team
+  (the incident stops being org-wide for team-scoped users) and TLP/team changes
+  evict every affected user who can no longer see the incident
+  (`incident:access_revoked` on `user_<id>`, sockets leave the incident rooms).
+- Archive and permanent delete send `incident:access_revoked`
+  `{incident_id, reason: 'archived'|'purged'}` to `incident_<id>` and close the
+  base and scope rooms (purge: `incident_purge` post-commit step `access_revoked`).
+- Removing a team member or deleting a team disconnects the affected users'
+  sockets; the client reconnects and rejoins with a fresh access check.
 
 ---
 
@@ -135,3 +152,19 @@ Versioned rows expose `version`. Send `If-Match: "<version>"` (or the body key
 the endpoint documents, default `expected_version`) on PUT/PATCH/DELETE; a
 stale version returns `409 {error: 'conflict', current, current_version}`.
 Responses may carry `ETag: "<version>"`.
+
+Wired endpoints (If-Match is optional: without it the write is last-write-wins):
+
+| Entity | PUT/PATCH | DELETE | ETag on GET-one |
+|---|---|---|---|
+| incident | `PUT /incidents/<id>`, `PATCH /incidents/<id>/status` | — | `GET /incidents/<id>` |
+| timeline_event | `PUT .../timeline/<id>` | yes | — |
+| task | `PUT .../tasks/<id>` | yes | `GET .../tasks/<id>` |
+| case_note | `PUT .../case-notes/<id>` | yes | `GET .../case-notes/<id>` |
+| host, account | `PUT .../hosts/<id>`, `PUT .../accounts/<id>` | yes | `GET .../accounts/<id>` |
+| network_ioc, host_ioc, malware | `PUT .../network-iocs/<id>`, `.../host-iocs/<id>`, `.../malware/<id>` | yes | — |
+| graph_node, graph_edge | `PUT .../attack-graph/nodes/<id>`, `.../edges/<id>` | yes | — |
+| playbook (incident instance) | `PUT .../playbook/advance`, `PUT .../playbook/task` | — | `GET .../playbook` |
+
+Update responses carry the new `ETag`. A concurrent writer that commits between
+the check and the commit also yields the 409 (SQLAlchemy `version_id_col`).

@@ -1,11 +1,22 @@
-"""Audit logging middleware"""
+"""Audit logging middleware.
+
+Every audit row is written by :func:`_write_audit_row` (the single writer),
+called from the ``@audit_log`` decorator and :func:`log_audit_event`. It
+links the row into its organization's keyed hash chain (``services/ledger``)
+in the same transaction as the insert. ``audit_logs`` is append-only (DB
+trigger), so rows are never updated afterwards.
+"""
+import json
 import logging
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 from functools import wraps
 from flask import request, g, has_request_context
 from app import db
 from app.models import AuditLog
+from app.utils.hash_chain import canonical_json
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +53,33 @@ def public_activity_details(details):
     return {k: v for k, v in details.items() if k not in _PRIVATE_DETAIL_KEYS}
 
 
-def _broadcast_activity(log_entry):
-    """Emit a WebSocket event for the activity feed.
+def _incident_activity_room(log_entry):
+    """Scope room for an incident-scoped activity event, or None to drop it.
 
-    Incident-scoped events go only to that incident's room (whose members
-    passed an incident access check on join). Org-wide events go to the org
-    room, except admin actions which go only to holders of audit_logs:read.
-    Sensitive detail keys are never broadcast.
+    The event goes to the room of the scope its resource belongs to
+    (``realtime.scope_for_resource_type``), so only members holding that
+    scope's read permission receive it (e.g. artifact activity never reaches
+    a Viewer without ``artifacts:read``). Events without a resource type are
+    incident-level (base room). Unknown resource types are dropped: their
+    read permission is not known.
+    """
+    from app.services import realtime
+    if not log_entry.resource_type:
+        scope = realtime.BASE_SCOPE
+    else:
+        scope = realtime.scope_for_resource_type(log_entry.resource_type)
+        if scope is None:
+            return None
+    return realtime.scope_room(log_entry.incident_id, scope)
+
+
+def _broadcast_activity(log_entry):
+    """Emit a WebSocket ``activity:new`` event for the activity feed.
+
+    Incident-scoped events go only to the incident's scope room for the
+    resource (see :func:`_incident_activity_room`). Org-wide events go to the
+    org room, except admin actions which go only to holders of
+    audit_logs:read. Sensitive detail keys are never broadcast.
     """
     if not log_entry or not log_entry.organization_id:
         return
@@ -69,7 +100,11 @@ def _broadcast_activity(log_entry):
             'details': public_activity_details(log_entry.details),
         }
         if log_entry.incident_id:
-            socketio.emit('activity:new', payload, room=f'incident_{log_entry.incident_id}')
+            room = _incident_activity_room(log_entry)
+            if room is None:
+                logger.debug('activity:new dropped (no scope for resource_type %r)', log_entry.resource_type)
+                return
+            socketio.emit('activity:new', payload, room=room)
         elif log_entry.event_type == 'admin_action':
             # Admin actions go only to users who may read the audit log.
             from app.models import User, UserRole, Role
@@ -90,6 +125,65 @@ def _broadcast_activity(log_entry):
             socketio.emit('activity:new', payload, room=f'org_{log_entry.organization_id}')
     except Exception:
         logger.debug('Activity broadcast skipped', exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# The single writer
+# ---------------------------------------------------------------------------
+
+_UUID_FIELDS = ('organization_id', 'user_id', 'resource_id', 'incident_id')
+
+
+def _as_uuid(value):
+    if value is None or isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))
+
+
+def _write_audit_row(**fields):
+    """Insert one audit row, chained, and commit. Returns the row.
+
+    The only place that creates ``AuditLog`` rows. In one transaction it:
+    flushes the caller's pending changes (so their row locks are taken
+    before the chain-head lock, never after), locks the org's chain head
+    (``ledger.advance``), stamps id / created_at / chain_seq / prev_hash,
+    canonicalizes ``details`` (so the stored JSONB hashes identically when
+    read back), computes the keyed ``row_hash``, inserts the row, moves the
+    head and commits. Raises on failure; callers roll back and log.
+    """
+    from app.services import ledger
+
+    details = fields.pop('details', None)
+    details = json.loads(canonical_json(details if isinstance(details, dict) else {}, strict=False))
+    for name in _UUID_FIELDS:
+        value = fields.get(name)
+        try:
+            fields[name] = _as_uuid(value)
+        except (ValueError, TypeError, AttributeError):
+            # Not a UUID (e.g. a numeric id): keep the reference in details.
+            fields[name] = None
+            details.setdefault(f'{name}_ref', str(value)[:200])
+
+    session = db.session
+    session.flush()
+
+    org_id = fields.get('organization_id')
+    chain_key = ledger.audit_chain_key(org_id)
+    key, key_id = ledger.ledger_key()
+    seq, prev = ledger.advance(chain_key, session)
+
+    row = AuditLog(**fields)
+    row.id = uuid.uuid4()
+    row.created_at = datetime.now(timezone.utc)
+    row.details = details
+    row.chain_seq = seq
+    row.prev_hash = prev or ledger.audit_genesis(org_id)
+    row.chain_key_id = key_id
+    row.row_hash = ledger.keyed_link_hash(key)(ledger.AUDIT_DOMAIN, row.prev_hash, row.chain_payload())
+    session.add(row)
+    ledger.commit_head(chain_key, seq, row.row_hash, session)
+    session.commit()
+    return row
 
 
 def _parse_user_agent(ua_string: str) -> dict:
@@ -269,7 +363,7 @@ def audit_log(event_type, action, resource_type=None):
                 if audit_changes:
                     details['changes'] = audit_changes
 
-                log_entry = AuditLog(
+                log_entry = _write_audit_row(
                     organization_id=user.organization_id if user else None,
                     user_id=user.id if user else None,
                     user_email=user.email if user else None,
@@ -283,8 +377,6 @@ def audit_log(event_type, action, resource_type=None):
                     details=details,
                     **ctx,
                 )
-                db.session.add(log_entry)
-                db.session.commit()
                 _broadcast_activity(log_entry)
             except Exception:
                 try:
@@ -324,10 +416,12 @@ def log_audit_event(
     changes: a diff from utils.audit_diff.audit_changes(), stored as
         details['changes'].
     organization_id: explicit org for CLI / system events without a user.
-    actor_label: stored as user_email when there is no user (e.g. 'system:purge').
+    actor_label: a system actor stored as user_email (e.g. 'system:purge');
+        when given, the current request user is not used.
     """
     try:
-        if user is None:
+        if user is None and actor_label is None:
+            # A system actor (actor_label) never inherits a request user.
             user = getattr(g, 'current_user', None)
 
         ctx = _collect_request_context() if has_request_context() else {}
@@ -336,7 +430,7 @@ def log_audit_event(
         if changes:
             details['changes'] = changes
 
-        log_entry = AuditLog(
+        log_entry = _write_audit_row(
             organization_id=organization_id or (user.organization_id if user else None),
             user_id=user.id if user else None,
             user_email=user.email if user else actor_label,
@@ -348,8 +442,6 @@ def log_audit_event(
             details=details,
             **ctx,
         )
-        db.session.add(log_entry)
-        db.session.commit()
         _broadcast_activity(log_entry)
         return log_entry
     except Exception:

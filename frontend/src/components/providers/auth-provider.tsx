@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, ReactNode } from 'react'
 import { useAuthStore } from '@/lib/store'
 import { useRouter, usePathname } from 'next/navigation'
-import { isPublicPath } from '@/lib/api'
+import { isPublicPath, setRestrictionHandler } from '@/lib/api'
 
 interface AuthContextType {
   isAuthenticated: boolean
@@ -45,6 +45,14 @@ export const routeGuards: RouteGuard[] = [
   { path: '/dashboard/incidents/new', anyOf: ['incidents:create'] },
 ]
 
+/**
+ * Where each account restriction (403 from the backend `account_state` gate)
+ * is lifted. W3-SEC adds `mfa_enrollment_required` → `/dashboard/profile?enroll_mfa=1`.
+ */
+export const RESTRICTION_ROUTES: Record<string, string> = {
+  password_change_required: '/auth/change-password',
+}
+
 /** Whether a user holding `permissions` may open `pathname` (true when no guard matches). */
 export function isRouteAllowed(pathname: string, permissions: readonly string[] | undefined): boolean {
   const guard = routeGuards.find((g) => pathname === g.path || pathname.startsWith(g.path + '/'))
@@ -62,10 +70,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth()
   }, [checkAuth])
 
+  // A request refused by an account restriction routes to the page that lifts it.
+  useEffect(() => {
+    setRestrictionHandler((code) => {
+      const target = RESTRICTION_ROUTES[code]
+      if (target && window.location.pathname !== target.split('?')[0]) router.replace(target)
+    })
+    return () => setRestrictionHandler(null)
+  }, [router])
+
+  const mustChangePassword = !!(user as { must_change_password?: boolean } | null)?.must_change_password
+
   useEffect(() => {
     if (!isLoading) {
       if (!isAuthenticated && !isPublicPath(pathname)) {
         router.push('/login')
+      } else if (isAuthenticated && mustChangePassword && pathname !== RESTRICTION_ROUTES.password_change_required) {
+        router.replace(RESTRICTION_ROUTES.password_change_required)
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/register')) {
         router.push('/dashboard')
       } else if (isAuthenticated && user) {
@@ -74,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-  }, [isAuthenticated, isLoading, pathname, router, user])
+  }, [isAuthenticated, isLoading, mustChangePassword, pathname, router, user])
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, isLoading }}>

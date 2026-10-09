@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/store'
+import { handleSessionRevoked, SESSION_REVOKED_EVENT } from '@/components/users/session-revoked'
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
 
@@ -60,6 +61,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     s.on('permissions_changed', () => {
       reconnectAfterServerDisconnect = true
       void useAuthStore.getState().refreshUser()
+    })
+
+    // session:revoked (W2-LIFE-UI): every token of this user was revoked by
+    // an admin; log out locally and go to /login with a notice.
+    s.on(SESSION_REVOKED_EVENT, () => {
+      void handleSessionRevoked()
     })
 
     s.on('disconnect', (reason: string) => {

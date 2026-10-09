@@ -58,3 +58,33 @@ describe('SocketProvider', () => {
     expect(mockSocket.connect).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('SocketProvider session:revoked (W2-LIFE-UI)', () => {
+  it('logs out and lands on /login with a notice', async () => {
+    const { sessionNavigation } = await import('@/components/users/session-revoked')
+    const assign = jest.spyOn(sessionNavigation, 'assign').mockImplementation(() => {})
+    const logout = jest.fn(async () => {})
+    act(() => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'u@x', name: 'U', roles: [], permissions: [] },
+        isAuthenticated: true,
+        logout,
+      })
+    })
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    )
+    expect(mockHandlers.has('session:revoked')).toBe(true)
+    // permissions_changed handling is untouched.
+    expect(mockHandlers.has('permissions_changed')).toBe(true)
+
+    await act(async () => {
+      mockHandlers.get('session:revoked')!({ reason: 'disabled' })
+    })
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(assign).toHaveBeenCalledWith('/login?reason=session_revoked')
+    assign.mockRestore()
+  })
+})

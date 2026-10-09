@@ -1,13 +1,15 @@
 "use client"
 
 /**
- * Edit a user: profile, roles, teams, account state and password reset.
+ * Edit a user: profile, roles and teams.
  *
  * Mirrors the backend guardrails (cosmetic; `rbac_guard` enforces them):
  * - roles whose permissions exceed yours are disabled ("exceeds your permissions");
  * - a user holding permissions you lack can't be changed (403 insufficient_privilege);
- * - on yourself, the Active switch and password reset are hidden (400 self_action /
- *   use_change_password: change your own password from your profile);
+ * - account state (disable/enable, password and MFA resets, force logout,
+ *   unlock) lives in the row actions of the users page, which apply the same
+ *   self rules (never offered on your own account: 400 self_action /
+ *   use_change_password, change your own password from your profile);
  * - server refusals (`last_admin`, `self_lockout`, ...) are shown as returned.
  */
 
@@ -23,7 +25,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, X, Plus, ShieldAlert } from 'lucide-react'
 import {
@@ -62,9 +63,7 @@ export function EditUserModal({ user, open, onOpenChange, onSuccess }: EditUserM
     const [isLoading, setIsLoading] = useState(false)
     const [formData, setFormData] = useState({
         name: '',
-        is_active: true,
         organizational_role: '',
-        password: ''
     })
     const [error, setError] = useState<unknown>(null)
 
@@ -103,9 +102,7 @@ export function EditUserModal({ user, open, onOpenChange, onSuccess }: EditUserM
         if (user && open) {
             setFormData({
                 name: user.name,
-                is_active: user.is_active,
                 organizational_role: user.organizational_role || '',
-                password: ''
             })
             setError(null)
             setTargetPermissions(null)
@@ -201,7 +198,7 @@ export function EditUserModal({ user, open, onOpenChange, onSuccess }: EditUserM
         }
     }
 
-    const showAccountControls = canManageUsers && !isSelf
+    const showAccountNote = canManageUsers && !isSelf
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -213,10 +210,6 @@ export function EditUserModal({ user, open, onOpenChange, onSuccess }: EditUserM
         const payload: Record<string, unknown> = {
             name: formData.name,
             organizational_role: formData.organizational_role || null,
-        }
-        if (showAccountControls) {
-            if (formData.is_active !== user.is_active) payload.is_active = formData.is_active
-            if (formData.password) payload.password = formData.password
         }
 
         try {
@@ -378,40 +371,10 @@ export function EditUserModal({ user, open, onOpenChange, onSuccess }: EditUserM
                             )}
                         </div>
 
-                        {showAccountControls && (
-                            <>
-                                <div className="flex items-center justify-between space-x-2 border-t pt-4 mt-1 p-3 rounded-md border">
-                                    <Label htmlFor="active-mode" className="flex flex-col space-y-1">
-                                        <span>Active Account</span>
-                                        <span className="font-normal text-xs text-muted-foreground">
-                                            Disable to prevent login
-                                        </span>
-                                    </Label>
-                                    <Switch
-                                        id="active-mode"
-                                        checked={formData.is_active}
-                                        disabled={locked}
-                                        onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
-                                    />
-                                </div>
-
-                                <div className="grid gap-2 border-t pt-4 mt-1">
-                                    <Label htmlFor="reset-password">Reset Password (Optional)</Label>
-                                    <Input
-                                        id="reset-password"
-                                        type="password"
-                                        value={formData.password}
-                                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                        placeholder="New password"
-                                        minLength={8}
-                                        disabled={locked}
-                                        autoComplete="new-password"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        Leave blank to keep current password. Resetting signs the user out everywhere.
-                                    </p>
-                                </div>
-                            </>
+                        {showAccountNote && (
+                            <p className="border-t pt-4 mt-1 text-xs text-muted-foreground">
+                                Disable, password and MFA resets, force logout and unlock are in this user&apos;s row actions.
+                            </p>
                         )}
                     </div>
 

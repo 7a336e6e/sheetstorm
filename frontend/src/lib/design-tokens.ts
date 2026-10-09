@@ -224,6 +224,38 @@ export const priorityColors = {
   low: severityColors.low,
 } as const
 
+// ─── DFIR: timeline confidence ───────────────────────────────────────────
+// low = muted, medium = amber, high = blue, certain = emerald
+export const confidenceColors = {
+  low: { bg: 'bg-muted', text: 'text-muted-foreground', border: 'border-border', label: 'Low' },
+  medium: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/20', label: 'Medium' },
+  high: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20', label: 'High' },
+  certain: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', border: 'border-emerald-500/20', label: 'Certain' },
+} as const
+
+// ─── DFIR: host triage verdict ───────────────────────────────────────────
+export const triageColors = {
+  under_analysis: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20', label: 'Under analysis' },
+  suspicious: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/20', label: 'Suspicious' },
+  compromised: { bg: 'bg-red-500/10', text: 'text-red-700 dark:text-red-400', border: 'border-red-500/20', label: 'Compromised' },
+  clean: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', border: 'border-emerald-500/20', label: 'Clean' },
+} as const
+
+// ─── DFIR: forensic acquisition chips (lit / unlit) ──────────────────────
+export const acquisitionChip = {
+  on: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25',
+  off: 'bg-muted text-muted-foreground/60 border-border',
+} as const
+
+// ─── DFIR: investigative lead outcome (`open` = no outcome yet) ──────────
+export const leadOutcomeColors = {
+  open: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20', label: 'Open' },
+  false_positive: { bg: 'bg-muted', text: 'text-muted-foreground', border: 'border-border', label: 'False positive' },
+  confirmed_malicious: { bg: 'bg-red-500/10', text: 'text-red-700 dark:text-red-400', border: 'border-red-500/20', label: 'Confirmed malicious' },
+  inconclusive: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', border: 'border-amber-500/20', label: 'Inconclusive' },
+  resolved: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', border: 'border-emerald-500/20', label: 'Resolved' },
+} as const
+
 // ─── Helper functions ────────────────────────────────────────────────────
 
 export function getSeverityClasses(severity: keyof typeof severityColors): string {
@@ -254,3 +286,6 @@ export type Phase = keyof typeof phaseColors
 export type NodeType = keyof typeof nodeTypeColors
 export type Priority = keyof typeof priorityColors
 export type TLP = keyof typeof tlpColors
+export type ConfidenceKey = keyof typeof confidenceColors
+export type TriageKey = keyof typeof triageColors
+export type LeadOutcomeKey = keyof typeof leadOutcomeColors

@@ -29,6 +29,8 @@ from app.api.v1.endpoints import defang
 from app.api.v1.endpoints import search
 from app.api.v1.endpoints import custom_fields
 from app.api.v1.endpoints import playbooks
+from app.api.v1.endpoints import user_admin
+from app.api.v1.endpoints import auth_lifecycle
 
 # Restricted-account gate (must-change-password, MFA enrollment): one
 # before_request for the whole API.

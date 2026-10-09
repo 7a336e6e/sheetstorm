@@ -17,10 +17,10 @@ import type { ComponentType } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   Activity,
+  Archive,
   BookOpen,
   Bug,
   CheckSquare,
-  FileText,
   Fingerprint,
   Globe,
   Key,
@@ -37,7 +37,7 @@ import { CompromisedAccountsTab } from '@/components/incidents/CompromisedAccoun
 import { NetworkIOCsTab } from '@/components/incidents/NetworkIOCsTab'
 import { HostBasedIOCsTab } from '@/components/incidents/HostBasedIOCsTab'
 import { MalwareToolsTab } from '@/components/incidents/MalwareToolsTab'
-import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
+import { EvidenceTab } from '@/components/incidents/evidence/EvidenceTab'
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { TasksTab } from '@/components/incidents/detail/TasksTab'
 import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
@@ -74,7 +74,7 @@ export const TAB_REGISTRY: IncidentTabDef[] = [
   { id: 'network', label: 'Network IOCs', icon: Globe, permission: 'network_iocs:read', component: NetworkIOCsTab, keepMounted: true },
   { id: 'host-iocs', label: 'Host IOCs', icon: Fingerprint, permission: 'host_iocs:read', component: HostBasedIOCsTab, keepMounted: true },
   { id: 'malware', label: 'Malware', icon: Bug, permission: 'malware:read', component: MalwareToolsTab, keepMounted: true },
-  { id: 'evidence', label: 'Artifacts', icon: FileText, permission: 'artifacts:read', component: ArtifactsTab, keepMounted: true },
+  { id: 'evidence', label: 'Evidence', icon: Archive, permission: 'artifacts:read', component: EvidenceTab, keepMounted: true },
   { id: 'notes', label: 'Notes', icon: MessageSquare, permission: 'incidents:read', component: CaseNotesTab, keepMounted: true },
 ]
 

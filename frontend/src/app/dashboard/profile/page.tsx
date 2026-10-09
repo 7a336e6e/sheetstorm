@@ -39,6 +39,7 @@ import {
   Globe,
 } from 'lucide-react'
 import type { User } from '@/types'
+import { MyApiKeysCard } from '@/components/api-keys/MyApiKeysCard'
 
 interface MFASetupData {
   secret: string
@@ -503,6 +504,8 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      <MyApiKeysCard />
 
       {/* MFA Setup Dialog */}
       <Dialog open={showSetupDialog} onOpenChange={setShowSetupDialog}>

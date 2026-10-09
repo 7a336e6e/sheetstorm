@@ -9,6 +9,7 @@
 import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2, ScrollText } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab'
@@ -19,6 +20,7 @@ import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { AuthenticationTab } from '@/components/settings/AuthenticationTab'
 import { MitrePatternManager } from '@/components/settings/MitrePatternManager'
 import { AuditRetentionTab } from '@/components/settings/AuditRetentionTab'
+import { ApiKeysTab } from '@/components/settings/ApiKeysTab'
 import { useAuthStore } from '@/lib/store'
 
 const TAB_CONFIG = [
@@ -32,6 +34,7 @@ const TAB_CONFIG = [
     { value: 'notifications', label: 'Notifications', icon: Bell, anyOf: ['integrations:read'] },
     { value: 'authentication', label: 'Authentication', icon: Shield, anyOf: ['integrations:read'] },
     { value: 'audit-retention', label: 'Audit Retention', icon: ScrollText, anyOf: ['organizations:manage'] },
+    { value: 'api-keys', label: 'API Keys', icon: KeyRound, anyOf: ['api_keys:manage'] },
 ]
 
 /** Tabs a user holding `permissions` may see, in display order. */
@@ -120,6 +123,11 @@ function SettingsInner() {
                 {show('audit-retention') && (
                     <TabsContent value="audit-retention" className="mt-6 max-w-4xl">
                         <AuditRetentionTab />
+                    </TabsContent>
+                )}
+                {show('api-keys') && (
+                    <TabsContent value="api-keys" className="mt-6 max-w-6xl">
+                        <ApiKeysTab />
                     </TabsContent>
                 )}
             </Tabs>

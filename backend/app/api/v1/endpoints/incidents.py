@@ -238,8 +238,16 @@ def create_incident():
     were silently dropped before). `detected_at` defaults to now and may not
     be more than 5 minutes in the future. A lead gets the "Lead Responder"
     assignment, exactly like a lead change through PUT. One transaction.
+
+    ``case_template`` ("builtin:<key>" or an org template id) seeds the new
+    incident with the template's questions, leads, playbook, custom-field
+    definitions and defaults (only for severity / tlp / classification the
+    request did not set), in the same transaction; the response adds
+    ``case_template_result``. An unknown or inactive template is a 400 and no
+    incident is created.
     """
     from app.models import Team
+    from app.services import case_template_service
     user = get_current_user()
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -277,6 +285,15 @@ def create_incident():
             return jsonify({'error': 'invalid_lead_responder',
                             'message': 'lead_responder_id is not an active user of your organization'}), 400
 
+    template = None
+    if data.case_template:
+        try:
+            template = case_template_service.resolve(user.organization_id, data.case_template)
+        except case_template_service.TemplateError as exc:
+            return jsonify({'error': 'invalid_case_template', 'message': exc.message}), 400
+        if template is None:
+            return jsonify({'error': 'invalid_case_template', 'message': 'case_template was not found'}), 400
+
     incident = Incident(
         organization_id=user.organization_id,
         title=data.title,
@@ -308,6 +325,11 @@ def create_incident():
             incident_id=incident.id, user_id=lead.id, role='Lead Responder',
             assigned_by=user.id, assigned_at=now,
         ))
+    template_result = None
+    if template is not None:
+        explicit = {f for f in ('severity', 'tlp', 'classification') if payload.get(f) is not None}
+        template_result = case_template_service.apply(incident, template, user, creating=True,
+                                                      explicit_fields=explicit)
     db.session.commit()
 
     # Send notifications
@@ -317,7 +339,13 @@ def create_incident():
     realtime.emit_change(incident.id, 'incident', 'created', obj=incident,
                          data=incident.to_dict(include_counts=True))
 
-    return jsonify(incident.to_dict(include_counts=True)), 201
+    body = incident.to_dict(include_counts=True)
+    if template_result is not None:
+        if template_result['playbook_instance'] is not None:
+            realtime.emit_change(incident.id, 'playbook', 'created', obj=template_result['playbook_instance'])
+        realtime.emit_resync(incident.id, ['questions', 'tasks', 'playbook'], 'case_template_applied')
+        body['case_template_result'] = case_template_service.public_result(template_result)
+    return jsonify(body), 201
 
 
 @api_bp.route('/incidents/<uuid:incident_id>', methods=['GET'])

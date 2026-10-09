@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **127 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **133 tools** covering the SheetStorm API surface (incidents, timeline, leads, investigative questions, case templates, evidence & custody, playbooks, IOCs, attack graph, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
@@ -182,7 +182,13 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
   Password and MFA resets are not exposed over MCP (they hand out takeover-grade secrets); use the web UI.
 - **Playbooks (7)**: `sheetstorm_list_playbook_templates`, `sheetstorm_get_playbook_template`,
   `sheetstorm_activate_playbook`, `sheetstorm_get_incident_playbook`, `sheetstorm_advance_playbook_phase`,
-  `sheetstorm_execute_playbook_action`, `sheetstorm_toggle_playbook_task`
+  `sheetstorm_execute_playbook_action`, `sheetstorm_toggle_playbook_task`. Built-in playbooks have the ID
+  `builtin:<key>` (e.g. `builtin:ransomware`) and work with the get and activate tools.
+- **Questions (4)**: `sheetstorm_list_open_questions` (one incident, or every accessible incident),
+  `sheetstorm_answer_question` (answer, confidence, status, evidence refs), `sheetstorm_add_question`
+  (own text or a library ref such as `ss:SSQ-006`), `sheetstorm_get_question_report`
+- **Case templates (2)**: `sheetstorm_list_case_templates`, `sheetstorm_apply_case_template` (idempotent merge, `dry_run`);
+  `sheetstorm_create_incident` also takes `case_template`
 
 ## Resources
 

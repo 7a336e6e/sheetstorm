@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'add_record_provenance'
+EXPECTED_HEAD = 'questions_case_templates'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -570,3 +570,119 @@ def test_security_policy_sessions_registration_round_trip(scratch_db):
     r = _flask_db(scratch_db, 'upgrade')
     assert r.returncode == 0, r.stderr[-3000:]
     assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── questions_case_templates ─────────────────────────────────────────
+
+def test_questions_case_templates_schema(app, db):
+    insp_tables = set(db.session.execute(text(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")).scalars().all())
+    assert {'investigative_questions', 'investigative_question_leads', 'case_templates',
+            'incident_case_templates'} <= insp_tables
+
+    def cols(table):
+        return set(db.session.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = :t"), {'t': table}).scalars().all())
+
+    assert 'custom_fields' in cols('incidents')
+    assert 'cloned_from' in cols('playbooks') and 'builtin_key' in cols('incident_playbooks')
+    assert {'version', 'dedupe_key', 'evidence_refs', 'is_archived'} <= cols('investigative_questions')
+    assert 'version' in cols('case_templates')
+    idx = dict(db.session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'investigative_questions'")).all())
+    assert 'WHERE (dedupe_key IS NOT NULL)' in idx['uq_investigative_questions_dedupe']
+    # No feature migration touches role grants (C13): Administrator got templates:manage from the RBAC migration.
+    perms = db.session.execute(text("SELECT permissions FROM roles WHERE name='Administrator' AND is_system")).scalar()
+    assert 'templates:manage' in perms
+
+
+def test_questions_case_templates_roundtrip_and_idempotent(scratch_db):
+    import importlib.util
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+    # downgrade one step: the 4 tables and 3 columns are gone, data of other tables untouched
+    r = _flask_db(scratch_db, 'downgrade', 'add_record_provenance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            tables = set(conn.execute(text("SELECT table_name FROM information_schema.tables "
+                                           "WHERE table_schema = 'public'")).scalars().all())
+            assert not tables & {'investigative_questions', 'investigative_question_leads', 'case_templates',
+                                 'incident_case_templates'}
+            for table, col in (('incidents', 'custom_fields'), ('playbooks', 'cloned_from'),
+                               ('incident_playbooks', 'builtin_key')):
+                assert not conn.execute(text(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = :t AND column_name = :c"),
+                    {'t': table, 'c': col}).first()
+    finally:
+        eng.dispose()
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+    # Idempotent: running the upgrade body again over an existing schema is a no-op.
+    path = os.path.join(BACKEND_DIR, 'migrations', 'versions', 'questions_case_templates.py')
+    spec = importlib.util.spec_from_file_location('questions_case_templates_mig', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                mod.upgrade()
+                mod.upgrade()
+    finally:
+        eng.dispose()
+
+
+def test_questions_case_templates_models_match_migration(app, db):
+    """The ORM models of the 4 new tables (and the 3 added columns) describe
+    exactly what the migration created."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    tables = {'investigative_questions', 'investigative_question_leads', 'case_templates',
+              'incident_case_templates'}
+    columns = {('incidents', 'custom_fields'), ('playbooks', 'cloned_from'), ('incident_playbooks', 'builtin_key')}
+
+    def relevant(obj):
+        if getattr(obj, 'name', None) in tables or getattr(obj, 'table', None) is not None and obj.table.name in tables:
+            return True
+        return False
+
+    with db.engine.connect() as conn:
+        ctx = MigrationContext.configure(conn, opts={'compare_type': True})
+        diffs = compare_metadata(ctx, db.metadata)
+
+    def flatten(items):
+        for d in items:
+            if isinstance(d, list):
+                yield from flatten(d)
+            else:
+                yield d
+
+    problems = []
+    for d in flatten(diffs):
+        kind = d[0]
+        if kind in ('add_table', 'remove_table'):
+            name = d[1].name
+            if name in tables:
+                problems.append(d)
+        elif kind in ('add_column', 'remove_column'):
+            table, col = d[2], d[3].name
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+        elif kind in ('add_index', 'remove_index', 'add_constraint', 'remove_constraint'):
+            obj = d[1]
+            if relevant(obj):
+                problems.append(d)
+        elif kind.startswith('modify_'):
+            table, col = d[2], d[3]
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+    assert not problems, problems

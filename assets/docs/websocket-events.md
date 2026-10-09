@@ -112,7 +112,9 @@ Incident endpoints no longer emit the per-entity events `incident_updated`,
 Every create/update/delete of an incident entity emits one `entity:changed`
 (after the commit) instead, and bulk changes (spreadsheet import, attack-graph
 auto-generate, graph updates from a new timeline event on a host, playbook
-actions, the host bulk update `PATCH /hosts/bulk` with reason `bulk_update`)
+actions, the host bulk update `PATCH /hosts/bulk` with reason `bulk_update`, adding
+library questions in bulk with reason `questions_added`, and applying a case template
+with reason `case_template_applied`, which resyncs `questions`, `tasks` and `playbook`)
 emit `incident:resync` for the affected scopes. `task` payloads include
 `evidence` refs with `missing` but `label: null`: labels depend on each
 reader's permissions, so clients read them over REST. The old client events
@@ -168,6 +170,8 @@ Wired endpoints (If-Match is optional: without it the write is last-write-wins):
 | network_ioc, host_ioc, malware | `PUT .../network-iocs/<id>`, `.../host-iocs/<id>`, `.../malware/<id>` | yes | — |
 | graph_node, graph_edge | `PUT .../attack-graph/nodes/<id>`, `.../edges/<id>` | yes | — |
 | playbook (incident instance) | `PUT .../playbook/advance`, `PUT .../playbook/task` | — | `GET .../playbook` |
+| question | `PUT .../questions/<id>`, `PUT .../questions/<id>/leads` | archive (`DELETE`, emitted as `deleted`) | `GET .../questions/<id>` |
+| case template (org) | `PUT /case-templates/<id>` (the template revision is `version`) | yes | `GET /case-templates/<id>` |
 
 Update responses carry the new `ETag`. A concurrent writer that commits between
 the check and the commit also yields the 409 (SQLAlchemy `version_id_col`).

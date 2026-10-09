@@ -156,6 +156,7 @@ async def sheetstorm_create_incident(
     team_id: Optional[str] = None,
     detected_at: Optional[str] = None,
     lead_responder_id: Optional[str] = None,
+    case_template: Optional[str] = None,
 ) -> str:
     """Create a new incident.
 
@@ -170,6 +171,9 @@ async def sheetstorm_create_incident(
         detected_at: When the incident was detected, ISO 8601 (no offset = UTC). Default: now. Not in the future.
         lead_responder_id: UUID of the lead responder (an active user of your organization); they get the
             "Lead Responder" assignment and a notification
+        case_template: Start from a case template ("builtin:<key>" or a template UUID from
+            sheetstorm_list_case_templates): seeds questions, starter leads, a playbook and custom
+            fields, and fills severity/TLP/classification you did not set
     """
     client = get_client()
     try:
@@ -188,9 +192,20 @@ async def sheetstorm_create_incident(
             payload["detected_at"] = detected_at
         if lead_responder_id:
             payload["lead_responder_id"] = lead_responder_id
+        if case_template:
+            payload["case_template"] = case_template
 
         inc = await client.post("/incidents", json=payload)
-        return f"✓ Incident created:\n{_format_incident(inc)}"
+        out = f"✓ Incident created:\n{_format_incident(inc)}"
+        result = inc.get("case_template_result") if isinstance(inc, dict) else None
+        if result:
+            created = result.get("created") or {}
+            out += (
+                f"\n  Template applied: {created.get('questions', 0)} questions, "
+                f"{created.get('leads', 0)} leads"
+                + (f", playbook: {result['playbook'].get('name')}" if result.get("playbook") else "")
+            )
+        return out
     except SheetStormAPIError as exc:
         return f"✗ Error creating incident: {exc}"
 

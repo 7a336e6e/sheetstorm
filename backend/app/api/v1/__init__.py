@@ -34,6 +34,8 @@ from app.api.v1.endpoints import search
 from app.api.v1.endpoints import sessions
 from app.api.v1.endpoints import custom_fields
 from app.api.v1.endpoints import playbooks
+from app.api.v1.endpoints import questions
+from app.api.v1.endpoints import case_templates
 from app.api.v1.endpoints import dashboard
 from app.api.v1.endpoints import user_admin
 from app.api.v1.endpoints import auth_lifecycle

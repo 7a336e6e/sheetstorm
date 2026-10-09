@@ -5,6 +5,8 @@ import type { User } from '@/lib/store'
 jest.mock('next/navigation', () => ({
   usePathname: () => '/dashboard',
   useRouter: () => ({ push: () => {}, replace: () => {} }),
+  // NotificationPanel (W1-LST) pages through usePaginatedQuery.
+  useSearchParams: () => new URLSearchParams(),
 }))
 
 type Mod = typeof import('./sidebar')

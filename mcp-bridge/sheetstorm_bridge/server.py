@@ -93,6 +93,7 @@ import sheetstorm_bridge.tools.attack_graph  # noqa: E402, F401
 import sheetstorm_bridge.tools.auth  # noqa: E402, F401
 import sheetstorm_bridge.tools.case_notes  # noqa: E402, F401
 import sheetstorm_bridge.tools.case_templates  # noqa: E402, F401
+import sheetstorm_bridge.tools.decisions  # noqa: E402, F401
 import sheetstorm_bridge.tools.defang  # noqa: E402, F401
 import sheetstorm_bridge.tools.evidence  # noqa: E402, F401
 import sheetstorm_bridge.tools.incidents  # noqa: E402, F401

@@ -13,6 +13,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_SECRET_KEY` | Yes | - | JWT signing key |
 | `FERNET_KEY` | Yes | - | Fernet key encrypting integration credentials at rest |
 | `CUSTODY_SIGNING_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key for chain-of-custody signatures. See [Custody signing key](#custody-signing-key-and-rotation) |
+| `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (warning on first use) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
 | `DATABASE_URL` | Yes | built by compose | PostgreSQL connection (compose builds it from `POSTGRES_*`) |
 | `REDIS_URL` | Yes | `redis://redis:6379/0` | Redis connection (rate limiting, MCP OAuth state) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | No | `sheetstorm` / `changeme` / `sheetstorm` | PostgreSQL credentials - change the password for any shared deployment |
@@ -64,6 +65,8 @@ An optional local LLM container is available: `docker compose --profile local-ll
 | `JOBS_INTERVAL_SECONDS` | `300` | How often the `jobs` compose service runs `flask sheetstorm run-jobs`. Each registered job keeps its own schedule (Redis `jobs:last:<name>`) and runs under a Redis lock (`jobs:lock:<name>`), so several runners never execute a job twice. |
 
 Without the `jobs` service, run `docker compose exec -T backend flask sheetstorm run-jobs` from host cron. `flask sheetstorm list-jobs` shows the registered jobs and their last successful run, and `run-jobs --only <name> [--force]` runs a single job.
+
+Registered jobs: `purge-audit-logs` and `verify-audit-chain` (daily; see [Audit log governance](#audit-log-governance)).
 
 ### Storage, integrations and SSO (all optional; most are also configurable in the UI)
 
@@ -160,10 +163,40 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 - Rotating `CUSTODY_SIGNING_KEY` itself makes signatures created with the old key fail verification. Avoid rotating during active cases. If you must rotate (suspected key exposure), first verify and export the custody records of open cases, archive the old key securely together with that export, then record the rotation date in the affected cases.
 - Never reuse the custody key for anything else and never commit it.
 
+## Audit log governance
+
+The audit log (`audit_logs`) is **append-only** and **tamper-evident**:
+
+- A database trigger (`audit_logs_append_only()`) rejects every `UPDATE`, `DELETE` and `TRUNCATE` on the table (SQLSTATE `42501`). The only exception is the retention purge, which deletes inside a transaction that sets `sheetstorm.audit_purge = 'on'` (`SET LOCAL`).
+- The table has no foreign keys. Deleting a user, incident or organization never rewrites an audit row, and the original ids stay in the log.
+- Every row is linked into its organization's hash chain: `chain_seq` (gap-free per organization), `prev_hash` and `row_hash` = HMAC-SHA256(`AUDIT_CHAIN_KEY`, previous hash + the row's canonical content). The chain head of each organization is kept in `ledger_heads`. Rows written before this release have no chain fields ("legacy, unchained"); they are not backfilled.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUDIT_CHAIN_KEY` | falls back to `SECRET_KEY` | Chain HMAC key. Generate it like the custody key (`python3 -c "import secrets; print(secrets.token_hex(32))"`), keep it **outside** the database and back it up. When moving an existing install off the fallback, set it to the current `SECRET_KEY` value. |
+| `AUDIT_CHAIN_PREVIOUS_KEYS` | empty | Comma-separated retired chain keys. Rows signed with a key that is neither current nor listed here verify as `unverifiable_rotated_key` (not as tampering). |
+| `AUDIT_EXPORT_MAX_ROWS` | `100000` | Exports matching more rows fail with 422 `export_too_large` (no partial dumps). |
+| `AUDIT_PURGE_BATCH_SIZE` | `10000` | Rows deleted per purge transaction. |
+| `APP_VERSION` / `GIT_COMMIT` | empty | Shown in the admin system status (platform admins only). |
+| `LOCAL_ARTIFACT_DIR` | `/app/artifacts` | Local artifact storage directory (also used for the disk-usage status). |
+
+**Retention and legal hold** are per organization (`GET/PUT /api/v1/admin/audit-settings`, `organizations:manage`). Retention is "keep forever" by default; otherwise at least 365 days. Shortening retention needs `confirm: true` (the API answers 409 with `would_purge` first). Placing a legal hold requires a reason; holds and releases are recorded as `security_event`. These keys cannot be written through `PUT /organization`.
+
+**Purge and verification** run daily as jobs (`purge-audit-logs`, `verify-audit-chain`) and on demand:
+
+```bash
+docker compose exec -T backend flask sheetstorm purge-audit-logs [--org SLUG] [--dry-run] [--batch-size N]
+docker compose exec -T backend flask sheetstorm verify-audit-chain [--org SLUG]   # exit 1 on any failure
+```
+
+The purge skips an organization under legal hold (and logs `audit_purge_skipped`), keeps every row of an incident with an artifact under legal hold, and deletes only the contiguous oldest part of the chain, moving the chain anchor (`ledger_heads.purged_through_seq` / `anchor_hash`) so the rest still verifies. Each purge is logged as `system_event / audit_purge` by `system:purge`. Export what you must keep before it ages out (`GET /api/v1/audit-logs/export?format=csv|jsonl`, `audit_logs:export`, 10/hour; CSV cells are protected against spreadsheet formula injection). The export response header `X-Audit-Chain-Head: <seq>:<hash>` and the system status show the chain head: keeping copies of it off the server pins the history.
+
+**Limitation:** the application's database role owns `audit_logs` and could disable the trigger. The keyed chain detects such edits as long as `AUDIT_CHAIN_KEY` is not stored in the database. For stronger guarantees run the application with a database role that does not own the table (not configured by default).
+
 ## Database Schema
 
 23 tables with UUID primary keys, automatic `updated_at` triggers, and auto-incrementing incident numbers per organization.
 
-**Key Tables**: `users`, `roles`, `user_roles`, `organizations`, `incidents`, `incident_assignments`, `timeline_events`, `compromised_hosts`, `compromised_accounts`, `network_indicators`, `host_based_indicators`, `malware_tools`, `attack_graph_nodes`, `attack_graph_edges`, `artifacts`, `chain_of_custody`, `tasks`, `task_comments`, `reports`, `notifications`, `audit_logs`, `integrations`, `teams`, `team_members`.
+**Key Tables**: `users`, `roles`, `user_roles`, `organizations`, `incidents`, `incident_assignments`, `timeline_events`, `compromised_hosts`, `compromised_accounts`, `network_indicators`, `host_based_indicators`, `malware_tools`, `attack_graph_nodes`, `attack_graph_edges`, `artifacts`, `chain_of_custody`, `tasks`, `task_comments`, `reports`, `notifications`, `audit_logs`, `integrations`, `teams`, `team_members`, `ledger_heads`.
 
 **Extensions**: `uuid-ossp` (UUID generation), `pgcrypto` (cryptographic functions).

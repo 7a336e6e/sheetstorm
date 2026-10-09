@@ -2,8 +2,8 @@
 # Regenerate the hash-locked Python lockfiles from the human-edited inputs.
 # Policy and bump procedure: assets/docs/supply-chain.md ("Hash-locked Python").
 #
-#   scripts/lock-python.sh                          # cutoff = 7 days ago (UTC)
-#   EXCLUDE_NEWER=2026-10-01 scripts/lock-python.sh # explicit cutoff
+#   scripts/lock-python.sh                                    # cutoff = exactly 7 days ago (UTC)
+#   EXCLUDE_NEWER=2026-10-01T00:00:00Z scripts/lock-python.sh # explicit cutoff
 #
 #   input (edit this)                          -> lockfile (generated, commit it)
 #   backend/requirements.txt                   -> backend/requirements.lock
@@ -25,12 +25,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXCLUDE_NEWER="${EXCLUDE_NEWER:-$(date -u -v-7d +%F 2>/dev/null || date -u -d '7 days ago' +%F)}"
+# A full RFC 3339 timestamp, not a date: uv treats a bare date as the end of
+# that day, which let in files uploaded up to ~24 h after the intended cutoff.
+EXCLUDE_NEWER="${EXCLUDE_NEWER:-$(date -u -v-7d +%FT%TZ 2>/dev/null || date -u -d '7 days ago' +%FT%TZ)}"
 # uv 0.12.21 (released 2026-09-29) with CPython 3.12; bump the digest via
 # `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<ver>-python3.12-trixie-slim`.
 UV_IMAGE="ghcr.io/astral-sh/uv:0.12.21-python3.12-trixie-slim@sha256:5ae92e4d35b8d586d50ddf4aba6ecdd9f744237284d31c86bf45077e4e17e4bd"
 
-echo "Locking with --exclude-newer ${EXCLUDE_NEWER} (nothing uploaded after this date resolves)"
+echo "Locking with --exclude-newer ${EXCLUDE_NEWER} (nothing uploaded after this moment resolves)"
 
 docker run --rm --network bridge \
   -e EXCLUDE_NEWER="$EXCLUDE_NEWER" -e UV_NO_CONFIG=1 -e UV_CACHE_DIR=/tmp/uv-cache \

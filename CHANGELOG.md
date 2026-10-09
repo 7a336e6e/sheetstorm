@@ -317,6 +317,13 @@
 
 ### Other fixes
 
+- **Dependencies refreshed** (minor/patch only, every release at least 7 days
+  old): Flask-Limiter 3.12, alembic 1.20, pydantic 2.13, openai 1.109,
+  supabase 2.31, boto3 1.43, pandas 2.3 and others on the backend (SQLAlchemy is
+  held at 2.0.x: 2.1 switches `postgresql://` to psycopg 3); React 19.3,
+  React Flow 12.12, TypeScript 5.9, Radix and Supabase JS on the frontend.
+  `scripts/lock-python.sh` now applies its 7-day cutoff to the minute.
+
 - An update rejected with a 4xx (for example an unknown `host_id` on an IOC or
   compromised account, or an empty case-note content) no longer persists the
   fields it set before the check; audit rows record the real status of every

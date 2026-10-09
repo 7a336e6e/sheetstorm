@@ -9,12 +9,13 @@ import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, StatCard } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge, SeverityBadge, StatusBadge } from '@/components/ui/badge'
+import { SeverityBadge, StatusBadge } from '@/components/ui/badge'
 import { useAuthStore } from '@/lib/store'
-import { useAllPages } from '@/hooks/use-paginated-query'
 import { formatRelativeTime } from '@/lib/utils'
-import api from '@/lib/api'
-import type { Incident, TimelineEvent } from '@/types'
+import api, { isAbortError } from '@/lib/api'
+import { describeError } from '@/lib/errors'
+import { incidentOverview } from '@/lib/endpoints/incident-overview'
+import type { DashboardStats, Incident, PaginatedResponse } from '@/types'
 import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
 import {
   AlertTriangle,
@@ -25,11 +26,10 @@ import {
   ArrowRight,
   Shield,
   TrendingUp,
-  Clock,
   CheckCircle2,
   Target,
-  Zap,
   BarChart3,
+  Search,
 } from 'lucide-react'
 import { SkeletonStatCard, Skeleton } from '@/components/ui/skeleton'
 
@@ -59,85 +59,65 @@ const TLP_STYLES: Record<string, { bg: string; text: string; label: string }> = 
 
 export default function DashboardPage() {
   const { user } = useAuthStore()
-  // Incident list for the analytics below (W1-LST: the store no longer holds
-  // lists). Bounded to the 1,000 most recent; W2-DFIR-B replaces this with
-  // the dashboard summary endpoint.
-  const { items: incidents, isLoading } = useAllPages<Incident>('/incidents', { maxPages: 5 })
-  const [allTimelineEvents, setAllTimelineEvents] = useState<TimelineEvent[]>([])
+  // Server-side aggregates over every incident the user can access (W2-DFIR-B):
+  // no client fan-out, no truncation at a page size.
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [statsError, setStatsError] = useState<string | null>(null)
+  const [recentIncidents, setRecentIncidents] = useState<Incident[]>([])
+  const [recentLoading, setRecentLoading] = useState(true)
 
-  // Fetch timeline events for all incidents to aggregate TTP data
   useEffect(() => {
-    if (incidents.length === 0) return
     const controller = new AbortController()
-    const fetchTimelines = async () => {
-      try {
-        const results = await Promise.allSettled(
-          incidents.slice(0, 50).map(inc =>
-            api.get<{ items: TimelineEvent[] }>(`/incidents/${inc.id}/timeline`)
-          )
-        )
-        const combined: TimelineEvent[] = []
-        results.forEach(r => {
-          if (r.status === 'fulfilled' && r.value?.items) {
-            combined.push(...r.value.items)
-          }
-        })
-        if (!controller.signal.aborted) {
-          setAllTimelineEvents(combined)
-        }
-      } catch {
-        // silently fail – dashboard analytics is best-effort
-      }
-    }
-    fetchTimelines()
+    incidentOverview
+      .dashboardStats({ signal: controller.signal })
+      .then((data) => setStats(data))
+      .catch((err) => {
+        if (!isAbortError(err)) setStatsError(describeError(err).description)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStatsLoading(false)
+      })
+    api
+      .get<PaginatedResponse<Incident>>('/incidents?per_page=6&sort=-created_at', { signal: controller.signal })
+      .then((res) => setRecentIncidents(res.items || []))
+      .catch(() => {
+        // The list renders its empty state; the stats error (if any) is shown above.
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRecentLoading(false)
+      })
     return () => controller.abort()
-  }, [incidents])
+  }, [])
 
+  const isLoading = statsLoading
   const analytics = useMemo(() => {
-    if (incidents.length === 0) return null
-    const now = new Date()
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-
-    const total = incidents.length
-    const open = incidents.filter(i => !['closed'].includes(i.status)).length
-    const closed = incidents.filter(i => i.status === 'closed').length
-    const critical = incidents.filter(i => i.severity === 'critical').length
-    const thisWeek = incidents.filter(i => new Date(i.created_at) > weekAgo).length
-    const thisMonth = incidents.filter(i => new Date(i.created_at) > monthAgo).length
-
-    // Severity distribution
-    const severityDist = { critical: 0, high: 0, medium: 0, low: 0 }
-    incidents.forEach(i => { if (severityDist[i.severity as keyof typeof severityDist] !== undefined) severityDist[i.severity as keyof typeof severityDist]++ })
-    const maxSeverity = Math.max(...Object.values(severityDist), 1)
-
-    // Phase distribution (only non-closed)
-    const phaseDist: Record<number, number> = {}
-    incidents.filter(i => i.status !== 'closed').forEach(i => {
-      phaseDist[i.phase] = (phaseDist[i.phase] || 0) + 1
-    })
-
-    // Status distribution
-    const statusDist: Record<string, number> = {}
-    incidents.forEach(i => { statusDist[i.status] = (statusDist[i.status] || 0) + 1 })
-
-    // TLP distribution
-    const tlpDist: Record<string, number> = {}
-    incidents.forEach(i => {
-      const tlp = (i as any).tlp || 'amber'
-      tlpDist[tlp] = (tlpDist[tlp] || 0) + 1
-    })
-
-    // Average incidents per week (last 30 days)
-    const avgPerWeek = thisMonth > 0 ? Math.round((thisMonth / 4.3) * 10) / 10 : 0
-
-    return {
-      total, open, closed, critical, thisWeek, thisMonth,
-      severityDist, maxSeverity, phaseDist, statusDist, tlpDist, avgPerWeek,
+    if (!stats) return null
+    const inc = stats.incidents
+    const severityDist = {
+      critical: inc.by_severity.critical ?? 0,
+      high: inc.by_severity.high ?? 0,
+      medium: inc.by_severity.medium ?? 0,
+      low: inc.by_severity.low ?? 0,
     }
-  }, [incidents])
+    const phaseDist: Record<number, number> = {}
+    Object.entries(inc.by_phase_open).forEach(([phase, n]) => { phaseDist[Number(phase)] = n })
+    return {
+      total: inc.total,
+      open: inc.active,
+      closed: inc.closed,
+      critical: inc.critical,
+      thisWeek: inc.created_7d,
+      thisMonth: inc.created_30d,
+      severityDist,
+      maxSeverity: Math.max(...Object.values(severityDist), 1),
+      phaseDist,
+      tlpDist: inc.by_tlp as Record<string, number>,
+      // Average incidents per week (last 30 days)
+      avgPerWeek: inc.created_30d > 0 ? Math.round((inc.created_30d / 4.3) * 10) / 10 : 0,
+    }
+  }, [stats])
 
-  const recentIncidents = incidents.slice(0, 6)
 
   const currentDate = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -213,9 +193,15 @@ export default function DashboardPage() {
         )}
       </div>
 
+      {statsError && (
+        <p role="alert" className="text-sm text-red-400">
+          Could not load dashboard statistics: {statsError}
+        </p>
+      )}
+
       {/* Analytics Row */}
       {!isLoading && analytics && analytics.total > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
           {/* Severity Distribution */}
           <Card>
             <CardHeader className="pb-2">
@@ -294,13 +280,42 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* DFIR queue: open leads and host triage (null without the read permission) */}
+          {stats && (stats.dfir.open_leads !== null || stats.dfir.hosts_by_triage !== null) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Investigation Queue</CardTitle>
+                <CardDescription className="text-xs">Across all accessible incidents</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {stats.dfir.open_leads !== null && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Search className="h-3.5 w-3.5" /> Open leads
+                    </span>
+                    <span className="font-bold text-foreground">{stats.dfir.open_leads}</span>
+                  </div>
+                )}
+                {stats.dfir.hosts_by_triage &&
+                  Object.entries(stats.dfir.hosts_by_triage)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([triage, count]) => (
+                      <div key={triage} className="flex items-center justify-between text-xs">
+                        <span className="capitalize text-muted-foreground">Hosts {triage.replace(/_/g, ' ')}</span>
+                        <span className="font-medium text-foreground">{count}</span>
+                      </div>
+                    ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
       {/* Cross-incident MITRE TTP Analytics */}
-      {!isLoading && allTimelineEvents.length > 0 && (
+      {!isLoading && stats?.mitre && stats.mitre.events_mapped > 0 && (
         <MitreTTPAnalytics
-          events={allTimelineEvents}
+          aggregate={stats.mitre}
           title="MITRE ATT&CK Coverage"
           description="Tactics and techniques observed across all incidents"
         />
@@ -323,7 +338,7 @@ export default function DashboardPage() {
               </Link>
             </CardHeader>
             <CardContent>
-              {isLoading ? (
+              {recentLoading ? (
                 <div className="divide-y divide-border">
                   {[1, 2, 3, 4, 5].map((i) => (
                     <div key={i} className="flex items-center gap-4 py-3 -mx-4 px-4">

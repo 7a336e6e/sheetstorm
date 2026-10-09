@@ -360,19 +360,16 @@ def permanent_delete_incident(incident_id):
     if not user_can_access_incident(user, incident):
         return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
-    # Forensic preservation: never purge evidence that is under legal hold
-    # (the artifacts would cascade-delete with the incident).
-    from app.models import Artifact
-    held = [a for a in Artifact.query.filter_by(incident_id=incident.id).all() if a.under_legal_hold]
-    if held:
-        return jsonify({
-            'error': 'conflict',
-            'message': f'{len(held)} artifact(s) are under legal hold; release the hold(s) before permanently deleting this incident',
-            'held_artifact_ids': [str(a.id) for a in held],
-        }), 409
-
-    db.session.delete(incident)
-    db.session.commit()
+    # Audited purge (services/incident_purge.py): legal-hold check on
+    # artifacts and evidence items, ledger heads logged before deletion,
+    # registered purge steps, custody purge GUC, DB cascade.
+    from app.services.incident_purge import PurgeBlocked, PurgeError, purge_incident
+    try:
+        purge_incident(incident, user)
+    except PurgeBlocked as exc:
+        return jsonify(exc.to_dict()), 409
+    except PurgeError as exc:
+        return jsonify(exc.to_dict()), exc.status
 
     return jsonify({'message': 'Incident permanently deleted'}), 200
 

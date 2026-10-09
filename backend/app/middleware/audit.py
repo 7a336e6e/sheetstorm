@@ -350,6 +350,13 @@ def audit_log(event_type, action, resource_type=None):
 
             # Log after successful execution
             try:
+                status_code = _response_status(result)
+                if status_code >= 400:
+                    # An error response must not persist a half-applied
+                    # change (fields set before a validation 400): the audit
+                    # row's commit below would flush it. Work the handler
+                    # already committed (e.g. security events) is unaffected.
+                    db.session.rollback()
                 user = getattr(g, 'current_user', None)
                 incident = getattr(g, 'incident', None)
 
@@ -385,7 +392,7 @@ def audit_log(event_type, action, resource_type=None):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     incident_id=incident.id if incident else kwargs.get('incident_id'),
-                    status_code=_response_status(result),
+                    status_code=status_code,
                     duration_ms=duration_ms,
                     details=details,
                     **ctx,

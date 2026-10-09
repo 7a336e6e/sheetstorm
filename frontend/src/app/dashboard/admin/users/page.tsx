@@ -26,7 +26,8 @@ import {
 } from '@/components/ui/select'
 import { Users, UserPlus, Shield, Loader2, Pencil, Trash2, MoreVertical, UsersRound, Cloud, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api'
-import { User, Team } from '@/types'
+import { User, Team, Role } from '@/types'
+import { isAdminCore, rbac } from '@/lib/endpoints/rbac'
 import { AddUserModal } from '@/components/users/AddUserModal'
 import { EditUserModal } from '@/components/users/EditUserModal'
 import { RoleBadge } from '@/components/ui/badge'
@@ -44,6 +45,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 export default function UsersPage() {
     const [users, setUsers] = useState<User[]>([])
     const [teams, setTeams] = useState<Team[]>([])
+    const [roles, setRoles] = useState<Role[]>([])
     const [loading, setLoading] = useState(true)
     const [syncing, setSyncing] = useState(false)
     const [isAddOpen, setIsAddOpen] = useState(false)
@@ -56,7 +58,15 @@ export default function UsersPage() {
     useEffect(() => {
         loadUsers()
         loadTeams()
+        rbac.listRoles().then((res) => setRoles(res.items)).catch(() => { /* stats only */ })
     }, [])
+
+    // "Administrators" = users whose roles together grant users:manage + roles:manage
+    // (permission-based; role names are visible-unique per org).
+    const rolePermissions = new Map(roles.map((r) => [r.name, r.permissions]))
+    const adminCount = users.filter((u) =>
+        isAdminCore(u.roles.flatMap((name) => rolePermissions.get(name) ?? []))
+    ).length
 
     const loadUsers = async () => {
         setLoading(true)
@@ -176,18 +186,14 @@ export default function UsersPage() {
                 </Card>
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardDescription>Administrators</CardDescription>
-                        <CardTitle className="text-2xl">
-                            {users.filter(u => u.roles.includes('Administrator')).length}
-                        </CardTitle>
+                        <CardDescription title="Users who can manage users and roles">Administrators</CardDescription>
+                        <CardTitle className="text-2xl">{adminCount}</CardTitle>
                     </CardHeader>
                 </Card>
                 <Card>
                     <CardHeader className="pb-2">
-                        <CardDescription>Analysts</CardDescription>
-                        <CardTitle className="text-2xl">
-                            {users.filter(u => u.roles.includes('Analyst')).length}
-                        </CardTitle>
+                        <CardDescription>Active</CardDescription>
+                        <CardTitle className="text-2xl">{users.filter(u => u.is_active).length}</CardTitle>
                     </CardHeader>
                 </Card>
                 <Card>

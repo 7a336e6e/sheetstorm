@@ -51,6 +51,11 @@ disconnects the user's sockets).
 
 New entities register with `realtime.register_entity(entity, scope, read_perm, serializer=None)`.
 
+Decision log (W4-DEC): a privileged decision is emitted **only** as entity `decision_privileged` to scope
+`decisions_privileged` (with data); nothing about it reaches scope `decisions`, and its audit `activity:new`
+uses resource type `decision_privileged` (same scope). When the flag flips, the old scope receives a `deleted`
+first and the new scope a `created`. `response_action` payloads never carry the id of a privileged decision.
+
 ---
 
 ## Client → Server

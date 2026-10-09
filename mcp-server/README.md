@@ -171,6 +171,9 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
   hand-over happened), `sheetstorm_verify_evidence_chain` (item or whole-incident ledger). Every request
   sends `X-SheetStorm-Client: mcp-server`, which the backend records in the signed custody entry.
 - **Attack graph (10)**: graph, auto-generate, node/edge CRUD incl. `sheetstorm_update_graph_edge`, node/edge types
+- **Metrics & improvements (3)**: `sheetstorm_get_incident_metrics` (dwell, respond, contain, eradicate, recover and
+  close durations; out-of-order timestamps are reported as anomalies), `sheetstorm_list_improvement_actions`,
+  `sheetstorm_add_improvement_action` (no `If-Match`: edits are last-write-wins)
 - **Case notes (5)**, **Reports (3)**, **Threat intel (7)**, **Knowledge base (6)**,
   **Advanced analysis (4)**, **Defang (2)**
 - **Admin (20)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who

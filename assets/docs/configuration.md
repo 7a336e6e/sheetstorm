@@ -71,7 +71,9 @@ An optional local LLM container is available: `docker compose --profile local-ll
 
 Without the `jobs` service, run `docker compose exec -T backend flask sheetstorm run-jobs` from host cron. `flask sheetstorm list-jobs` shows the registered jobs and their last successful run, and `run-jobs --only <name> [--force]` runs a single job.
 
-Registered jobs: `purge-audit-logs` and `verify-audit-chain` (daily; see [Audit log governance](#audit-log-governance)).
+Registered jobs: `purge-audit-logs` and `verify-audit-chain` (daily; see [Audit log governance](#audit-log-governance)) and `send-due-reminders` (every 15 minutes).
+
+**Due-date reminders.** `send-due-reminders` notifies (in-app, `task_due` / `improvement_due`) the assignee of every open task and the owner of every open improvement action that is due within 24 hours (`due_soon`) or past due (`overdue`), skipping archived incidents and inactive or foreign-organization users. Each (item, stage, due date) is reminded once: the `reminder_log` table dedupes concurrent and repeated runs, and changing a due date re-arms both stages. An overdue improvement action also notifies its creator. Run it by hand with `flask sheetstorm send-due-reminders [--window-hours 24] [--dry-run] [--org <slug>]`; `--dry-run` sends and records nothing.
 
 ### Storage, integrations and SSO (all optional; most are also configurable in the UI)
 

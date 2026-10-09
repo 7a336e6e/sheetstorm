@@ -85,17 +85,20 @@ admin) gets `403 password_change_required` on every route except `/auth/me`, `/a
 user of it (400 `invalid_lead_responder`). The lead gets a "Lead Responder" assignment and a
 notification. Nothing is written on a 400.
 
-**IR milestones** (`PUT /incidents/{id}`): `detected_at`, `contained_at`, `eradicated_at`,
-`recovered_at`, `closed_at` (ISO 8601; no offset = UTC; `null` clears one). Rejected with
-`400 invalid_milestones` when a value is more than 5 minutes in the future (`code: milestone_in_future`)
-or out of order `detected ≤ contained ≤ eradicated ≤ recovered ≤ closed`
-(`code: milestone_order`, `pair: [earlier, later]`). Only changed values are checked, so an existing
-out-of-order pair does not block unrelated edits. `executive_summary` and `lessons_learned` are capped
+**IR milestones** (`PUT /incidents/{id}`): `first_malicious_at`, `detected_at`, `responded_at`,
+`contained_at`, `eradicated_at`, `recovered_at`, `closed_at` (ISO 8601; no offset = UTC; `null`
+clears one). Rejected with `400 invalid_milestones` when a value is more than 5 minutes in the
+future (`code: milestone_in_future`) or out of order
+`first_malicious ≤ detected ≤ contained ≤ eradicated ≤ recovered ≤ closed`, or `responded` before
+`detected` (`code: milestone_order`, `pair: [earlier, later]`). Only changed values are checked, so an
+existing out-of-order pair does not block unrelated edits (the metrics report it as an anomaly). `executive_summary` and `lessons_learned` are capped
 at 20000 characters. A lead change notifies the new lead.
 
 **Status** (`PATCH /incidents/{id}/status`): `status` or `phase` (each implies the other). Entering
 contained / eradicated / recovered / closed stamps that milestone if it is empty; reopening a closed
-incident clears `closed_at`.
+incident clears `closed_at`. The first status away from `open`, or the first explicit assignment
+(`POST /incidents/{id}/assignments`; the creator's automatic one does not count), stamps `responded_at`
+if it is empty.
 
 **Overview summary**: `GET /incidents/{id}` (not the list) adds `summary`: `first_event_at`,
 `last_event_at`, `earliest_detection_at` (needs `timeline:read`), `leads {total, open, by_outcome}`
@@ -106,6 +109,47 @@ forensically_sound}` (`hosts:read`); a part is `null` without its permission.
 created_30d, by_severity, by_status, by_phase_open, by_tlp}`, `mitre {events_total, events_mapped,
 tactics: [{tactic, count, techniques: {Txxxx: n}}]}` (`timeline:read`, else `null`) and
 `dfir {open_leads (tasks:read), hosts_by_triage (hosts:read)}`. Counts only, never incident ids or titles.
+
+## Metrics, After-Action Review & Improvements
+
+| Method | Endpoint                                  | Permission                     |
+|--------|-------------------------------------------|--------------------------------|
+| GET    | `/incidents/{id}/metrics`                 | `incidents:read`               |
+| GET    | `/metrics/incidents`                      | `metrics:read` (30/min)        |
+| GET    | `/incidents/{id}/review`                  | `incidents:read`               |
+| PUT    | `/incidents/{id}/review`                  | `incidents:update` (see below) |
+| GET    | `/incidents/{id}/improvement-actions`     | `improvements:read`            |
+| POST   | `/incidents/{id}/improvement-actions`     | `improvements:create`          |
+| GET    | `/improvement-actions`                    | `improvements:read`            |
+| PUT    | `/improvement-actions/{aid}`              | `improvements:update`          |
+| DELETE | `/improvement-actions/{aid}`              | `improvements:delete`          |
+
+**Metrics.** Durations in seconds, `null` when an endpoint is missing: `dwell_time` (first malicious →
+detected), `time_to_respond`, `time_to_contain` (from detected), `contain_to_eradicate`,
+`eradicate_to_recover`, `recover_to_close`, `total_open`. `first_malicious` is `incidents.first_malicious_at`
+(manual override) or the earliest timeline event that is an IOC or carries a MITRE tactic / mapping or a
+kill-chain phase. A negative interval is `null` plus an entry in `anomalies`; `sources.first_malicious` is
+`override`, `timeline`, `restricted` (caller lacks `timeline:read`, so the timeline is not consulted) or `null`.
+`GET /metrics/incidents` needs `from` and `to` (ISO date or datetime; a date-only `to` includes that day; at
+most 731 days → 400 `invalid_range`), and takes `group_by` = `none|severity|classification|detection_source` and
+`date_field` = `detected_at|closed_at`. It aggregates in SQL over the incidents the caller can see (the incident
+list's visibility; archived excluded) and returns `{overall, groups}` with `{median, p90, n, anomalies}` per
+metric; a metric with fewer than 3 values reports `n` only.
+
+**Review** (`incident_reviews`, one per incident). `GET` returns `{review|null, legacy_lessons_learned, can_manage}`.
+`PUT` upserts the sent fields (`what_went_well`, `what_went_wrong`, `root_cause`, `contributing_factors:
+[{category, description}]`, `detection_source`, `review_date`, `participants` (same-org user ids), `status`
+`draft|final`) with `If-Match`. A draft is edited with `incidents:update`; finalizing, reopening and editing a
+final review also need `improvements:create` + `improvements:update` (403 `forbidden` / `review_finalized`).
+
+**Improvement actions** survive a permanent incident delete (`incident_id` becomes null, `incident_ref` keeps
+`#<n> <title>`). Fields: `title`, `description`, `owner_id` (active user of the org), `due_date`, `status`
+`open|in_progress|blocked|done|wont_fix`, `priority`, `category`, `control_framework` (`nist_csf|d3fend|cis|
+iso27001|other`) and `control_ref` (needs a framework; `nist_csf` like `RS.MA-01`, `d3fend` a known `D3-*` id).
+`improvements:update` without `improvements:create` (Analyst, Operator) only covers actions you own or created.
+The org list shows an action when its incident is visible to you, it has no incident, or you own it; filters:
+`status`, `priority` (comma lists), `incident_id`, `owner_id` (`me`), `overdue=true`, `q`; default sort by due date.
+Writes honour `If-Match` and emit `review` / `improvement_action` realtime changes.
 
 ## Timeline Events
 

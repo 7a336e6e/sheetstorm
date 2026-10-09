@@ -86,8 +86,8 @@ def validate_control(framework, ref):
     if framework == 'd3fend':
         if not D3FEND_REF.match(ref):
             return 'control_ref for d3fend must look like D3-MFA'
-        from app.api.v1.endpoints.kb_data_d3fend import D3FEND_TECHNIQUES
-        if ref not in {t['id'] for t in D3FEND_TECHNIQUES}:
+        from app.api.v1.endpoints.kb_data_d3fend import D3FEND_TECHNIQUE_IDS
+        if ref not in D3FEND_TECHNIQUE_IDS:
             return f'{ref} is not a known D3FEND technique'
     elif framework == 'nist_csf' and not CSF_REF.match(ref):
         return 'control_ref for nist_csf must look like RS.MA-01 or ID.IM'

@@ -2,7 +2,6 @@
 from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
 from app import db, socketio
 from app.models import CompromisedHost, CompromisedAccount, TimelineEvent

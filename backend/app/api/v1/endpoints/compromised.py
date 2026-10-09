@@ -11,6 +11,9 @@ from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
 from app.utils.validation import parse_datetime, check_choice, json_body
 
+# Placeholder CompromisedAccount.to_dict() emits instead of the real password.
+PASSWORD_MASK = '********'
+
 
 # =============================================================================
 # Compromised Hosts
@@ -397,15 +400,16 @@ def update_compromised_account(incident_id, account_id):
         else:
             account.timeline_event_id = None
 
-    # Update password if provided
-    if 'password' in data:
-        if data['password']:
-            try:
-                account.password_encrypted = encryption_service.encrypt(data['password'])
-            except Exception:
-                return jsonify({'error': 'server_error', 'message': 'Failed to encrypt password'}), 500
-        else:
-            account.password_encrypted = None
+    # Password semantics: absent, empty/null, or the display mask -> unchanged.
+    # Cleared only by an explicit clear_password=true; any other value re-encrypts.
+    password = data.get('password')
+    if data.get('clear_password') is True:
+        account.password_encrypted = None
+    elif password and password != PASSWORD_MASK:
+        try:
+            account.password_encrypted = encryption_service.encrypt(password)
+        except Exception:
+            return jsonify({'error': 'server_error', 'message': 'Failed to encrypt password'}), 500
 
     db.session.commit()
 

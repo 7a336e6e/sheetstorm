@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import {
     Dialog,
@@ -75,6 +76,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
         datetime_seen: '',
         account_name: '',
         password: '',
+        clear_password: false,
         host_id: '',
         host_system: '',
         sid: '',
@@ -113,6 +115,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
             datetime_seen: '',
             account_name: '',
             password: '',
+            clear_password: false,
             host_id: '',
             host_system: '',
             sid: '',
@@ -131,7 +134,9 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
             setForm({
                 datetime_seen: account.datetime_seen?.slice(0, 16) || '', // Format for datetime-local
                 account_name: account.account_name,
-                password: account.password || '',
+                // Never pre-fill: the API only returns the masked value
+                password: '',
+                clear_password: false,
                 host_id: account.host_id || '',
                 host_system: account.host_system || '',
                 sid: account.sid || '',
@@ -153,10 +158,9 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
 
         setIsSubmitting(true)
         try {
-            const payload = {
+            const payload: Record<string, unknown> = {
                 datetime_seen: form.datetime_seen || undefined,
                 account_name: form.account_name,
-                password: form.password || null,
                 host_id: form.host_id || null,
                 host_system: form.host_system || null,
                 sid: form.sid || null,
@@ -169,6 +173,15 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
             // Ensure datetime_seen is present for new accounts
             if (!editingAccount && !payload.datetime_seen) {
                 // Fallback or validation error - simplified for now
+            }
+
+            // Only send a password the user actually typed; an empty field leaves
+            // the stored password unchanged. Clearing needs the explicit checkbox.
+            if (form.password) {
+                payload.password = form.password
+            }
+            if (editingAccount && form.clear_password) {
+                payload.clear_password = true
             }
 
             if (editingAccount) {
@@ -523,13 +536,28 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                 <Input
                                     id="password"
                                     type="text"
-                                    placeholder="Enter compromised password or hash..."
+                                    placeholder={editingAccount?.has_password
+                                        ? 'Leave blank to keep current password'
+                                        : 'Enter compromised password or hash...'}
                                     value={form.password}
-                                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                                    onChange={(e) => setForm({ ...form, password: e.target.value, clear_password: false })}
                                     className="pl-10"
                                     variant="glass"
                                 />
                             </div>
+                            {!!editingAccount?.has_password && (
+                                <div className="flex items-center gap-2">
+                                    <Checkbox
+                                        id="clear_password"
+                                        checked={form.clear_password}
+                                        disabled={!!form.password}
+                                        onCheckedChange={(checked) => setForm({ ...form, clear_password: checked === true })}
+                                    />
+                                    <Label htmlFor="clear_password" className="text-xs text-muted-foreground font-normal">
+                                        Clear stored password
+                                    </Label>
+                                </div>
+                            )}
                         </div>
 
                         <div className="space-y-2">

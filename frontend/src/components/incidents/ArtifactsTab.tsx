@@ -43,7 +43,7 @@ export function ArtifactsTab({ incidentId }: ArtifactsTabProps) {
   const { hasPermission } = useAuthStore()
   const canUpload = hasPermission('artifacts:upload')
   const canDownload = hasPermission('artifacts:download')
-  const canVerify = hasPermission('artifacts:verify')
+  const canVerify = hasPermission('artifacts:read')
   const canDelete = hasPermission('artifacts:delete')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])

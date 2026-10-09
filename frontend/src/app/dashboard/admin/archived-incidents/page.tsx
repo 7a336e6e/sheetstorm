@@ -93,7 +93,7 @@ export default function ArchivedIncidentsPage() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Archived Incidents</h1>
-          <p className="text-muted-foreground mt-1">View and manage archived incidents. Only administrators can access this page.</p>
+          <p className="text-muted-foreground mt-1">View and restore archived incidents. Requires the Archive incidents permission; permanent deletion also requires Permanently delete incidents.</p>
         </div>
       </div>
 

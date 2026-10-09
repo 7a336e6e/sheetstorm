@@ -10,7 +10,8 @@ Permissions (one mapping, ``EVIDENCE_PERMS``; C29 reuses ``artifacts:*``):
     read    artifacts:read    list, detail, custody list, verify, single-item
                               custody export json/csv/pdf/form
     write   artifacts:upload  register, edit, add hash, verify hash, check out,
-                              check in, transfer, acknowledge, create party
+                              check in, transfer, acknowledge, create party,
+                              RFC 3161 anchor
     manage  artifacts:delete  dispose, void, legal hold, edit/deactivate party
     export  incidents:export  ON TOP of read (C24): evidence register CSV/PDF/
                               bundle and the item custody bundle
@@ -47,6 +48,7 @@ from app.models.evidence import (CUSTODY_STATES, EVIDENCE_TYPES, HASH_ALGORITHMS
                                  TRANSFER_METHODS)
 from app.services import evidence_export_service as exports
 from app.services import realtime
+from app.services import timestamp_service as tsa
 from app.services.custody_ledger import DISPOSE_METHODS, CustodyError, CustodyLedger
 from app.services.hash_service import HashService
 from app.utils.audit_diff import record_changes, snapshot
@@ -398,6 +400,44 @@ def _commit(item):
     return commit_or_conflict(item)
 
 
+ANCHOR_NOTE = ('RFC 3161 tokens are checked here for structure, digest and nonce only. The TSA signature and '
+               'certificate chain are not verified by the server: run `openssl ts -verify` offline.')
+
+
+def _annotate_anchors(result):
+    """Add ``gen_time`` / ``token_binding`` to each RFC 3161 anchor and an
+    ``anchor_status`` summary to a verification result (explicit verifies and
+    exports only). ``token_binding`` re-reads the stored token and compares its
+    imprint and nonce with the anchor row; it is not a signature check."""
+    anchors = result.get('anchors') or []
+    rows = {}
+    if any(a['anchor_type'] == 'rfc3161' and a['status'] == 'granted' for a in anchors):
+        rows = {str(r.id): r for r in CustodyAnchor.query.filter_by(
+            incident_id=uuid.UUID(result['incident_id']), anchor_type='rfc3161', status='granted').all()}
+    for a in anchors:
+        if a['anchor_type'] == 'rfc3161' and a['status'] == 'granted' and a['id'] in rows:
+            row = rows[a['id']]
+            a['token_binding'], gen = tsa.token_binding(row.token_der, row.head_hash, row.nonce)
+            a['gen_time'] = gen.isoformat() if gen else None
+            if a['token_binding'] != 'ok':
+                result.setdefault('notes', []).append(
+                    f"RFC 3161 anchor {a['id']}: stored token is {a['token_binding']} for its recorded head.")
+    granted = [a for a in anchors if a['anchor_type'] == 'rfc3161' and a['status'] == 'granted']
+    latest = granted[-1] if granted else None
+    result['anchor_status'] = {
+        'tsa_configured': tsa.is_enabled(),
+        'rfc3161_granted': len(granted),
+        'rfc3161_failed': sum(1 for a in anchors if a['anchor_type'] == 'rfc3161' and a['status'] == 'failed'),
+        'export_manifest': sum(1 for a in anchors if a['anchor_type'] == 'export_manifest'),
+        'current_head_anchored': any(a['covers_current_head'] and a.get('token_binding') == 'ok' for a in granted),
+        'latest_rfc3161': ({k: latest.get(k) for k in ('id', 'incident_seq', 'head_hash', 'gen_time',
+                                                       'token_binding', 'covers_current_head', 'created_at')}
+                           if latest else None),
+        'signature_verified': False,
+        'note': ANCHOR_NOTE,
+    }
+
+
 def _verify(*, item=None, incident=None, context, implicit=False):
     """Run ``CustodyLedger.verify`` and audit it (``custody_chain_verified``).
 
@@ -409,6 +449,7 @@ def _verify(*, item=None, incident=None, context, implicit=False):
     healthy = result['status'] in exports.OK_STATUSES or result['status'] == 'unverifiable'
     if implicit and healthy:
         return result
+    _annotate_anchors(result)
     log_audit_event(
         event_type='data_access' if healthy else 'security_event',
         action='custody_chain_verified',
@@ -930,6 +971,70 @@ def verify_item_custody(incident_id, evidence_item_id):
 def verify_incident_custody(incident_id):
     """Full incident chain plus every item chain."""
     return jsonify(_verify(incident=g.incident, context='verify')), 200
+
+
+def _anchor_view(anchor):
+    data = anchor.to_dict()
+    if anchor.anchor_type == 'rfc3161' and anchor.status == 'granted':
+        data['token_binding'], gen = tsa.token_binding(anchor.token_der, anchor.head_hash, anchor.nonce)
+        data['gen_time'] = gen.isoformat() if gen else None
+    return data
+
+
+@api_bp.route(BASE + '/custody/anchor', methods=['POST'])
+@jwt_required()
+@require_incident_access(EVIDENCE_PERMS['write'])
+@limiter.limit("20 per minute")  # rl-group: custody_verify
+@audit_log('data_modification', 'anchor_custody_head', 'incident')
+@_api_errors
+def anchor_incident_custody(incident_id):
+    """RFC 3161 anchor of the current incident ledger head (opt-in: ``TSA_URL``).
+
+    201 ``{anchor, covers_current_head}`` on a granted token; 200 with
+    ``already_anchored`` when a granted token already covers the current head
+    (the TSA is not asked again). A TSA failure is recorded as a ``failed``
+    anchor row (append-only) and answered 502 ``tsa_failed`` with ``reason``;
+    nothing else about the ledger changes. 400 ``tsa_disabled`` when ``TSA_URL``
+    is empty, 400 ``tsa_url_refused`` when it fails the outbound URL policy,
+    409 ``no_custody_head`` for an incident without chained entries. The
+    server does not verify the TSA signature (see ``anchor_status`` on the
+    verify endpoints and the offline ``openssl ts -verify`` recipe)."""
+    user, incident = get_current_user(), g.incident
+    if not tsa.is_enabled():
+        raise ApiError(400, 'tsa_disabled', 'RFC 3161 anchoring is not configured on this server')
+    _check_keys(_body(), ())
+    head = CustodyLedger.heads(incident.id)['incident']
+    if head is None:
+        raise ApiError(409, 'no_custody_head', 'The incident has no chained custody entries to anchor yet')
+    existing = (CustodyAnchor.query
+                .filter_by(incident_id=incident.id, anchor_type='rfc3161', status='granted',
+                           incident_seq=head['seq'], head_hash=head['hash'])
+                .order_by(CustodyAnchor.created_at.desc()).first())
+    if existing is not None:
+        return jsonify({'anchor': _anchor_view(existing), 'covers_current_head': True,
+                        'already_anchored': True}), 200
+    # The TSA round trip runs without the custody lock: the anchor records the
+    # head that was stamped, whatever is appended meanwhile.
+    try:
+        stamp = tsa.request_timestamp(head['hash'])
+    except tsa.TimestampError as exc:
+        if exc.code == 'tsa_disabled':
+            raise ApiError(400, 'tsa_disabled', exc.message)
+        if exc.code == 'url_refused':
+            raise ApiError(400, 'tsa_url_refused', exc.message)
+        failed = CustodyAnchor(incident_id=incident.id, incident_seq=head['seq'], head_hash=head['hash'],
+                               anchor_type='rfc3161', status='failed', tsa_url=tsa.public_url(tsa.tsa_url()),
+                               error=f'{exc.code}: {exc.message}'[:1000], created_by=user.id)
+        db.session.add(failed)
+        db.session.commit()
+        return jsonify({'error': 'tsa_failed', 'message': exc.message, 'reason': exc.code,
+                        'anchor': _anchor_view(failed)}), 502
+    anchor = CustodyAnchor(incident_id=incident.id, incident_seq=head['seq'], head_hash=head['hash'],
+                           anchor_type='rfc3161', status='granted', tsa_url=stamp.tsa_url, nonce=stamp.nonce,
+                           token_der=stamp.token_der, created_by=user.id)
+    db.session.add(anchor)
+    db.session.commit()
+    return jsonify({'anchor': _anchor_view(anchor), 'covers_current_head': True}), 201
 
 
 # ── Exports ─────────────────────────────────────────────────────────────────

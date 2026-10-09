@@ -69,6 +69,14 @@ class BaseConfig:
     # not invalidate every custody signature.
     CUSTODY_SIGNING_KEY = os.getenv('CUSTODY_SIGNING_KEY', '')
 
+    # Optional RFC 3161 anchoring of the custody ledger head
+    # (services/timestamp_service.py). Empty TSA_URL = disabled (default).
+    # Env-only (no UI, so no stored SSRF) and re-validated against the
+    # outbound URL guard / OUTBOUND_URL_ALLOWLIST on every request.
+    TSA_URL = os.getenv('TSA_URL', '').strip()
+    TSA_TIMEOUT_SECONDS = max(1, min(60, int(os.getenv('TSA_TIMEOUT_SECONDS', '10') or '10')))
+    TSA_MAX_RESPONSE_BYTES = max(4096, min(1048576, int(os.getenv('TSA_MAX_RESPONSE_BYTES', '65536') or '65536')))
+
     # Audit log governance (services/ledger.py, services/audit_service.py).
     # AUDIT_CHAIN_KEY keys the audit hash chain (HMAC). It falls back to
     # SECRET_KEY with a warning when unset; set a dedicated key and keep it

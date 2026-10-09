@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **118 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **119 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
@@ -147,9 +147,9 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 - **Attack graph (10)**: graph, auto-generate, node/edge CRUD incl. `sheetstorm_update_graph_edge`, node/edge types
 - **Case notes (5)**, **Reports (3)**, **Threat intel (7)**, **Knowledge base (6)**,
   **Advanced analysis (4)**, **Defang (2)**
-- **Admin (19)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who
+- **Admin (20)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who
   authored records cannot be deleted, the error lists them), roles, permissions, notifications, audit logs,
-  health, and the user lifecycle: `sheetstorm_invite_user` (returns a one-time join link, a credential),
+  health, system status (`sheetstorm_get_system_status`), and the user lifecycle: `sheetstorm_invite_user` (returns a one-time join link, a credential),
   `sheetstorm_list_invites`, `sheetstorm_revoke_invite`, `sheetstorm_disable_user`, `sheetstorm_enable_user`,
   `sheetstorm_force_logout_user`, `sheetstorm_unlock_user`, `sheetstorm_get_user_activity`.
   Password and MFA resets are not exposed over MCP (they hand out takeover-grade secrets); use the web UI.

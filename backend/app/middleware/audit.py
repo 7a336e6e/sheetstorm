@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from functools import wraps
-from flask import request, g
+from flask import request, g, has_request_context
 from app import db
 from app.models import AuditLog
 
@@ -30,6 +30,8 @@ _BROADCAST_EVENT_TYPES = {
 _PRIVATE_DETAIL_KEYS = {
     'hashes', 'computed_hashes', 'stored_hashes', 'md5', 'sha1', 'sha256', 'sha512',
     'reason', 'args', 'purpose',
+    # Before/after diffs (utils/audit_diff.py): admins fetch the full row.
+    'changes',
 }
 
 
@@ -248,6 +250,18 @@ def audit_log(event_type, action, resource_type=None):
 
                 ctx = _collect_request_context()
 
+                details = {
+                    'args': {k: str(v) for k, v in kwargs.items() if k != 'password'},
+                }
+                # Diff / extra context recorded by the handler via
+                # utils.audit_diff.record_changes().
+                audit_extra = g.pop('audit_extra', None)
+                audit_changes = g.pop('audit_changes', None)
+                if audit_extra:
+                    details.update({k: v for k, v in audit_extra.items() if k not in ('args', 'changes')})
+                if audit_changes:
+                    details['changes'] = audit_changes
+
                 log_entry = AuditLog(
                     organization_id=user.organization_id if user else None,
                     user_id=user.id if user else None,
@@ -259,9 +273,7 @@ def audit_log(event_type, action, resource_type=None):
                     incident_id=incident.id if incident else kwargs.get('incident_id'),
                     status_code=result[1] if isinstance(result, tuple) and len(result) >= 2 else 200,
                     duration_ms=duration_ms,
-                    details={
-                        'args': {k: str(v) for k, v in kwargs.items() if k != 'password'},
-                    },
+                    details=details,
                     **ctx,
                 )
                 db.session.add(log_entry)
@@ -286,7 +298,10 @@ def log_audit_event(
     resource_id=None,
     incident_id=None,
     details=None,
-    user=None
+    user=None,
+    changes=None,
+    organization_id=None,
+    actor_label=None,
 ):
     """Helper function to log audit events manually.
 
@@ -298,23 +313,32 @@ def log_audit_event(
             resource_id=account.id,
             details={'account_name': account.account_name}
         )
+
+    changes: a diff from utils.audit_diff.audit_changes(), stored as
+        details['changes'].
+    organization_id: explicit org for CLI / system events without a user.
+    actor_label: stored as user_email when there is no user (e.g. 'system:purge').
     """
     try:
         if user is None:
             user = getattr(g, 'current_user', None)
 
-        ctx = _collect_request_context() if request else {}
+        ctx = _collect_request_context() if has_request_context() else {}
+
+        details = dict(details or {})
+        if changes:
+            details['changes'] = changes
 
         log_entry = AuditLog(
-            organization_id=user.organization_id if user else None,
+            organization_id=organization_id or (user.organization_id if user else None),
             user_id=user.id if user else None,
-            user_email=user.email if user else None,
+            user_email=user.email if user else actor_label,
             event_type=event_type,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
             incident_id=incident_id,
-            details=details or {},
+            details=details,
             **ctx,
         )
         db.session.add(log_entry)
@@ -341,13 +365,15 @@ def log_auth_event(action, user=None, success=True, details=None):
     )
 
 
-def log_security_event(action, resource_type=None, resource_id=None, incident_id=None, details=None):
-    """Log security-sensitive events."""
+def log_security_event(action, resource_type=None, resource_id=None, incident_id=None, details=None,
+                       **kwargs):
+    """Log security-sensitive events (kwargs: user, changes, organization_id, actor_label)."""
     return log_audit_event(
         event_type='security_event',
         action=action,
         resource_type=resource_type,
         resource_id=resource_id,
         incident_id=incident_id,
-        details=details
+        details=details,
+        **kwargs,
     )

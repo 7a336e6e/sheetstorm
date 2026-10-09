@@ -16,6 +16,8 @@ from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
 from app.services.storage_service import storage_service
 from app.services.chain_of_custody_service import ChainOfCustodyService
+from app.services.pdf_render import html_to_pdf
+from app.utils.csv_safe import csv_safe
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts', methods=['GET'])
@@ -322,14 +324,8 @@ _SIGNATURE_LABELS = {
 }
 
 
-def _csv_safe(value):
-    """Neutralise spreadsheet formula injection (CWE-1236) in CSV cells."""
-    if value is None:
-        return ''
-    text = str(value)
-    if text and text[0] in ('=', '+', '-', '@', '\t', '\r'):
-        return "'" + text
-    return text
+# Shared helper (utils/csv_safe.py); module alias kept for existing callers.
+_csv_safe = csv_safe
 
 
 def _render_custody_html(report: dict) -> str:
@@ -457,8 +453,7 @@ def export_custody(incident_id, artifact_id):
             headers={'Content-Disposition': f'attachment; filename=custody_{artifact.id}.csv'})
     if fmt == 'pdf':
         try:
-            from weasyprint import HTML
-            pdf = HTML(string=_render_custody_html(report)).write_pdf()
+            pdf = html_to_pdf(_render_custody_html(report))
             return current_app.response_class(
                 pdf, mimetype='application/pdf',
                 headers={'Content-Disposition': f'attachment; filename=custody_{artifact.id}.pdf'})

@@ -139,7 +139,9 @@ def create_network_ioc(incident_id):
     # off) because it sends indicator values to third-party services; a
     # request may still opt out with auto_enrich=false. Runs in a background
     # task so slow/failing providers never block or fail the request.
-    if dns_ip and data.get('auto_enrich', True) is not False and _auto_enrich_enabled(user):
+    # TLP egress block: never for restricted incidents / values (egress_policy).
+    if (dns_ip and data.get('auto_enrich', True) is not False and _auto_enrich_enabled(user)
+            and _auto_enrich_tlp_allowed(incident, dns_ip.strip())):
         socketio.start_background_task(
             _enrich_network_ioc, current_app._get_current_object(), ioc.id,
             dns_ip.strip(), str(user.organization_id),
@@ -154,6 +156,15 @@ def _auto_enrich_enabled(user):
     if 'auto_enrich_iocs' in settings:
         return bool(settings['auto_enrich_iocs'])
     return bool(current_app.config.get('IOC_AUTO_ENRICH', False))
+
+
+def _auto_enrich_tlp_allowed(incident, value):
+    """Auto-enrichment is skipped for TLP-restricted incidents and values."""
+    from app.services.egress_policy import enrichment_allowed, filter_values_for_enrichment
+    if not enrichment_allowed(incident):
+        return False
+    allowed, _ = filter_values_for_enrichment(incident.organization_id, [value])
+    return bool(allowed)
 
 
 def _enrich_network_ioc(app, ioc_id, value, organization_id):

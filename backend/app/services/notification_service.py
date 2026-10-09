@@ -18,7 +18,7 @@ class NotificationService:
         message: Optional[str] = None,
         incident_id: Optional[str] = None,
         action_url: Optional[str] = None,
-        metadata: Optional[dict] = None
+        extra_data: Optional[dict] = None
     ) -> Notification:
         """Create an in-app notification.
 
@@ -29,7 +29,7 @@ class NotificationService:
             message: Optional message body
             incident_id: Optional related incident ID
             action_url: Optional URL for the notification action
-            metadata: Optional additional data
+            extra_data: Optional additional data (Notification.extra_data)
 
         Returns:
             Created Notification object
@@ -41,7 +41,7 @@ class NotificationService:
             message=message,
             incident_id=incident_id,
             action_url=action_url,
-            metadata=metadata or {}
+            extra_data=extra_data or {}
         )
         db.session.add(notification)
         db.session.commit()
@@ -59,7 +59,7 @@ class NotificationService:
         message: Optional[str] = None,
         incident_id: Optional[str] = None,
         action_url: Optional[str] = None,
-        metadata: Optional[dict] = None
+        extra_data: Optional[dict] = None
     ) -> List[Notification]:
         """Create notifications for multiple users.
 
@@ -70,7 +70,7 @@ class NotificationService:
             message: Optional message body
             incident_id: Optional related incident ID
             action_url: Optional URL for the notification action
-            metadata: Optional additional data
+            extra_data: Optional additional data (Notification.extra_data)
 
         Returns:
             List of created Notification objects
@@ -84,7 +84,7 @@ class NotificationService:
                 message=message,
                 incident_id=incident_id,
                 action_url=action_url,
-                metadata=metadata or {}
+                extra_data=extra_data or {}
             )
             db.session.add(notification)
             notifications.append(notification)
@@ -287,7 +287,7 @@ def notify_user_assigned(user_id: str, incident):
         title=f'Assigned to Incident #{incident.incident_number}',
         message=incident.title,
         incident_id=str(incident.id),
-        action_url=f'/incidents/{incident.id}'
+        action_url=f'/dashboard/incidents/{incident.id}'
     )
 
 
@@ -299,5 +299,5 @@ def notify_task_assigned(user_id: str, task):
         title='New Task Assigned',
         message=task.title,
         incident_id=str(task.incident_id),
-        action_url=f'/incidents/{task.incident_id}/tasks/{task.id}'
+        action_url=f'/dashboard/incidents/{task.incident_id}?tab=tasks&row={task.id}'
     )

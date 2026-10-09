@@ -266,6 +266,10 @@ def create_app(config_name=None):
     from app.api.websocket import register_handlers
     register_handlers(socketio)
 
+    # `flask sheetstorm ...` commands (periodic jobs runner, maintenance)
+    from app.cli import register_cli
+    register_cli(app)
+
     # JWT error handlers
     @jwt.expired_token_loader
     def expired_token_callback(jwt_header, jwt_payload):

@@ -38,6 +38,8 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `OUTBOUND_URL_ALLOWLIST` | empty | Comma-separated hosts/CIDRs that admin-configured self-hosted integrations (MISP, Velociraptor, TheHive, Ollama, MinIO, ...) may target even though they resolve to private addresses, e.g. `ollama,misp.internal,10.0.0.0/8`. Private, loopback and metadata addresses are blocked otherwise (SSRF protection); link-local/cloud-metadata addresses are always blocked. |
 | `IOC_AUTO_ENRICH` | `false` | Automatically send newly added IOCs to configured threat-intel integrations. Off by default because it discloses indicators to third parties. An organization-level setting overrides this default. |
 
+**TLP enrichment block (server-side).** A value that appears in any TLP:RED incident of the organization is never sent to an enrichment service: auto-enrichment skips it, playbook `enrich_iocs` skips the incident, `POST /bulk-enrich` returns it with `status: "blocked"`, and `/threat-intel/*/lookup` returns 403 `tlp_restricted`. No setting unblocks RED. TLP:AMBER+STRICT is blocked the same way unless the organization setting `enrichment_allow_amber_strict` is `true`. Each refusal is recorded as `security_event / enrichment_blocked_by_tlp`.
+
 ### AI providers
 
 | Variable | Default | Description |
@@ -51,6 +53,16 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `LOCAL_LLM_TIMEOUT` | `120` | Seconds before local LLM requests time out |
 
 An optional local LLM container is available: `docker compose --profile local-llm up -d`. Its port is not published to the host; the backend reaches it at `http://ollama:11434` over the compose network.
+
+**AI TLP policy.** The organization setting `ai_tlp_policy` maps each TLP level to `allow`, `local_only` or `block`. Defaults: `red` and `amber_strict` are `local_only`; `amber`, `green` and `white` are `allow`. `local_only` accepts only an `ollama` or `openai_compatible` provider whose host resolves to a private address **and** is listed in `OUTBOUND_URL_ALLOWLIST`; OpenAI and Google are refused. An explicit request (a chosen provider, or "AI summary") that the policy refuses gets 403 `ai_blocked_by_tlp`. Automatic paths fall back instead: PDF reports are generated data-only (header `X-SheetStorm-AI-Status: ai_blocked_by_tlp`) and the playbook `generate_summary` action is skipped. Every refusal is recorded as `security_event / ai_blocked_by_tlp`. `GET /incidents/<id>/reports/types` returns `policy_mode` and `providers: [{name, allowed, reason}]`.
+
+### Periodic jobs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOBS_INTERVAL_SECONDS` | `300` | How often the `jobs` compose service runs `flask sheetstorm run-jobs`. Each registered job keeps its own schedule (Redis `jobs:last:<name>`) and runs under a Redis lock (`jobs:lock:<name>`), so several runners never execute a job twice. |
+
+Without the `jobs` service, run `docker compose exec -T backend flask sheetstorm run-jobs` from host cron. `flask sheetstorm list-jobs` shows the registered jobs and their last successful run, and `run-jobs --only <name> [--force]` runs a single job.
 
 ### Storage, integrations and SSO (all optional; most are also configurable in the UI)
 

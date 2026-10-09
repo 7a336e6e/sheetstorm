@@ -428,10 +428,30 @@ def bulk_enrich():
     enrichment = EnrichmentService
     results = []
 
+    # TLP egress block: values from TLP:RED (and, unless the org allows it,
+    # AMBER+STRICT) incidents are never sent to third parties.
+    from app.services.egress_policy import filter_values_for_enrichment
+    _, blocked_values = filter_values_for_enrichment(
+        user.organization_id,
+        [i.get('value') for i in ioc_list if isinstance(i, dict) and isinstance(i.get('value'), str)])
+    blocked_values = set(blocked_values)
+    if blocked_values:
+        from app.middleware.audit import log_security_event
+        log_security_event('enrichment_blocked_by_tlp', resource_type='bulk_enrich',
+                           details={'blocked_count': len(blocked_values)}, user=user)
+
     for ioc in ioc_list:
         value = ioc.get('value', '')
         ioc_type = ioc.get('type', 'ip')
         if not value:
+            continue
+        if isinstance(value, str) and value in blocked_values:
+            results.append({
+                'value': value,
+                'type': ioc_type,
+                'status': 'blocked',
+                'error': 'tlp_restricted',
+            })
             continue
 
         # Map user-friendly types to enrichment service types
@@ -469,6 +489,7 @@ def bulk_enrich():
         'total': len(results),
         'enriched': sum(1 for r in results if r['status'] == 'success'),
         'failed': sum(1 for r in results if r['status'] == 'error'),
+        'blocked': sum(1 for r in results if r['status'] == 'blocked'),
     }), 200
 
 

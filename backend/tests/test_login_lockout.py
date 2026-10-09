@@ -157,3 +157,27 @@ def test_unknown_email_runs_bcrypt(app, monkeypatch):
     monkeypatch.setattr(auth_mod, '_dummy_password_check', lambda pw: calls.append(1) or real(pw))
     assert _login(app, 'ghost@nowhere.test', TEST_PASSWORD).status_code == 401
     assert calls == [1]
+
+
+def test_password_login_on_sso_only_account_is_generic(app, db, monkeypatch, new_org, make_user, threshold3):
+    """An OAuth/SSO-only account must not answer 'Please login with <provider>':
+    same 401 as an unknown email, a bcrypt run, and it counts toward lockout."""
+    from app.api.v1.endpoints import auth as auth_mod
+    sso = make_user(new_org(), roles=['Analyst'])
+    sso.auth_provider, sso.password_hash = 'google', None
+    db.session.commit()
+    calls = []
+    real = auth_mod._dummy_password_check
+    monkeypatch.setattr(auth_mod, '_dummy_password_check', lambda pw: calls.append(1) or real(pw))
+
+    unknown = _login(app, 'nobody-sso@nowhere.test', WRONG)
+    calls.clear()
+    resp = _login(app, sso.email, WRONG)
+    assert resp.status_code == unknown.status_code == 401
+    assert resp.get_json() == unknown.get_json()
+    assert 'google' not in resp.get_data(as_text=True).lower()
+    assert calls == [1]
+    assert _reload(db, sso).failed_login_count == 1
+    _login(app, sso.email, WRONG)
+    _login(app, sso.email, WRONG)
+    assert _reload(db, sso).is_locked

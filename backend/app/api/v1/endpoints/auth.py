@@ -231,14 +231,14 @@ def login():
                            details={'until': user.locked_until.isoformat()})
         return _invalid_credentials()
 
-    # Only reject non-local providers if the user has NO password hash
-    # (i.e. they were created purely via OAuth and never set a password)
+    # An OAuth/SSO-only account (no password hash) can't log in with a
+    # password. Same generic 401, bcrypt and lockout count as a wrong
+    # password, so the answer doesn't reveal that the account exists.
     if user.auth_provider != 'local' and not user.password_hash:
+        _dummy_password_check(data.password)
+        register_failed_login(user, 'wrong_provider')
         log_auth_event('login', user=user, success=False, details={'reason': 'wrong_provider'})
-        return jsonify({
-            'error': 'unauthorized',
-            'message': f'Please login with {user.auth_provider}'
-        }), 401
+        return _invalid_credentials()
 
     if not user.check_password(data.password):
         register_failed_login(user, 'invalid_password')

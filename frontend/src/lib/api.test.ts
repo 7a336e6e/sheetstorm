@@ -98,6 +98,38 @@ describe('ApiError', () => {
   })
 })
 
+describe('retries', () => {
+  it('retries GET on 5xx and returns the eventual success', async () => {
+    jest.useFakeTimers()
+    fetchMock
+      .mockResolvedValueOnce(json(503, { error: 'unavailable' }))
+      .mockResolvedValueOnce(json(200, { ok: 1 }))
+    const p = api.get<{ ok: number }>('/x')
+    await jest.runAllTimersAsync()
+    const body = await p
+    jest.useRealTimers()
+    expect(body).toEqual({ ok: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['post', 'patch', 'put', 'delete'] as const)(
+    'never retries %s on 5xx or network errors',
+    async (method) => {
+      fetchMock.mockResolvedValue(json(500, { error: 'server_error', message: 'boom' }))
+      const err = (await api[method]('/x', { a: 1 }).catch((e) => e)) as ApiError
+      expect(err).toBeInstanceOf(ApiError)
+      expect(err.status).toBe(500)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      fetchMock.mockReset()
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+      const netErr = (await api[method]('/x', { a: 1 }).catch((e) => e)) as ApiError
+      expect(netErr.code).toBe('network_error')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    }
+  )
+})
+
 describe('request options', () => {
   it('passes the abort signal to fetch', async () => {
     fetchMock.mockResolvedValue(json(200, { ok: 1 }))

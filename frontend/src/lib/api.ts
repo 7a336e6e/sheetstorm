@@ -204,6 +204,9 @@ export interface DownloadOptions {
  * never sends an Authorization header — JSON token fields in auth responses
  * exist for non-browser clients (MCP) and are deliberately ignored here.
  */
+/** Methods retried on 5xx / network errors (never POST/PATCH/PUT/DELETE). */
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
 class ApiClient {
   private baseUrl: string
   private refreshPromise: Promise<boolean> | null = null
@@ -325,8 +328,12 @@ class ApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    retries: number = 2
+    maxRetries: number = 2
   ): Promise<T> {
+    // Only safe, idempotent reads are retried (5xx / network error). A write
+    // that failed with a 5xx or lost connection may already have been applied.
+    const method = (options.method || 'GET').toUpperCase()
+    const retries = RETRYABLE_METHODS.has(method) ? maxRetries : 0
     const headers = new Headers(options.headers)
     headers.set('Content-Type', 'application/json')
 

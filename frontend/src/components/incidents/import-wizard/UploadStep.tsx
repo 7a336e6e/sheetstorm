@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Upload, Loader2, AlertCircle } from 'lucide-react'
 import api from '@/lib/api'
+import { describeError } from '@/lib/errors'
 import { ParseResponse } from './types'
 
 interface UploadStepProps {
@@ -24,9 +25,10 @@ export function UploadStep({ incidentId, onParsed }: UploadStepProps) {
         try {
             const data = await api.uploadFile<ParseResponse>(`/incidents/${incidentId}/import/parse`, formData)
             onParsed(data)
-        } catch (err: any) {
-            console.error('Parse failed:', err)
-            setError(err.response?.data?.message || 'Failed to parse file. Please ensure it is a valid Excel file.')
+        } catch (err) {
+            // Shown inline (the step stays open); the server's reason when it gave one.
+            const { description } = describeError(err)
+            setError(description || 'Failed to parse file. Please ensure it is a valid Excel file.')
         } finally {
             setIsUploading(false)
         }
@@ -35,7 +37,7 @@ export function UploadStep({ incidentId, onParsed }: UploadStepProps) {
     return (
         <div className="space-y-4">
             <div
-                className="border-2 border-dashed border-black/10 dark:border-white/10 rounded-xl p-12 text-center hover:border-black/10 dark:hover:border-white/20 transition-colors cursor-pointer"
+                className="border-2 border-dashed border-white/10 rounded-xl p-12 text-center hover:border-white/20 transition-colors cursor-pointer"
                 onClick={() => document.getElementById('wizard-upload')?.click()}
             >
                 {isUploading ? (

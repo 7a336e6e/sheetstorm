@@ -696,3 +696,4 @@ export interface CustomFieldOption {
 export * from './preferences'
 export * from './search'
 export * from './rbac'
+export * from './incident-tables'

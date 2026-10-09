@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,21 +21,13 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import { Combobox } from '@/components/ui/combobox'
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-    GlassTable,
-    TableEmpty,
-} from '@/components/ui/table'
+import { DataTable, FilterSelect, type DataTableColumn } from '@/components/ui/data-table'
+import { usePaginatedQuery } from '@/hooks/use-paginated-query'
 import api from '@/lib/api'
-import type { CompromisedHost, CustomFieldOption } from '@/types'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError } from '@/lib/errors'
+import type { CompromisedHost, CustomFieldOption, VersionedRow } from '@/types'
 import {
-    Plus,
-    Search,
     Server,
     Monitor,
     Database,
@@ -45,18 +36,15 @@ import {
     Smartphone,
     HardDrive,
     Cloud,
+    Pencil,
     Trash2,
-    MoreHorizontal,
 } from 'lucide-react'
-import { useConfirm } from '@/components/ui/confirm-dialog'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { Timestamp } from '@/components/ui/timestamp'
+import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
 
-interface HostsTabProps {
-    incidentId: string
-    /** Called when hosts list changes, so parent can sync state */
-    onHostsChange?: (hosts: CompromisedHost[]) => void
-}
+type HostRow = VersionedRow<CompromisedHost>
 
 const DEFAULT_SYSTEM_TYPES = [
     { value: 'workstation', label: 'Workstation', icon: Monitor },
@@ -86,13 +74,17 @@ const CONTAINMENT_STATUSES = [
     { value: 'decommissioned', label: 'Decommissioned', color: 'bg-gray-500/20 text-gray-400 border-gray-400/30' },
 ]
 
-export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
+export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const confirm = useConfirm()
-    const [hosts, setHosts] = useState<CompromisedHost[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const [search, setSearch] = useState('')
+    const endpoint = `/incidents/${incidentId}/hosts`
+    const query = usePaginatedQuery<HostRow>({
+        endpoint,
+        urlKey: 'hosts',
+        focus: focusRowId,
+        live: 'host',
+    })
     const [showModal, setShowModal] = useState(false)
-    const [editingHost, setEditingHost] = useState<CompromisedHost | null>(null)
+    const [editingHost, setEditingHost] = useState<HostRow | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [customTypes, setCustomTypes] = useState<CustomFieldOption[]>([])
 
@@ -107,27 +99,14 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
         evidence: '',
     })
 
+    // Org-defined system types are optional: the defaults work without them.
     useEffect(() => {
-        if (incidentId) loadData()
-    }, [incidentId])
-
-    const loadData = async () => {
-        setIsLoading(true)
-        try {
-            const [hostsRes, typesRes] = await Promise.all([
-                api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
-                api.get<{ items: CustomFieldOption[] }>(`/custom-fields?field_name=system_type`).catch(() => ({ items: [] })),
-            ])
-            const h = hostsRes.items || []
-            setHosts(h)
-            setCustomTypes(typesRes.items || [])
-            onHostsChange?.(h)
-        } catch (error) {
-            console.error('Failed to load hosts:', error)
-        } finally {
-            setIsLoading(false)
-        }
-    }
+        let cancelled = false
+        api.get<{ items: CustomFieldOption[] }>(`/custom-fields?field_name=system_type`)
+            .then((res) => { if (!cancelled) setCustomTypes(res.items || []) })
+            .catch(() => { /* optional data */ })
+        return () => { cancelled = true }
+    }, [])
 
     // Merge default system types with custom org types
     const allSystemTypes = [
@@ -146,7 +125,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
         setEditingHost(null)
     }
 
-    const handleOpenModal = (host?: CompromisedHost) => {
+    const handleOpenModal = (host?: HostRow) => {
         if (host) {
             setEditingHost(host)
             setForm({
@@ -170,33 +149,27 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
         setIsSubmitting(true)
         try {
             if (editingHost) {
-                await api.put(`/incidents/${incidentId}/hosts/${editingHost.id}`, form)
+                await api.put(`${endpoint}/${editingHost.id}`, form, { ifMatch: editingHost.version })
             } else {
-                await api.post(`/incidents/${incidentId}/hosts`, form)
+                await api.post(endpoint, form)
             }
             setShowModal(false)
             resetForm()
-            loadData()
+            invalidate(endpoint)
         } catch (error) {
-            console.error('Failed to save host:', error)
+            notifyError(error, editingHost ? 'save the host' : 'add the host')
         } finally {
             setIsSubmitting(false)
         }
     }
 
-    const handleDelete = async (id: string) => {
-        const confirmed = await confirm({
-            title: 'Delete Host',
-            description: 'Are you sure you want to delete this compromised host? Related IOCs will lose their host association.',
-            confirmLabel: 'Delete',
-            variant: 'destructive',
-        })
-        if (!confirmed) return
+    const handleDelete = async (host: HostRow) => {
+        if (!(await confirmDelete(confirm, 'host', host.hostname))) return
         try {
-            await api.delete(`/incidents/${incidentId}/hosts/${id}`)
-            loadData()
+            await api.delete(`${endpoint}/${host.id}`, undefined, { ifMatch: host.version })
+            invalidate(endpoint)
         } catch (error) {
-            console.error('Failed to delete host:', error)
+            notifyError(error, 'delete the host')
         }
     }
 
@@ -218,85 +191,53 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
         return <HardDrive className="h-4 w-4" />
     }
 
-    const filtered = hosts.filter(h =>
-        !search ||
-        h.hostname?.toLowerCase().includes(search.toLowerCase()) ||
-        h.ip_address?.toLowerCase().includes(search.toLowerCase()) ||
-        h.system_type?.toLowerCase().includes(search.toLowerCase())
-    )
+    const columns: DataTableColumn<HostRow>[] = [
+        { id: 'hostname', header: 'Hostname', sortKey: 'hostname', className: 'font-medium', cell: (h) => h.hostname },
+        { id: 'ip', header: 'IP', className: 'font-mono text-sm', cell: (h) => h.ip_address || '-' },
+        {
+            id: 'type', header: 'Type', hideBelow: 'md', cell: (h) => (
+                <div className="flex items-center gap-2">
+                    <div className="p-1 rounded bg-white/5">{getSystemTypeIcon(h.system_type || '')}</div>
+                    <span className="text-xs">{getSystemTypeLabel(h.system_type || '')}</span>
+                </div>
+            ),
+        },
+        { id: 'os', header: 'OS', hideBelow: 'lg', className: 'text-xs text-muted-foreground', cell: (h) => h.os_version || '-' },
+        { id: 'containment', header: 'Containment', sortKey: 'containment_status', cell: (h) => getContainmentBadge(h.containment_status || 'active') },
+        {
+            id: 'first_seen', header: 'First Seen', sortKey: 'first_seen', hideBelow: 'sm', className: 'text-sm text-muted-foreground',
+            cell: (h) => <Timestamp value={h.first_seen} fallback="-" />,
+        },
+    ]
 
     return (
         <div className="space-y-4">
-            <Card>
-                <CardContent className="p-4">
-                    <div className="flex flex-col lg:flex-row gap-4 justify-between">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input placeholder="Search hosts, IPs..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10" variant="glass" />
-                        </div>
-                        <Button onClick={() => handleOpenModal()}><Plus className="mr-2 h-4 w-4" /> Add Host</Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardContent className="p-0">
-                    <GlassTable className="border-0">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Hostname</TableHead>
-                                    <TableHead>IP</TableHead>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead>OS</TableHead>
-                                    <TableHead>Containment</TableHead>
-                                    <TableHead>First Seen</TableHead>
-                                    <TableHead className="w-[80px]"></TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {isLoading ? (
-                                    <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground animate-pulse">Loading hosts...</TableCell></TableRow>
-                                ) : filtered.length === 0 ? (
-                                    <TableRow><TableCell colSpan={7}>
-                                        <TableEmpty
-                                            title={search ? 'No matching hosts' : 'No compromised hosts'}
-                                            description={search ? 'Try adjusting your search criteria.' : 'Record systems that have been identified as compromised during this incident investigation.'}
-                                            icon={<Server className="w-8 h-8" />}
-                                        />
-                                    </TableCell></TableRow>
-                                ) : (
-                                    filtered.map(host => (
-                                        <TableRow key={host.id} className="group">
-                                            <TableCell className="font-medium">{host.hostname}</TableCell>
-                                            <TableCell className="font-mono text-sm">{host.ip_address || '-'}</TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getSystemTypeIcon(host.system_type || '')}</div>
-                                                    <span className="text-xs">{getSystemTypeLabel(host.system_type || '')}</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">{host.os_version || '-'}</TableCell>
-                                            <TableCell>{getContainmentBadge(host.containment_status || 'active')}</TableCell>
-                                            <TableCell className="text-sm text-muted-foreground"><Timestamp value={host.first_seen} fallback="-" /></TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1">
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenModal(host)}>
-                                                        <MoreHorizontal className="w-4 h-4" />
-                                                    </Button>
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(host.id)}>
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </GlassTable>
-                </CardContent>
-            </Card>
+            <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="host" />
+            <DataTable
+                query={query}
+                columns={columns}
+                getRowId={(h) => h.id}
+                ariaLabel="Compromised hosts"
+                searchPlaceholder="Search hosts, IPs..."
+                toolbar={
+                    <FilterSelect
+                        label="Containment"
+                        value={query.state.filters.containment_status}
+                        onChange={(v) => query.setFilter('containment_status', v)}
+                        options={CONTAINMENT_STATUSES.map((c) => ({ value: c.value, label: c.label }))}
+                    />
+                }
+                primaryAction={{ label: 'Add Host', onSelect: () => handleOpenModal(), permission: 'hosts:create' }}
+                rowActions={(h) => [
+                    { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(h), permission: 'hosts:update' },
+                    { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(h), permission: 'hosts:delete' },
+                ]}
+                focusedRowId={focusRowId}
+                empty={{
+                    title: 'No compromised hosts',
+                    description: 'Record systems that have been identified as compromised during this incident investigation.',
+                }}
+            />
 
             {/* Add/Edit Host Modal */}
             <Dialog open={showModal} onOpenChange={setShowModal}>

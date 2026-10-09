@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Badge } from '@/components/ui/badge'
 import { Timestamp } from '@/components/ui/timestamp'
 import { usePermission } from '@/components/auth/permission-gate'
+import { activityHref } from '@/components/audit/audit-filters'
 import { isAbortError } from '@/lib/api'
 import { usersAdmin } from '@/lib/endpoints/users-admin'
 import type { AdminUser, AuditLog } from '@/types'
@@ -150,7 +151,7 @@ function DrawerBody({ user }: { user: AdminUser }) {
               Recent activity
             </h3>
             <Link
-              href={`/dashboard/activity?user_id=${encodeURIComponent(u.id)}`}
+              href={activityHref({ user_id: u.id })}
               className="text-xs text-primary hover:underline"
             >
               View all

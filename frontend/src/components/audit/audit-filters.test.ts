@@ -96,6 +96,15 @@ describe('audit filters ↔ URL', () => {
     expect(migrateLegacyParams(new URLSearchParams('tab=x'))).toBeNull()
   })
 
+  it('filters by user from the user drawer link (and its legacy plain form)', () => {
+    const id = '6f1c1d4e-0000-4000-8000-000000000001'
+    const href = activityHref({ user_id: id })
+    expect(href).toBe(`/dashboard/activity?audit.f.user_id=${id}`)
+    expect(parseAuditUrl(new URLSearchParams(href.split('?')[1])).filters).toEqual({ user_id: id })
+    const migrated = migrateLegacyParams(new URLSearchParams(`user_id=${id}`))
+    expect(parseAuditUrl(new URLSearchParams(migrated!)).filters).toEqual({ user_id: id })
+  })
+
   it('toggles event types in a stable order', () => {
     let v = toggleEventType(undefined, 'security_event')
     v = toggleEventType(v, 'authentication')

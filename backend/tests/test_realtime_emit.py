@@ -564,6 +564,64 @@ def test_remove_assignment_evicts_only_users_who_lost_access(rt, db, users, admi
             realtime.unregister_sid(u.id, f'sid-{u.id}')
 
 
+def test_lead_change_via_incident_put_emits_assignments(rt, db, users, admin, make_incident, fresh_user):
+    from app.models import IncidentAssignment
+    inc = make_incident()
+    first, second = fresh_user('Operator'), fresh_user('Analyst')
+
+    def assignment_id(user):
+        db.session.expire_all()
+        return str(IncidentAssignment.query.filter_by(incident_id=inc.id, user_id=user.id).one().id)
+
+    def changes():
+        return sorted((e['entity'], e['op'], e['id']) for e, _ in rt.changes())
+
+    _ok(admin.put(f'{API}/incidents/{inc.id}', json={'lead_responder_id': str(first.id)}))
+    assert changes() == sorted([('incident', 'updated', str(inc.id)), ('assignment', 'created', assignment_id(first))])
+
+    rt.clear()
+    _ok(admin.put(f'{API}/incidents/{inc.id}', json={'lead_responder_id': str(second.id)}))
+    assert changes() == sorted([('incident', 'updated', str(inc.id)), ('assignment', 'updated', assignment_id(first)),
+                                ('assignment', 'created', assignment_id(second))])
+    assert all(c is not None for c in rt.committed)
+    # The demoted lead stays assigned, so keeps access.
+    assert not [to for e, _, to in rt.emits if e == 'incident:access_revoked']
+
+    rt.clear()
+    _ok(admin.put(f'{API}/incidents/{inc.id}', json={'lead_responder_id': None}))
+    assert changes() == sorted([('incident', 'updated', str(inc.id)), ('assignment', 'updated', assignment_id(second))])
+
+
+def test_lead_change_rechecks_access_of_the_previous_lead(rt, db, users, admin, make_incident, fresh_user):
+    """A lead held only through lead_responder_id (no assignment) gives no
+    access: replacing them re-checks and evicts them, like unassign does."""
+    operator, analyst = fresh_user('Operator'), fresh_user('Analyst')
+    inc = make_incident(tlp='amber')
+    inc.lead_responder_id = operator.id
+    db.session.commit()
+    realtime.register_sid(operator.id, 'sid-old-lead')
+    try:
+        rt.clear()
+        _ok(admin.put(f'{API}/incidents/{inc.id}', json={'lead_responder_id': str(analyst.id)}))
+        assert ('incident:access_revoked', {'incident_id': str(inc.id), 'reason': 'access_removed'},
+                f'user_{operator.id}') in rt.emits
+    finally:
+        realtime.unregister_sid(operator.id, 'sid-old-lead')
+
+
+def test_assign_lead_emits_demoted_lead(rt, db, users, admin, make_incident, fresh_user):
+    inc = make_incident()
+    old, new = fresh_user('Analyst'), fresh_user('Analyst')
+    old_id = _ok(admin.post(f'{API}/incidents/{inc.id}/assignments',
+                            json={'user_id': str(old.id), 'role': 'Lead Responder'}))['id']
+    rt.clear()
+    new_id = _ok(admin.post(f'{API}/incidents/{inc.id}/assignments',
+                            json={'user_id': str(new.id), 'role': 'Lead Responder'}))['id']
+    got = sorted((e['entity'], e['op'], e['id']) for e, _ in rt.changes())
+    assert got == sorted([('assignment', 'created', new_id), ('assignment', 'updated', old_id),
+                          ('incident', 'updated', str(inc.id))])
+
+
 def test_tlp_change_evicts_present_viewer(rt, db, users, admin, make_incident, fresh_user):
     inc = make_incident(tlp='white')
     viewer = fresh_user('Viewer')

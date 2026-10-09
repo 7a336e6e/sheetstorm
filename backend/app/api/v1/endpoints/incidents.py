@@ -163,6 +163,10 @@ def update_incident(incident_id):
     if conflict:
         return conflict, conflict.status_code
     access_before = (incident.tlp, incident.team_id)
+    # Lead changes rewrite assignments: (op, assignment) to emit after commit,
+    # and users whose access must be re-checked then.
+    assignment_changes = []
+    access_recheck = []
 
     # Update fields
     if 'title' in update_data and update_data['title']:
@@ -181,6 +185,8 @@ def update_incident(incident_id):
         user = get_current_user()
         new_lead_id = update_data['lead_responder_id']
         lead = User.query.filter_by(id=new_lead_id, organization_id=user.organization_id).first() if new_lead_id else None
+        if lead or new_lead_id is None:
+            access_recheck.append(incident.lead_responder_id)
         if lead:
             incident.lead_responder_id = lead.id
             # Sync assignments: demote old Lead Responder(s)
@@ -192,6 +198,8 @@ def update_incident(incident_id):
             ).all()
             for old_lead in old_leads:
                 old_lead.role = None
+                assignment_changes.append(('updated', old_lead))
+                access_recheck.append(old_lead.user_id)
             # Ensure new lead has an assignment with Lead Responder role
             new_assignment = IncidentAssignment.query.filter_by(
                 incident_id=incident.id,
@@ -203,6 +211,7 @@ def update_incident(incident_id):
                 new_assignment.role = 'Lead Responder'
                 new_assignment.assigned_by = user.id
                 new_assignment.assigned_at = datetime.now(timezone.utc)
+                assignment_changes.append(('updated', new_assignment))
             else:
                 new_assignment = IncidentAssignment(
                     incident_id=incident.id,
@@ -212,6 +221,7 @@ def update_incident(incident_id):
                     assigned_at=datetime.now(timezone.utc)
                 )
                 db.session.add(new_assignment)
+                assignment_changes.append(('created', new_assignment))
         elif new_lead_id is None:
             # Clearing lead responder — demote any Lead Responder assignments
             old_leads = IncidentAssignment.query.filter(
@@ -221,6 +231,8 @@ def update_incident(incident_id):
             ).all()
             for old_lead in old_leads:
                 old_lead.role = None
+                assignment_changes.append(('updated', old_lead))
+                access_recheck.append(old_lead.user_id)
             incident.lead_responder_id = None
     if 'tlp' in update_data:
         incident.tlp = update_data['tlp']
@@ -232,10 +244,14 @@ def update_incident(incident_id):
         return conflict, conflict.status_code
     realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
                          data=incident.to_dict(include_counts=True))
+    for op, assignment in assignment_changes:
+        realtime.emit_change(incident.id, 'assignment', op, obj=assignment)
     if (incident.tlp, incident.team_id) != access_before:
         # TLP / team drive read_tlp_white / read_team visibility: evict
         # anyone present in the incident who lost access.
-        _evict_lost_access(incident, [p['user_id'] for p in realtime.presence_list(incident.id)])
+        access_recheck += [p['user_id'] for p in realtime.presence_list(incident.id)]
+    if access_recheck:
+        _evict_lost_access(incident, access_recheck)
 
     return set_etag(jsonify(incident.to_dict(include_counts=True)), incident), 200
 
@@ -475,12 +491,16 @@ def assign_user(incident_id):
         for old_lead in old_leads:
             old_lead.role = None
         incident.lead_responder_id = target_user.id
+    else:
+        old_leads = []
 
     db.session.commit()
 
     # Notify assigned user
     notify_user_assigned(str(target_user.id), incident)
     realtime.emit_change(incident.id, 'assignment', 'updated' if existing else 'created', obj=assignment)
+    for old_lead in old_leads:
+        realtime.emit_change(incident.id, 'assignment', 'updated', obj=old_lead)
     if new_role == 'Lead Responder':
         realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
                              data=incident.to_dict(include_counts=True))

@@ -105,6 +105,40 @@
   / test / configure / delete and Google Drive controls only to holders of
   `integrations:create`, `integrations:update` or `integrations:delete`.
 
+- **Stricter task validation.** `assignee_id` must be an active user of the
+  incident's organization (`400 invalid_assignee`); `parent_task_id` must be a
+  task of the same incident without creating a cycle
+  (`400 invalid_parent_task`); `evidence_refs` (at most 50) must point at
+  records of the same incident (`400 invalid_evidence_refs`). Task responses
+  carry `evidence` with labels resolved by the server; existing
+  `extra_data.linked_entities` are backfilled into `evidence_refs`.
+- **Host `acquisition_status` is allowlisted** (four booleans plus
+  `acquired_at`; anything else is 400). The Hosts tab no longer offers the
+  `monitoring` containment option, which the backend always rejected.
+- **Incident create and update validate more.** Create returns 400 for a
+  foreign team or lead responder or a `detected_at` in the future, and assigns
+  and notifies the lead responder. PUT validates the IR milestones (no value
+  more than 5 minutes in the future; `first_malicious <= detected <= contained
+  <= eradicated <= recovered <= closed`, otherwise 400). A phase-only change
+  stamps the matching milestone; reopening clears `closed_at`. Non-object JSON
+  bodies return 400. The dashboard covers every incident you can access.
+- **API-key tokens are refused on interactive-only routes** (password change,
+  MFA setup/verify/disable, preferences); service accounts cannot sign in
+  interactively.
+- **Evidence exports need `incidents:export`** (C24) on top of the read
+  permission: evidence register CSV/PDF and item/incident custody bundles.
+  `sheetstorm_transfer_evidence` refuses unless `attested=true`.
+- **`custody_chain_verified` audit rows** are written for explicit chain
+  verifications, exports and any broken/compromised result; plain evidence
+  detail and custody-list views no longer write one per read.
+- **`GET /storage/stats` requires `integrations:read` or
+  `organizations:manage`** (the Storage settings tab's gate); Viewers no longer
+  read org storage totals. The MITRE test-suggest button (Settings → Threat
+  Intel) needs `incidents:read`.
+- **Edit User has no Active switch or password field.** Disable/enable and
+  password reset are row actions on the users page; deleting a user who
+  authored records is refused and the UI suggests disabling instead.
+
 ### New
 
 - **Audit governance:** filtered audit search, CSV/JSONL export
@@ -133,10 +167,47 @@
   `sheetstorm_revoke_invite`, `sheetstorm_disable_user`,
   `sheetstorm_enable_user`, `sheetstorm_force_logout_user`,
   `sheetstorm_unlock_user`, `sheetstorm_get_user_activity`).
+- **API keys and service accounts:** scoped keys (`ssk_…`) for users and
+  service accounts, exchanged at `POST /auth/token` for a 15-minute bearer;
+  organization settings `api_keys_enabled` and `api_key_max_lifetime_days`.
+  Keys are revoked when the owner is disabled, deleted, force-logged-out or has
+  the password/MFA reset. `SHEETSTORM_API_KEY` is now the recommended MCP
+  credential (stdio server and bridge).
+- **DFIR triage and leads:** timeline sort by detection time, dwell and
+  confidence (`confidence=`, `has_detection=` filters); host filters by triage,
+  acquisition and containment and `PATCH /incidents/{id}/hosts/bulk` (up to
+  500 hosts); task filters (`task_type`, `lead_outcome`, `assignee_id`, …,
+  `lead_counts=true`) and a Leads view on the Tasks tab
+  (`?tab=tasks&tasks.view=leads`). MCP: `sheetstorm_list_leads`,
+  `sheetstorm_bulk_update_hosts`.
+- **Incident overview and dashboard:** overview summary with open leads and
+  hosts under analysis, IR milestone strip, create form with TLP, detection
+  time and lead responder, and `GET /dashboard/stats`. MCP:
+  `sheetstorm_get_dashboard_stats` plus milestone and lead fields on the
+  incident tools.
+- **Live incident pages:** realtime merge of every incident tab, presence
+  avatars and a live indicator, a conflict dialog on stale edits (reload
+  theirs / overwrite mine), redirect when access is revoked, live preview of
+  attack-graph drags, and instant sign-out when an admin revokes your sessions
+  (`/login?reason=session_revoked` with the reason).
+- **Evidence register API:** evidence items, custody check-out / transfer /
+  check-in / acknowledge, custody parties, chain verification, register
+  CSV/PDF, a printable custody form and an offline verifier bundle (exit codes
+  0 intact / 1 broken or tampered / 2 malformed input). MCP: 5 evidence tools; MCP clients send
+  `X-SheetStorm-Client`, recorded in custody entries.
+- **User administration UI:** server-paged users page with stats, filters
+  (including service accounts), invites, bulk actions and a user drawer; new
+  `/auth/invite`, `/auth/reset-password` and forced `/auth/change-password`
+  pages.
+- **Audit UI:** activity filters kept in the URL and applied server-side,
+  before/after diffs, CSV/JSONL export (`audit_logs:export`), an admin
+  overview page and an Audit Retention settings tab (purge preview with typed
+  confirmation, legal hold reason, chain verification).
 - **New environment variables:** `AUDIT_CHAIN_KEY`,
   `AUDIT_CHAIN_PREVIOUS_KEYS`, `AUDIT_EXPORT_MAX_ROWS`, `AUDIT_PURGE_BATCH_SIZE`,
   `APP_VERSION`, `GIT_COMMIT`, `LOCAL_ARTIFACT_DIR`, `LOGIN_LOCKOUT_THRESHOLD`,
-  `LOGIN_LOCKOUT_MINUTES`, `PASSWORD_RESET_TTL_HOURS` (see
+  `LOGIN_LOCKOUT_MINUTES`, `PASSWORD_RESET_TTL_HOURS`, `API_KEY_PEPPER`,
+  `API_KEY_TOKEN_TTL_MINUTES` (see
   `assets/docs/configuration.md`).
 
 ### Other fixes

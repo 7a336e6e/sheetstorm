@@ -152,7 +152,8 @@ Security properties of the remote transport:
 Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 
 - **Auth (2)**: `sheetstorm_get_current_user`, `sheetstorm_logout`
-- **Incidents (9)**: list/get/create/update, `sheetstorm_update_incident_status`,
+- **Incidents (10)**: list/get (milestones, lead, overview summary)/create (`detected_at`, `lead_responder_id`)/update
+  (IR milestones, `clear_milestones`, `expected_version`), `sheetstorm_update_incident_status`, `sheetstorm_get_dashboard_stats`,
   `sheetstorm_archive_incident`, `sheetstorm_unarchive_incident`, `sheetstorm_list_archived_incidents`,
   `sheetstorm_permanently_delete_incident` (Administrator, archived incidents only, requires `confirmation="DELETE PERMANENTLY"`)
 - **Assignments (3)**: list/assign/remove responders

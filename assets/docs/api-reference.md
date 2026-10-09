@@ -77,6 +77,35 @@ admin) gets `403 password_change_required` on every route except `/auth/me`, `/a
 | PATCH  | `/incidents/{id}/status`                  | Update status/phase            |
 | POST   | `/incidents/{id}/import/parse`            | Parse Excel file               |
 | POST   | `/incidents/{id}/import/submit`           | Submit mapped import data      |
+| GET    | `/dashboard/stats`                        | Dashboard counts over every incident you can access (`incidents:read`) |
+
+**Create** (`POST /incidents`): `title` (3–500), `description` (≤ 10000), `severity`,
+`classification`, `tlp`, `detected_at` (default now), `lead_responder_id`, `team_id`, `team_ids`.
+`team_id`/`team_ids` must be teams of your organization (400 `invalid_team`) and the lead an active
+user of it (400 `invalid_lead_responder`). The lead gets a "Lead Responder" assignment and a
+notification. Nothing is written on a 400.
+
+**IR milestones** (`PUT /incidents/{id}`): `detected_at`, `contained_at`, `eradicated_at`,
+`recovered_at`, `closed_at` (ISO 8601; no offset = UTC; `null` clears one). Rejected with
+`400 invalid_milestones` when a value is more than 5 minutes in the future (`code: milestone_in_future`)
+or out of order `detected ≤ contained ≤ eradicated ≤ recovered ≤ closed`
+(`code: milestone_order`, `pair: [earlier, later]`). Only changed values are checked, so an existing
+out-of-order pair does not block unrelated edits. `executive_summary` and `lessons_learned` are capped
+at 20000 characters. A lead change notifies the new lead.
+
+**Status** (`PATCH /incidents/{id}/status`): `status` or `phase` (each implies the other). Entering
+contained / eradicated / recovered / closed stamps that milestone if it is empty; reopening a closed
+incident clears `closed_at`.
+
+**Overview summary**: `GET /incidents/{id}` (not the list) adds `summary`: `first_event_at`,
+`last_event_at`, `earliest_detection_at` (needs `timeline:read`), `leads {total, open, by_outcome}`
+(`tasks:read`), `hosts_by_triage` and `acquisition {disk_imaged, memory_captured, logs_collected,
+forensically_sound}` (`hosts:read`); a part is `null` without its permission.
+
+**Dashboard** (`GET /dashboard/stats`, 30/min): `incidents {total, active, closed, critical, created_7d,
+created_30d, by_severity, by_status, by_phase_open, by_tlp}`, `mitre {events_total, events_mapped,
+tactics: [{tactic, count, techniques: {Txxxx: n}}]}` (`timeline:read`, else `null`) and
+`dfir {open_leads (tasks:read), hosts_by_triage (hosts:read)}`. Counts only, never incident ids or titles.
 
 ## Timeline Events
 

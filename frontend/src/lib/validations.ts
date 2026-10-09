@@ -1,17 +1,36 @@
 import { z } from 'zod'
+import { parseTs } from '@/lib/time'
+import { MILESTONE_FUTURE_TOLERANCE_MS } from '@/lib/milestones'
 
 // ── Incident Schemas ──────────────────────────────────────────────
+
+export const TLP_LEVELS = ['white', 'green', 'amber', 'amber_strict', 'red'] as const
+
+const isoNotInFuture = (val: string | null | undefined) => {
+  if (!val) return true
+  const t = parseTs(val)?.getTime()
+  return t !== undefined && t <= Date.now() + MILESTONE_FUTURE_TOLERANCE_MS
+}
 
 export const createIncidentSchema = z.object({
   title: z
     .string()
-    .min(1, 'Title is required')
-    .max(200, 'Title must be 200 characters or fewer'),
-  description: z.string().max(5000, 'Description must be 5000 characters or fewer').optional(),
+    .trim()
+    .min(3, 'Title must be at least 3 characters')
+    .max(500, 'Title must be 500 characters or fewer'),
+  description: z.string().max(10000, 'Description must be 10000 characters or fewer').optional(),
   severity: z.enum(['low', 'medium', 'high', 'critical'], {
     required_error: 'Severity is required',
   }),
-  classification: z.string().optional(),
+  classification: z.string().max(100).optional(),
+  tlp: z.enum(TLP_LEVELS, { invalid_type_error: 'Select a TLP level' }),
+  detected_at: z
+    .string()
+    .refine((val) => !!parseTs(val), { message: 'Invalid date' })
+    .refine(isoNotInFuture, { message: 'Detected time cannot be in the future' })
+    .nullable()
+    .optional(),
+  lead_responder_id: z.string().uuid('Invalid lead responder').nullable().optional(),
   team_ids: z.array(z.string().uuid()).optional(),
 })
 
@@ -20,9 +39,9 @@ export type CreateIncidentInput = z.infer<typeof createIncidentSchema>
 export const editIncidentSchema = z.object({
   title: z
     .string()
-    .min(1, 'Title is required')
-    .max(200, 'Title must be 200 characters or fewer'),
-  executive_summary: z.string().max(10000).optional(),
+    .min(3, 'Title must be at least 3 characters')
+    .max(500, 'Title must be 500 characters or fewer'),
+  executive_summary: z.string().max(20000).optional(),
   severity: z.enum(['low', 'medium', 'high', 'critical']),
   phase: z.number().int().min(1).max(6),
   classification: z.string().optional(),

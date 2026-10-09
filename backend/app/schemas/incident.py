@@ -1,28 +1,60 @@
-from pydantic import BaseModel, Field, UUID4
+from pydantic import BaseModel, Field, UUID4, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from app.utils.validation import as_utc
 from .base import BaseSchema
+
+TLP_PATTERN = '^(white|green|amber|amber_strict|red)$'
+
+# IR milestone timestamps editable through PUT /incidents/<id>, in the order
+# they must occur (see incidents.py::validate_milestones). RT-POST adds
+# `first_malicious_at` / `responded_at` here once the columns exist.
+MILESTONE_FIELDS = ('detected_at', 'contained_at', 'eradicated_at', 'recovered_at', 'closed_at')
+
+DESCRIPTION_MAX = 10000
+NARRATIVE_MAX = 20000
+
 
 class IncidentCreate(BaseSchema):
     title: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     severity: str = Field('medium', pattern='^(low|medium|high|critical)$')
-    classification: Optional[str] = None
+    classification: Optional[str] = Field(None, max_length=100)
     detected_at: Optional[datetime] = None
     lead_responder_id: Optional[UUID4] = None
-    tlp: Optional[str] = Field('amber', pattern='^(white|green|amber|amber_strict|red)$')
+    tlp: Optional[str] = Field('amber', pattern=TLP_PATTERN)
     team_id: Optional[UUID4] = None
+    team_ids: Optional[List[UUID4]] = Field(None, max_length=50)
+
+    @field_validator('detected_at')
+    @classmethod
+    def detected_utc(cls, v):
+        # Offset-less values are UTC (same rule as utils/validation.parse_datetime).
+        return as_utc(v)
+
 
 class IncidentUpdate(BaseSchema):
     title: Optional[str] = Field(None, min_length=3, max_length=500)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     severity: Optional[str] = Field(None, pattern='^(low|medium|high|critical)$')
-    classification: Optional[str] = None
-    executive_summary: Optional[str] = None
-    lessons_learned: Optional[str] = None
+    classification: Optional[str] = Field(None, max_length=100)
+    executive_summary: Optional[str] = Field(None, max_length=NARRATIVE_MAX)
+    lessons_learned: Optional[str] = Field(None, max_length=NARRATIVE_MAX)
     lead_responder_id: Optional[UUID4] = None
-    tlp: Optional[str] = Field(None, pattern='^(white|green|amber|amber_strict|red)$')
+    tlp: Optional[str] = Field(None, pattern=TLP_PATTERN)
     team_id: Optional[UUID4] = None
+    # IR milestones (C20). null clears a milestone.
+    detected_at: Optional[datetime] = None
+    contained_at: Optional[datetime] = None
+    eradicated_at: Optional[datetime] = None
+    recovered_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+
+    @field_validator(*MILESTONE_FIELDS)
+    @classmethod
+    def milestones_utc(cls, v):
+        return as_utc(v)
+
 
 class IncidentStatusUpdate(BaseSchema):
     status: Optional[str] = Field(None, pattern='^(open|investigating|contained|eradicated|recovered|closed)$')

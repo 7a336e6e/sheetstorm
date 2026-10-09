@@ -328,17 +328,17 @@ def test_cross_incident_queue_respects_visibility(users, auth, make_incident, db
     admin.put(f"{_qs(visible)}/{mine['id']}", json={'owner_id': str(users['Operator'].id)})
 
     op = auth(users['Operator'])
-    items = op.get(f'{API}/questions').get_json()['items']
+    items = op.get(f'{API}/questions?q=for the operator').get_json()['items']
     texts = {i['question'] for i in items}
     assert 'Visible question for the operator?' in texts and 'Hidden question for the operator?' not in texts
     assert all(i['incident']['id'] for i in items)
     assert op.get(f'{API}/questions?owner=me').get_json()['total'] == 1
     assert op.get(f'{API}/questions?incident_id={hidden.id}').get_json()['total'] == 0
 
-    all_items = admin.get(f'{API}/questions?status=open').get_json()
+    all_items = admin.get(f'{API}/questions?status=open&q=for the operator').get_json()
     assert {'Visible question for the operator?', 'Hidden question for the operator?'} <= {i['question'] for i in all_items['items']}
     # org B sees none of org A's questions
-    assert auth(users['admin_b']).get(f'{API}/questions').get_json()['total'] == 0
+    assert auth(users['admin_b']).get(f'{API}/questions?q=for the operator').get_json()['total'] == 0
 
 
 # ── report data ───────────────────────────────────────────────────────────

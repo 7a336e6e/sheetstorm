@@ -545,3 +545,51 @@ def test_questions_case_templates_roundtrip_and_idempotent(scratch_db):
                 mod.upgrade()
     finally:
         eng.dispose()
+
+
+def test_questions_case_templates_models_match_migration(app, db):
+    """The ORM models of the 4 new tables (and the 3 added columns) describe
+    exactly what the migration created."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    tables = {'investigative_questions', 'investigative_question_leads', 'case_templates',
+              'incident_case_templates'}
+    columns = {('incidents', 'custom_fields'), ('playbooks', 'cloned_from'), ('incident_playbooks', 'builtin_key')}
+
+    def relevant(obj):
+        if getattr(obj, 'name', None) in tables or getattr(obj, 'table', None) is not None and obj.table.name in tables:
+            return True
+        return False
+
+    with db.engine.connect() as conn:
+        ctx = MigrationContext.configure(conn, opts={'compare_type': True})
+        diffs = compare_metadata(ctx, db.metadata)
+
+    def flatten(items):
+        for d in items:
+            if isinstance(d, list):
+                yield from flatten(d)
+            else:
+                yield d
+
+    problems = []
+    for d in flatten(diffs):
+        kind = d[0]
+        if kind in ('add_table', 'remove_table'):
+            name = d[1].name
+            if name in tables:
+                problems.append(d)
+        elif kind in ('add_column', 'remove_column'):
+            table, col = d[2], d[3].name
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+        elif kind in ('add_index', 'remove_index', 'add_constraint', 'remove_constraint'):
+            obj = d[1]
+            if relevant(obj):
+                problems.append(d)
+        elif kind.startswith('modify_'):
+            table, col = d[2], d[3]
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+    assert not problems, problems

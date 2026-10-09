@@ -33,6 +33,9 @@ class BaseConfig:
 
     # JWT
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+    # Library defaults only: sign-in tokens get their lifetimes from the org
+    # security policy (session.access_token_minutes 5..60, default 60;
+    # session.refresh_token_days 1..30, default 7; services/session_service.py).
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     # Accept tokens from the Authorization header (API clients, MCP, tests) AND

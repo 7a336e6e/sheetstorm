@@ -109,7 +109,7 @@ describe('account restrictions (W2-LIFE-UI)', () => {
     const spy = jest.spyOn(api, 'setRestrictionHandler')
     renderAt('/dashboard', user(['Viewer'], ['incidents:read']))
     const handler = spy.mock.calls.find(([h]) => typeof h === 'function')?.[0] as (code: string) => void
-    handler('mfa_enrollment_required')
+    handler('some_future_restriction')
     expect(replace).not.toHaveBeenCalled()
     cleanup()
     expect(spy).toHaveBeenLastCalledWith(null)
@@ -124,5 +124,56 @@ describe('account restrictions (W2-LIFE-UI)', () => {
   it('does not loop on the change-password page itself', () => {
     renderAt('/auth/change-password', { ...user(['Viewer'], ['incidents:read']), must_change_password: true } as User)
     expect(replace).not.toHaveBeenCalled()
+  })
+})
+
+describe('MFA enrollment required by the security policy (W3-SEC)', () => {
+  const restricted = (over: Partial<User> = {}): User => ({
+    ...user(['Analyst'], ['incidents:read']),
+    security: {
+      mfa_required: true,
+      mfa_enrollment_required: true,
+      mfa_grace_ends_at: '2026-10-01T00:00:00Z',
+      password_change_required: false,
+      password_expires_at: null,
+    },
+    ...over,
+  })
+
+  it('maps the 403 code to the profile enrollment page', async () => {
+    const { RESTRICTION_ROUTES } = await import('./auth-provider')
+    expect(RESTRICTION_ROUTES.mfa_enrollment_required).toBe('/dashboard/profile?enroll_mfa=1')
+    const { default: api } = await import('@/lib/api')
+    const spy = jest.spyOn(api, 'setRestrictionHandler')
+    renderAt('/dashboard', user(['Viewer'], ['incidents:read']))
+    const handler = spy.mock.calls.find(([h]) => typeof h === 'function')?.[0] as (code: string) => void
+    handler('mfa_enrollment_required')
+    expect(replace).toHaveBeenCalledWith('/dashboard/profile?enroll_mfa=1')
+    spy.mockRestore()
+  })
+
+  it('keeps a restricted user on the profile enrollment page', () => {
+    renderAt('/dashboard/incidents', restricted())
+    expect(replace).toHaveBeenCalledWith('/dashboard/profile?enroll_mfa=1')
+  })
+
+  it('does not loop on the profile page itself', () => {
+    renderAt('/dashboard/profile', restricted())
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('does not redirect during the grace period or once enrolled', () => {
+    const graced = restricted()
+    graced.security = { ...graced.security!, mfa_enrollment_required: false }
+    renderAt('/dashboard/incidents', graced)
+    cleanup()
+    renderAt('/dashboard/incidents', restricted({ mfa_enabled: true }))
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('a forced password change comes first', () => {
+    renderAt('/dashboard', restricted({ must_change_password: true }))
+    expect(replace).toHaveBeenCalledWith('/auth/change-password')
+    expect(replace).not.toHaveBeenCalledWith('/dashboard/profile?enroll_mfa=1')
   })
 })

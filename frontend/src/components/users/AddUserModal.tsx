@@ -3,7 +3,8 @@
 /**
  * Create a user. Picking roles needs roles:manage; roles whose permissions
  * exceed yours are disabled (backend 403 privilege_escalation). Without an
- * explicit role the server assigns Viewer.
+ * explicit role the server assigns the org's default role (security policy,
+ * Viewer unless changed). Password hints follow the org's password policy.
  */
 
 import { useState, useEffect } from 'react'
@@ -33,6 +34,8 @@ import { useAuthStore } from '@/lib/store'
 import { usePermission } from '@/components/auth/permission-gate'
 import { GuardErrorAlert } from '@/components/auth/guard-error-alert'
 import { usePermissionCatalog } from '@/hooks/use-permission-catalog'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
+import { PasswordChecklist, PasswordRulesHint } from '@/components/settings/PasswordChecklist'
 import { Role, Team } from '@/types'
 
 const DEFAULT_ROLE = 'Analyst'
@@ -58,6 +61,8 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
     const [selectedRoles, setSelectedRoles] = useState<string[]>([])
     const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
     const [error, setError] = useState<unknown>(null)
+    // The org's password policy (hints; the server validates the password).
+    const passwordRules = usePasswordPolicy(open)
 
     // Available roles and teams
     const [availableRoles, setAvailableRoles] = useState<Role[]>([])
@@ -175,8 +180,13 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 placeholder="••••••••"
                                 required
-                                minLength={8}
+                                minLength={passwordRules.min_length}
                             />
+                            {formData.password.length > 0 ? (
+                                <PasswordChecklist password={formData.password} rules={passwordRules} />
+                            ) : (
+                                <PasswordRulesHint rules={passwordRules} />
+                            )}
                         </div>
 
                         <div className="grid gap-2">

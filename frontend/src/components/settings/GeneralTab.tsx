@@ -1,7 +1,7 @@
 /**
- * General tab in Settings: organization name, timezone, self-registration
- * (default organization only), IOC auto-enrichment and the Data egress card
- * (per-TLP AI policy + third-party enrichment limits).
+ * General tab in Settings: organization name, timezone, IOC auto-enrichment
+ * and the Data egress card (per-TLP AI policy + third-party enrichment
+ * limits). Self-registration lives in the Security tab (security policy).
  *
  * `PUT /organization` validates every key (extra keys are rejected) and
  * merges them over the stored settings; loosening the AI policy is audited
@@ -77,7 +77,6 @@ const TIMEZONES: { value: string; label: string }[] = [
 export interface GeneralForm {
   name: string
   timezone: string
-  registration_enabled: boolean
   auto_enrich_iocs: boolean
   enrichment_allow_amber_strict: boolean
   ai_tlp_policy: AiTlpPolicy
@@ -87,20 +86,14 @@ export function formFromOrganization(org: Organization): GeneralForm {
   return {
     name: org.name,
     timezone: org.settings?.timezone || 'UTC',
-    registration_enabled: org.registration_enabled ?? false,
     auto_enrich_iocs: org.settings?.auto_enrich_iocs ?? false,
     enrichment_allow_amber_strict: org.settings?.enrichment_allow_amber_strict ?? false,
     ai_tlp_policy: { ...AI_TLP_POLICY_DEFAULTS, ...(org.settings?.ai_tlp_policy ?? {}) },
   }
 }
 
-/** Whether the registration switch applies (default org, caller may see the value). */
-export function showsRegistration(org: Organization): boolean {
-  return org.is_default && org.registration_enabled !== undefined
-}
-
-/** The `PUT /organization` body: every writable key; registration only where it applies. */
-export function buildOrganizationUpdate(org: Organization, form: GeneralForm): OrganizationUpdate {
+/** The `PUT /organization` body: every writable key. */
+export function buildOrganizationUpdate(_org: Organization, form: GeneralForm): OrganizationUpdate {
   return {
     name: form.name.trim(),
     settings: {
@@ -108,7 +101,6 @@ export function buildOrganizationUpdate(org: Organization, form: GeneralForm): O
       auto_enrich_iocs: form.auto_enrich_iocs,
       enrichment_allow_amber_strict: form.enrichment_allow_amber_strict,
       ai_tlp_policy: { ...form.ai_tlp_policy },
-      ...(showsRegistration(org) ? { registration_enabled: form.registration_enabled } : {}),
     },
   }
 }
@@ -242,7 +234,7 @@ export function GeneralTab() {
     ? TIMEZONES
     : [{ value: form.timezone, label: form.timezone }, ...TIMEZONES]
   const unmatchedErrors = Object.entries(fieldErrors).filter(
-    ([k]) => !['name', 'settings.timezone', 'settings.registration_enabled'].includes(k)
+    ([k]) => !['name', 'settings.timezone'].includes(k)
   )
 
   return (
@@ -253,7 +245,7 @@ export function GeneralTab() {
             <Settings className="h-5 w-5" />
             Organization
           </CardTitle>
-          <CardDescription>Name, timezone and sign-up settings of {org.slug}</CardDescription>
+          <CardDescription>Name and timezone of {org.slug}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
@@ -283,22 +275,6 @@ export function GeneralTab() {
             </Select>
             <FieldError message={fieldErrors['settings.timezone']} />
           </div>
-          {showsRegistration(org) && (
-            <div className="grid gap-1 pt-2">
-              <div className="flex items-center space-x-3">
-                <Switch
-                  id="registration-enabled"
-                  checked={form.registration_enabled}
-                  onCheckedChange={(c) => update('registration_enabled', c)}
-                />
-                <Label htmlFor="registration-enabled">Allow self-registration</Label>
-              </div>
-              <p className="pl-12 text-xs text-muted-foreground">
-                New sign-ups join this organization with the Viewer role.
-              </p>
-              <FieldError message={fieldErrors['settings.registration_enabled']} />
-            </div>
-          )}
         </CardContent>
       </Card>
 

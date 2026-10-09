@@ -9,6 +9,7 @@
  * never in the query cache, a store or browser storage.
  */
 import { api, buildQuery } from '@/lib/api'
+import { checkPassword, DEFAULT_PASSWORD_RULES, meetsPasswordRules, type PasswordCheck } from '@/lib/endpoints/security'
 import type {
   AdminResetResult,
   AdminUser,
@@ -20,6 +21,7 @@ import type {
   InviteLookup,
   InviteStatusFilter,
   PaginatedResponse,
+  PasswordRules,
   ResetPasswordMode,
   User,
   UserActivityScope,
@@ -105,21 +107,24 @@ export function takeHashToken(): string | null {
   return token && token.length <= 200 ? token : null
 }
 
-/** Mirror of backend `auth.validate_password` (12+, upper, lower, digit, special). */
-export const PASSWORD_SPECIALS = /[!@#$%^&*(),.?":{}|<>]/
-
-export function passwordChecks(pw: string) {
+/**
+ * Mirror of the backend password rules (security_policy.validate_password).
+ * Without `rules` the code defaults apply (12+, upper, lower, digit, any
+ * non-alphanumeric symbol); pass the org's rules from usePasswordPolicy.
+ */
+export function passwordChecks(pw: string, rules: PasswordRules = DEFAULT_PASSWORD_RULES) {
+  const met = (key: PasswordCheck['key']) => checkPassword(pw, rules).find((c) => c.key === key)?.met ?? true
   return {
-    length: pw.length >= 12,
-    uppercase: /[A-Z]/.test(pw),
-    lowercase: /[a-z]/.test(pw),
-    number: /[0-9]/.test(pw),
-    special: PASSWORD_SPECIALS.test(pw),
+    length: met('length') && met('max_bytes'),
+    uppercase: met('uppercase'),
+    lowercase: met('lowercase'),
+    number: met('number'),
+    special: met('special'),
   }
 }
 
-export function isPasswordValid(pw: string): boolean {
-  return Object.values(passwordChecks(pw)).every(Boolean)
+export function isPasswordValid(pw: string, rules: PasswordRules = DEFAULT_PASSWORD_RULES): boolean {
+  return meetsPasswordRules(pw, rules)
 }
 
 /** Human copy for bulk/lifecycle item codes (per-item results carry the server message too). */

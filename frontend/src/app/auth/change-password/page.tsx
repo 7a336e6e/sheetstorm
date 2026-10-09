@@ -18,6 +18,7 @@ import { useAuthStore } from '@/lib/store'
 import type { AdminUser } from '@/types'
 import { AccountCard, PasswordFields } from '@/components/users/PasswordFields'
 import { describeUserError } from '@/components/users/lifecycle-errors'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
 
 export default function ChangePasswordPage() {
   const router = useRouter()
@@ -34,8 +35,10 @@ export default function ChangePasswordPage() {
     if (!isLoading && !isAuthenticated) router.replace('/login')
   }, [isLoading, isAuthenticated, router])
 
+  // The signed-in user's org rules (allowed while password_change_required).
+  const rules = usePasswordPolicy(isAuthenticated)
   const canSubmit =
-    current.length > 0 && isPasswordValid(password) && password === confirm && password !== current && !busy
+    current.length > 0 && isPasswordValid(password, rules) && password === confirm && password !== current && !busy
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -104,6 +107,7 @@ export default function ChangePasswordPage() {
           onPassword={setPassword}
           onConfirm={setConfirm}
           disabled={busy}
+          rules={rules}
         />
         {password.length > 0 && password === current && (
           <p className="text-xs text-destructive">Choose a password different from the current one.</p>

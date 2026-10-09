@@ -57,11 +57,15 @@ def _optional_str(value, name, max_len):
 
 
 def _roles_for(org_id, role_ids):
-    """Roles (visible to the org) for stored ids; empty -> [Viewer]."""
+    """Roles (visible to the org) for stored ids; empty -> [the security
+    policy's default role] (Viewer unless the org chose another
+    non-privileged role)."""
     from app.models import Role
     if not role_ids:
-        viewer = Role.resolve(DEFAULT_ROLE, org_id)
-        return [viewer] if viewer else []
+        from app.services import security_policy
+        role = security_policy.default_role(security_policy.get_policy(org_id), org_id) \
+            or Role.resolve(DEFAULT_ROLE, org_id)
+        return [role] if role else []
     return Role.visible_to(org_id).filter(Role.id.in_(role_ids)).all()
 
 
@@ -86,6 +90,10 @@ def create_invite(actor, data: dict):
     email = email.strip().lower()
     if len(email) > 255 or not validate_email(email):
         raise LifecycleError(400, 'bad_request', 'Invalid email address')
+    from app.services import security_policy
+    if not security_policy.check_email_domain(email, security_policy.get_policy(actor.organization_id)):
+        raise LifecycleError(400, 'email_domain_not_allowed',
+                             'This email domain is not allowed by the security policy')
     name = _optional_str(data.get('name'), 'name', 255)
     org_role = _optional_str(data.get('organizational_role'), 'organizational_role', 150)
     days = data.get('expires_in_days', MAX_EXPIRY_DAYS)
@@ -169,16 +177,18 @@ def lookup_invite(token):
 def accept_invite(token, name, password):
     """Create the invited user. Returns it (caller commits). Raises
     InviteInvalid (generic) or LifecycleError 400 for bad name/password."""
-    from app.api.v1.endpoints.auth import validate_password
     from app.models import Team, TeamMember, User, UserRole
+    from app.services import security_policy
 
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 255:
         raise LifecycleError(400, 'bad_request', 'name must be 1..255 characters')
     if not isinstance(password, str):
         raise LifecycleError(400, 'bad_request', 'password is required')
-    ok, message = validate_password(password)
+    # Code-default rules first (no invite lookup needed); the invite's org
+    # policy is applied by set_password below.
+    ok, messages = security_policy.validate_password(password)
     if not ok:
-        raise LifecycleError(400, 'bad_request', message)
+        raise LifecycleError(400, 'bad_request', ' '.join(messages), {'violations': messages})
 
     invite = _find(token, lock=True)
     if invite is None or invite.status != 'pending':
@@ -200,11 +210,17 @@ def accept_invite(token, name, password):
 
     if User.query.filter(sa.func.lower(User.email) == invite.email.lower()).first() is not None:
         raise InviteInvalid()
+    # The domain allowlist may have been tightened since the invite was sent.
+    if not security_policy.check_email_domain(invite.email, security_policy.get_policy(invite.organization_id)):
+        raise InviteInvalid()
 
     user = User(email=invite.email.lower(), name=name.strip(), organization_id=invite.organization_id,
                 auth_provider='local', is_active=True, is_verified=True,
                 organizational_role=invite.organizational_role)
-    user.set_password(password)
+    try:
+        security_policy.set_password(user, password, enforce_history=False)
+    except security_policy.PasswordPolicyError as e:
+        raise LifecycleError(400, 'bad_request', e.message, {'violations': e.messages})
     db.session.add(user)
     try:
         db.session.flush()

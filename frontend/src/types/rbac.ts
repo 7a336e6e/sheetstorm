@@ -75,14 +75,13 @@ export interface Organization {
   slug: string
   is_default: boolean
   settings: OrganizationSettings
-  /** Only present for organization managers of the default organization. */
-  registration_enabled?: boolean
   updated_at?: string | null
 }
 
 export interface OrganizationUpdate {
   name?: string
-  settings?: OrganizationSettings & { registration_enabled?: boolean }
+  /** Self-registration is not an org setting (security policy, W3-SEC). */
+  settings?: OrganizationSettings
 }
 
 /** Why a provider is (not) usable under the incident's policy mode. */

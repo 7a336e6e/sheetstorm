@@ -115,13 +115,19 @@ def create_user():
     # admin-created address could never sign in).
     email = data['email'].strip().lower()
 
-    # Admin-created accounts must still meet email/password policy.
-    from app.api.v1.endpoints.auth import validate_password, validate_email
+    # Admin-created accounts must still meet the org security policy
+    # (email domain allowlist, password rules, default role).
+    from app.api.v1.endpoints.auth import validate_email
+    from app.services import security_policy
     if not validate_email(email):
         return jsonify({'error': 'bad_request', 'message': 'Invalid email address'}), 400
-    valid, message = validate_password(data['password'])
+    policy = security_policy.get_policy(current.organization_id)
+    if not security_policy.check_email_domain(email, policy):
+        return jsonify({'error': 'email_domain_not_allowed',
+                        'message': 'This email domain is not allowed by the security policy'}), 400
+    valid, messages = security_policy.validate_password(data['password'], policy)
     if not valid:
-        return jsonify({'error': 'bad_request', 'message': message}), 400
+        return security_policy.PasswordPolicyError(messages).response()
 
     if User.query.filter(sa.func.lower(User.email) == email).first():
         return jsonify({'error': 'conflict', 'message': 'Email already exists'}), 409
@@ -135,8 +141,11 @@ def create_user():
             'message': 'roles:manage permission is required to assign roles'
         }), 403
 
-    # Default to least privilege (Viewer) when no explicit role is given.
-    requested = role_names or ['Viewer']
+    # Default to the policy's default role (least privilege: never a
+    # privileged role, Viewer by default) when no explicit role is given.
+    if not role_names:
+        default = security_policy.default_role(policy, current.organization_id)
+    requested = role_names or [default.name if default else 'Viewer']
     roles, unknown = [], []
     for role_name in requested:
         role = Role.resolve(role_name, current.organization_id)
@@ -159,7 +168,11 @@ def create_user():
         is_verified=True,  # Admin created users are verified
         organizational_role=data.get('organizational_role', '').strip() or None,
     )
-    user.set_password(data['password'])
+    try:
+        security_policy.set_password(user, data['password'], policy=policy, enforce_history=False)
+    except security_policy.PasswordPolicyError as e:
+        db.session.rollback()
+        return e.response()
     db.session.add(user)
     db.session.flush()
     for role in roles:
@@ -222,7 +235,7 @@ def update_user(user_id):
         return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
     data = request.get_json(silent=True) or {}
-    from app.api.v1.endpoints.auth import validate_password
+    from app.services import security_policy
     can_manage = current.has_permission('users:manage')
     if 'is_active' in data and can_manage and not isinstance(data['is_active'], bool):
         return jsonify({'error': 'bad_request', 'message': 'is_active must be a boolean'}), 400
@@ -247,11 +260,11 @@ def update_user(user_id):
         # Password reset (users:manage) — same policy as self-service changes, and
         # all of the user's existing sessions are revoked.
         if resetting:
-            valid, message = validate_password(data['password'] or '')
-            if not valid:
+            try:
+                security_policy.set_password(user, data['password'] or '', enforce_history=False)
+            except security_policy.PasswordPolicyError as e:
                 db.session.rollback()
-                return jsonify({'error': 'bad_request', 'message': message}), 400
-            user.set_password(data['password'])
+                return e.response()
             user.failed_login_count = 0
             user.locked_until = None
         if can_manage and 'must_change_password' in data:

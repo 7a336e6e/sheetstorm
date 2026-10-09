@@ -1,25 +1,17 @@
 'use client'
 
 /**
- * New-password + confirm fields with the server policy checklist (backend
- * `auth.validate_password`), and the centered card the public account pages
+ * New-password + confirm fields with the password-policy checklist (backend
+ * `security_policy.validate_password`; `rules` from usePasswordPolicy, code
+ * defaults otherwise), and the centered card the public account pages
  * (invite, reset, forced change) render in.
  */
 import type { ReactNode } from 'react'
-import { Check, X } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/input'
 import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
-import { passwordChecks } from '@/lib/endpoints/users-admin'
-import { cn } from '@/lib/utils'
-
-const CHECK_LABELS: [keyof ReturnType<typeof passwordChecks>, string][] = [
-  ['length', '12+ characters'],
-  ['uppercase', 'Uppercase'],
-  ['lowercase', 'Lowercase'],
-  ['number', 'Number'],
-  ['special', 'Special char'],
-]
+import { PasswordChecklist } from '@/components/settings/PasswordChecklist'
+import type { PasswordRules } from '@/types'
 
 export function PasswordFields({
   password,
@@ -28,6 +20,7 @@ export function PasswordFields({
   onConfirm,
   disabled,
   label = 'New password',
+  rules,
 }: {
   password: string
   confirm: string
@@ -35,8 +28,8 @@ export function PasswordFields({
   onConfirm: (v: string) => void
   disabled?: boolean
   label?: string
+  rules?: PasswordRules
 }) {
-  const checks = passwordChecks(password)
   const mismatch = confirm.length > 0 && confirm !== password
   return (
     <>
@@ -51,23 +44,7 @@ export function PasswordFields({
           disabled={disabled}
           className="h-11"
         />
-        {password.length > 0 && (
-          <ul className="mt-2 grid grid-cols-2 gap-1.5 text-xs" aria-label="Password requirements">
-            {CHECK_LABELS.map(([key, text]) => (
-              <li key={key} className="flex items-center gap-1.5">
-                {checks[key] ? (
-                  <Check className="h-3 w-3 text-emerald-400" aria-hidden />
-                ) : (
-                  <X className="h-3 w-3 text-muted-foreground" aria-hidden />
-                )}
-                <span className={cn(checks[key] ? 'text-emerald-400' : 'text-muted-foreground')}>
-                  {text}
-                  <span className="sr-only">{checks[key] ? ' (met)' : ' (missing)'}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {password.length > 0 && <PasswordChecklist password={password} rules={rules} />}
       </div>
       <div className="space-y-2">
         <Label htmlFor="confirm-password">Confirm password</Label>

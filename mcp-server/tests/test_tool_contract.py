@@ -239,6 +239,7 @@ CASES: dict[str, tuple] = {
                                   {"action_contains": "login", "event_type": "authentication", "status": "denied",
                                    "ip": "10.0.0.0/8", "sort": "-created_at", "per_page": "200"}),
     "sheetstorm_get_system_status": ({}, "GET", "/admin/system-status", None, None),
+    "sheetstorm_get_security_policy": ({}, "GET", "/organization/security-policy", None, None),
     "sheetstorm_health_check": ({}, "GET", "/health", None, None),
     # threat intel
     "sheetstorm_virustotal_lookup": ({"lookup_type": "hash", "value": "abc"}, "POST",

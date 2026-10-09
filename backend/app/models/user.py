@@ -282,16 +282,30 @@ class PasswordHistory(BaseModel):
 
 
 class Session(BaseModel):
-    """Session model for token management."""
+    """A sign-in session (services/session_service.py).
+
+    One row per interactive sign-in; its id is the ``sid`` claim of every
+    access/refresh token minted for it. Refresh rotation keeps the row and
+    updates ``refresh_jti``/``expires_at``. Revoking the row blocklists its
+    tokens (``revoked_session:<sid>`` in Redis, checked by is_token_revoked).
+    API-key tokens carry no sid and have no row.
+    """
     __tablename__ = 'sessions'
 
+    # ── Session columns (W3-SEC, migration security_policy_sessions) ──────
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    token_hash = Column(String(255), nullable=False)
-    refresh_token_hash = Column(String(255))
+    organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'))
+    token_hash = Column(String(255))  # legacy, unused
+    refresh_token_hash = Column(String(255))  # legacy, unused
+    refresh_jti = Column(String(64))
     ip_address = Column(INET)
     user_agent = Column(String(500))
+    auth_method = Column(String(32))
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True))
     revoked_at = Column(DateTime(timezone=True))
+    revoked_reason = Column(String(32))
+    # ── end session columns ──────────────────────────────────────────────
 
     # Relationships
     user = relationship('User', back_populates='sessions')
@@ -302,3 +316,17 @@ class Session(BaseModel):
         if self.revoked_at:
             return False
         return datetime.now(timezone.utc) < self.expires_at
+
+    def to_dict(self, current_sid=None):
+        return {
+            'id': str(self.id),
+            'user_id': str(self.user_id),
+            'ip_address': str(self.ip_address) if self.ip_address else None,
+            'user_agent': self.user_agent,
+            'auth_method': self.auth_method,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
+            'current': current_sid is not None and str(self.id) == str(current_sid),
+        }

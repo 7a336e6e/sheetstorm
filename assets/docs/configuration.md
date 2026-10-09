@@ -32,7 +32,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_REFRESH_GRACE_SECONDS` | `30` | How long a just-rotated refresh token is still accepted once (multi-tab refresh races) |
 | `TRUSTED_PROXY_CIDRS` / `REAL_IP_HEADER` | empty / `X-Forwarded-For` | Upstream proxies trusted for the client IP; see [Running behind a reverse proxy / CDN](#running-behind-a-reverse-proxy--cdn) |
 | `RATE_LIMIT_DEFAULT` | `600 per minute` | Default Flask-Limiter limit for API routes |
-| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` | `10` / `15` | Lock an account after this many consecutive bad passwords or MFA codes (bounded 3..20), for this many minutes (1..1440). Locked, disabled, unknown and wrong-password logins all get the same generic 401; an admin can unlock early (Users → Unlock) |
+| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` | `10` / `15` | Default lockout for organizations that have not set one in their security policy (Settings → Security): lock an account after this many consecutive bad passwords or MFA codes (bounded 3..20), for this many minutes (1..1440). Locked, disabled, unknown and wrong-password logins all get the same generic 401; an admin can unlock early (Users → Unlock) |
 | `PASSWORD_RESET_TTL_HOURS` | `24` | Lifetime of admin-issued one-time password reset links (1..72) |
 | `NEXT_PUBLIC_API_URL` | `/api/v1` | Backend API URL for the frontend (build-time). Relative paths work through the proxy on any host |
 | `NEXT_PUBLIC_WS_URL` | empty | WebSocket URL for the frontend (build-time); empty means same origin |
@@ -42,7 +42,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OUTBOUND_URL_ALLOWLIST` | empty | Comma-separated hosts/CIDRs that admin-configured self-hosted integrations (MISP, Velociraptor, TheHive, Ollama, MinIO, ...) may target even though they resolve to private addresses, e.g. `ollama,misp.internal,10.0.0.0/8`. Private, loopback and metadata addresses are blocked otherwise (SSRF protection); link-local/cloud-metadata addresses are always blocked. |
-| `PLATFORM_ORG_SLUG` | `default` | Slug of the platform organization. Only holders of `system:manage` in this organization are platform administrators (instance-wide settings). Self-registration is closed by default; an organization manager of the `default` organization enables it in Settings → General (installs upgraded from before `admin_guardrails_rbac` keep it open). |
+| `PLATFORM_ORG_SLUG` | `default` | Slug of the platform organization. Only holders of `system:manage` in this organization are platform administrators (instance-wide settings). Self-registration and first SSO sign-ins join this organization. Registration is closed by default; an organization manager of the platform organization enables it in Settings → Security (its security policy, `provisioning.registration_enabled`; installs upgraded from before `admin_guardrails_rbac` keep it open). |
 | `IOC_AUTO_ENRICH` | `false` | Automatically send newly added IOCs to configured threat-intel integrations. Off by default because it discloses indicators to third parties. An organization-level setting overrides this default. |
 
 **TLP enrichment block (server-side).** A value that appears in any TLP:RED incident of the organization is never sent to an enrichment service: auto-enrichment skips it, playbook `enrich_iocs` skips the incident, `POST /bulk-enrich` returns it with `status: "blocked"`, and `/threat-intel/*/lookup` returns 403 `tlp_restricted`. No setting unblocks RED. TLP:AMBER+STRICT is blocked the same way unless the organization setting `enrichment_allow_amber_strict` is `true`. Each refusal is recorded as `security_event / enrichment_blocked_by_tlp`.
@@ -205,3 +205,32 @@ The purge skips an organization under legal hold (and logs `audit_purge_skipped`
 **Key Tables**: `users`, `roles`, `user_roles`, `organizations`, `incidents`, `incident_assignments`, `timeline_events`, `compromised_hosts`, `compromised_accounts`, `network_indicators`, `host_based_indicators`, `malware_tools`, `attack_graph_nodes`, `attack_graph_edges`, `artifacts`, `chain_of_custody`, `tasks`, `task_comments`, `reports`, `notifications`, `audit_logs`, `integrations`, `teams`, `team_members`, `ledger_heads`.
 
 **Extensions**: `uuid-ossp` (UUID generation), `pgcrypto` (cryptographic functions).
+
+### Security policy (per organization)
+
+Settings → **Security** (`organizations:manage`, `GET/PUT /organization/security-policy`) holds each
+organization's security policy. Without a saved policy the defaults below apply, which match the
+behaviour before the policy existed.
+
+| Section | Setting | Default | Bounds |
+|---------|---------|---------|--------|
+| Password | minimum length | 12 | 12..72 (passwords are capped at 72 bytes, the bcrypt limit) |
+| Password | require upper / lower / digit / symbol | all on | a symbol is any non-alphanumeric character |
+| Password | history (last N passwords blocked) | 0 (off) | 0..24 |
+| Password | maximum age (days) | 0 (off) | 0, or 30..730; an expired password must be changed at the next sign-in |
+| Lockout | failed attempts / minutes | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` (10 / 15) | 3..20 / 1..1440 |
+| MFA | required for | not required | not required / admins (any privileged permission) / everyone |
+| MFA | grace period (days) | 7 | 0..90, counted from when the requirement started or the account was created, whichever is later |
+| Sessions | access token lifetime (minutes) | 60 | 5..60 (applies to newly issued tokens) |
+| Sessions | session lifetime (days) | 7 | 1..30 (refresh token) |
+| Provisioning | allowed email domains | any | up to 50 exact domains; applies to admin-created users, invites, self-registration and first SSO sign-ins, never to existing accounts |
+| Provisioning | default role | Viewer | any non-privileged role |
+| Provisioning | self-registration | off | platform organization only |
+
+After the MFA grace period, a user who must use MFA and has not enrolled can only enroll (every
+other API call answers `403 mfa_enrollment_required`; the web UI opens the profile enrollment).
+API keys are not affected. Every change is audited with before/after values.
+
+Sign-in sessions are listed on the profile ("Your sessions", with *Sign out other devices*) and,
+for `users:manage` holders, in Settings → Security → User sessions. Sessions that ended more than
+30 days ago are deleted by the `prune-sessions` job (`flask sheetstorm run-jobs`).

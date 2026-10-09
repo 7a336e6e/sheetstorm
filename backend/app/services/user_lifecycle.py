@@ -216,6 +216,24 @@ def _store_reset_link(actor, target) -> tuple[str, datetime]:
     return token, _now() + timedelta(seconds=ttl)
 
 
+def _peek_reset_user(token):
+    """The active user a reset link points to, without consuming it."""
+    from app import db
+    from app.models import User
+    client = _redis()
+    if client is None or not token or not isinstance(token, str) or len(token) > 200:
+        return None
+    try:
+        raw = client.get(f'pwd_reset:{hash_token(token)}')
+        data = json.loads(raw) if raw else None
+        user = db.session.get(User, uuid.UUID(str(data.get('user_id')))) if isinstance(data, dict) else None
+    except Exception:
+        return None
+    if user is None or not user.is_active or str(user.organization_id) != str(data.get('org_id')):
+        return None
+    return user
+
+
 def consume_reset_token(token: str):
     """Atomically take a reset link: returns its payload dict or None."""
     client = _redis()
@@ -301,8 +319,10 @@ def admin_reset_password(actor, target, mode, *, revoke_sessions=True) -> dict:
         return {'mode': 'link', 'token': token, 'accept_path': f'/auth/reset-password#token={token}',
                 'expires_at': expires_at.isoformat()}
 
-    temp = generate_password(20)
-    target.set_password(temp)
+    from app.services import security_policy
+    policy = security_policy.get_policy(target.organization_id)
+    temp = generate_password(max(20, policy.password.min_length))
+    security_policy.set_password(target, temp, policy=policy, enforce_history=False)
     target.must_change_password = True
     target.failed_login_count = 0
     target.locked_until = None
@@ -315,13 +335,23 @@ def admin_reset_password(actor, target, mode, *, revoke_sessions=True) -> dict:
 def complete_password_reset(token, new_password):
     """Public reset completion. Returns the user, or raises LifecycleError
     400 `reset_invalid` / `bad_request` (policy). Caller commits."""
-    from app.api.v1.endpoints.auth import validate_password
     from app.models import User
+    from app.services import security_policy
     if not isinstance(new_password, str):
         raise LifecycleError(400, 'bad_request', 'new_password is required')
-    ok, message = validate_password(new_password)
+    # Code-default rules before the token is consumed; the user's org policy
+    # (incl. history) is applied by set_password below.
+    ok, messages = security_policy.validate_password(new_password)
     if not ok:
-        raise LifecycleError(400, 'bad_request', message)
+        raise LifecycleError(400, 'bad_request', ' '.join(messages), {'violations': messages})
+    # The user's own org policy (length, history) is checked before the link
+    # is consumed, so a rejected password does not burn the link.
+    peeked = _peek_reset_user(token)
+    if peeked is not None:
+        try:
+            security_policy.check_password_change(peeked, new_password)
+        except security_policy.PasswordPolicyError as e:
+            raise LifecycleError(400, 'bad_request', e.message, {'violations': e.messages})
     data = consume_reset_token(token)
     invalid = LifecycleError(400, 'reset_invalid', 'This reset link is invalid or has expired')
     if not data:
@@ -332,7 +362,10 @@ def complete_password_reset(token, new_password):
         raise invalid
     if user is None or not user.is_active or str(user.organization_id) != str(data.get('org_id')):
         raise invalid
-    user.set_password(new_password)
+    try:
+        security_policy.set_password(user, new_password)
+    except security_policy.PasswordPolicyError as e:
+        raise LifecycleError(400, 'bad_request', e.message, {'violations': e.messages})
     user.must_change_password = False
     user.failed_login_count = 0
     user.locked_until = None

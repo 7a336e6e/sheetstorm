@@ -95,7 +95,8 @@ def _run_seed(org_slug='default'):
         is_verified=True,
         must_change_password=True,
     )
-    admin.set_password(admin_password)
+    from app.services.security_policy import set_password
+    set_password(admin, admin_password, enforce_history=False)
     db.session.add(admin)
     db.session.flush()
 

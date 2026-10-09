@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **138 tools** covering the SheetStorm API surface (incidents, timeline, leads, investigative questions, case templates, evidence & custody, playbooks, IOCs, attack graph, response metrics, exports, threat intel)
+- **143 tools** covering the SheetStorm API surface (incidents, timeline, leads, investigative questions, case templates, evidence & custody, playbooks, IOCs, attack graph, response metrics, exports, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries

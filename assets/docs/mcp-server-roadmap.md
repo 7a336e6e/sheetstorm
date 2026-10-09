@@ -29,9 +29,9 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 
 ## Current Implementation Status
 
-### Implemented Tools (138)
+### Implemented Tools (143)
 
-138 tools in 21 modules (`@mcp.tool` in `sheetstorm_mcp/tools/*.py`; tool names carry the `sheetstorm_` prefix, omitted below). `mcp-bridge` exposes the same set.
+143 tools in 22 modules (`@mcp.tool` in `sheetstorm_mcp/tools/*.py`; tool names carry the `sheetstorm_` prefix, omitted below). `mcp-bridge` exposes the same set.
 
 | Module | Tools | Scope |
 |--------|-------|-------|
@@ -50,6 +50,7 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 | **questions** (4) | `list_open_questions`, `answer_question`, `add_question`, `get_question_report` | Investigative questions |
 | **case_templates** (2) | `list_case_templates`, `apply_case_template` | Case templates |
 | **metrics** (3) | `get_incident_metrics`, `list_improvement_actions`, `add_improvement_action` | Response metrics and improvement actions |
+| **decisions** (5) | `log_decision`, `list_decisions`, `log_response_action`, `list_response_actions`, `update_action_verification` | Decision & response-action log (no approve/authorize, no privileged) |
 | **reports** (3) | `list_reports`, `generate_pdf_report`, `generate_ai_report` | Reports and snapshots |
 | **admin** (21) | `list_users`, `create_user`, `list_roles`, `list_permissions`, `update_user`, `delete_user`, `invite_user`, `list_invites`, `revoke_invite`, `disable_user`, `enable_user`, `force_logout_user`, `unlock_user`, `get_user_activity`, `list_notifications`, `mark_notification_read`, `mark_all_notifications_read`, `get_audit_logs`, `get_system_status`, `get_security_policy`, `health_check` | Users, invites, notifications, audit, system status, security policy |
 | **threat_intel** (7) | `virustotal_lookup`, `misp_push_iocs`, `cve_lookup`, `ip_reputation`, `domain_reputation`, `email_reputation`, `ransomware_lookup` | Threat intel lookups, MISP |

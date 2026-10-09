@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **138 tools** covering the full SheetStorm IR workflow (incl. playbooks, investigative questions, case templates, response metrics and improvement actions, legal hold, custody export, CSV/STIX export)
+- **143 tools** covering the full SheetStorm IR workflow (incl. playbooks, investigative questions, case templates, response metrics and improvement actions, legal hold, custody export, CSV/STIX export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)

@@ -19,7 +19,7 @@
 | Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
 | Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
 | Auto-enrichment & soft fallback | ✅ 1/1 |
-| MCP server (138 tools, 9 prompts, 7 resources, OAuth, Docker) | ✅ 20/20 |
+| MCP server (143 tools, 9 prompts, 7 resources, OAuth, Docker) | ✅ 20/20 |
 | Testing | 🔜 0/4 deferred |
 
 ---
@@ -46,7 +46,7 @@
 | P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
 | P1 | Case notes & kill chain phase per event | ✅ Done |
 | P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
-| P1 | MCP server for AI assistant integration (138 tools) | ✅ Done |
+| P1 | MCP server for AI assistant integration (143 tools) | ✅ Done |
 | P1 | MITRE ATT&CK pattern model, suggest service & seed data | ✅ Done |
 | P1 | Test suite — pytest (started) · Vitest · Playwright | 🚧 In progress |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |

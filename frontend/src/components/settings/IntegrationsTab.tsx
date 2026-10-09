@@ -19,6 +19,7 @@ import {
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -97,6 +98,11 @@ const HIDDEN_CATEGORIES = new Set(['ai', 'storage'])
 export function IntegrationsTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
+  // Mirrors the backend: POST/PUT(+test)/DELETE /integrations need
+  // integrations:create / :update / :delete; without them the tab is read-only.
+  const canCreate = usePermission('integrations:create')
+  const canUpdate = usePermission('integrations:update')
+  const canDelete = usePermission('integrations:delete')
 
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
@@ -245,7 +251,7 @@ export function IntegrationsTab() {
             {visibleIntegrations.length} configured · {visibleIntegrations.filter(i => i.is_enabled).length} active
           </p>
         </div>
-        <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add Integration</Button>
+        {canCreate && <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add Integration</Button>}
       </div>
 
       {/* Category Filters */}
@@ -271,7 +277,7 @@ export function IntegrationsTab() {
             <CardContent className="flex flex-col items-center justify-center p-6 text-center text-muted-foreground">
               <div className="w-12 h-12 bg-muted/50 rounded-full flex items-center justify-center mb-4"><Shield className="h-6 w-6" /></div>
               <p>{categoryFilter !== 'all' ? 'No integrations in this category' : 'No integrations configured'}</p>
-              <Button variant="link" onClick={() => openModal()}>Add your first integration</Button>
+              {canCreate && <Button variant="link" onClick={() => openModal()}>Add your first integration</Button>}
             </CardContent>
           </Card>
         ) : (
@@ -320,22 +326,26 @@ export function IntegrationsTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isDrive && driveStatus?.configured && !driveStatus.connected && (
+                    {canCreate && isDrive && driveStatus?.configured && !driveStatus.connected && (
                       <Button variant="outline" size="sm" onClick={handleDriveConnect} disabled={driveLoading} className="text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10">
                         {driveLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Link2 className="mr-1.5 h-3.5 w-3.5" />}Connect
                       </Button>
                     )}
-                    {isDrive && driveStatus?.connected && (
+                    {canUpdate && isDrive && driveStatus?.connected && (
                       <>
                         <Button variant="outline" size="sm" onClick={openFolderPicker}><FolderOpen className="mr-1.5 h-3.5 w-3.5" />{driveStatus.root_folder_id && driveStatus.root_folder_id !== 'root' ? 'Change Folder' : 'Set Folder'}</Button>
                         <Button variant="outline" size="sm" onClick={handleDriveDisconnect} className="text-destructive border-destructive/30 hover:bg-destructive/10"><Unlink className="mr-1.5 h-3.5 w-3.5" />Disconnect</Button>
                       </>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => handleTest(integration.id)} disabled={testing === integration.id || !integration.is_enabled}>
-                      {testing === integration.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => openModal(integration)}>Configure</Button>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(integration.id)}><Trash2 className="h-4 w-4" /></Button>
+                    {canUpdate && (
+                      <Button variant="outline" size="sm" onClick={() => handleTest(integration.id)} disabled={testing === integration.id || !integration.is_enabled}>
+                        {testing === integration.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
+                      </Button>
+                    )}
+                    {canUpdate && <Button variant="outline" size="sm" onClick={() => openModal(integration)}>Configure</Button>}
+                    {canDelete && (
+                      <Button variant="ghost" size="icon" aria-label={`Delete ${integration.name}`} className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(integration.id)}><Trash2 className="h-4 w-4" /></Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -364,7 +374,7 @@ export function IntegrationsTab() {
                         return (
                           <div key={t.id} className="flex items-center justify-between text-sm">
                             <span className={isConfigured ? 'text-foreground' : 'text-muted-foreground'}>{t.name}</span>
-                            {isConfigured ? <CheckCircle className="h-3.5 w-3.5 text-green-400" /> : (
+                            {isConfigured ? <CheckCircle className="h-3.5 w-3.5 text-green-400" /> : canCreate && (
                               <button onClick={() => { setEditingIntegration(null); setForm({ type: t.id, name: t.name, config: {}, credentials: {}, is_enabled: true }); setShowModal(true) }} className="text-xs text-muted-foreground hover:text-foreground transition-colors">+ Add</button>
                             )}
                           </div>

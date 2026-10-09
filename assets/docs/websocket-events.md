@@ -1,37 +1,182 @@
 # WebSocket Events
 
-Connect via Socket.IO at `NEXT_PUBLIC_WS_URL` with `?token=<jwt>` query param.
+Socket.IO on the backend origin (`/socket.io/`). Authentication happens once,
+at connect time, from the first valid **interactive access JWT** found in (in
+order) the Socket.IO `auth` payload `{ token }`, the `?token=` query string,
+the `Authorization: Bearer` header, or the httpOnly `access_token_cookie`.
+Refresh tokens, MFA pre-auth tokens, API-key tokens and tokens of inactive /
+revoked users give an **anonymous** connection, which can only `ping`.
+
+Identity is never read from event payloads. Server code lives in
+`backend/app/api/websocket/__init__.py`; emit helpers in
+`backend/app/services/realtime.py`.
+
+---
+
+## Rooms
+
+| Room | Members | Carries |
+|---|---|---|
+| `user_<id>` | every socket of that user (connect) | `notification`, `permissions_changed`, `session:revoked`, `incident:access_revoked` |
+| `org_<id>` | every socket of the org (connect) | org-wide `activity:new` |
+| `incident_<id>` | sockets that passed the incident access check on `incident:join` | `presence:state`, `entity:changed` for `incident`/`assignment`, `incident:resync` for scope `incident`, `activity:new` |
+| `incident_<id>:<scope>` | joined sockets whose user holds the scope's read permission | `entity:changed`, `incident:resync`, `graph:node_drag` (scope `attack_graph`) |
+
+Clients never choose rooms; the server derives the scope rooms at join time.
+A permission change takes effect on reconnect (`notify_permissions_changed`
+disconnects the user's sockets).
+
+### Scopes and entities
+
+| Scope | Read permission | Entities |
+|---|---|---|
+| `incident` (base room) | `incidents:read` | `incident`, `assignment` |
+| `timeline` | `timeline:read` | `timeline_event` |
+| `hosts` | `hosts:read` | `host` |
+| `accounts` | `accounts:read` | `account` (password always masked) |
+| `network_iocs` | `network_iocs:read` | `network_ioc` |
+| `host_iocs` | `host_iocs:read` | `host_ioc` |
+| `malware` | `malware:read` | `malware` |
+| `artifacts` | `artifacts:read` | `artifact` (no `storage_path`/`extra_data`), `evidence_item`, `custody_entry` |
+| `tasks` | `tasks:read` | `task`, `task_comment` |
+| `attack_graph` | `attack_graph:read` | `graph_node`, `graph_edge` |
+| `notes` | `incidents:read` | `case_note` |
+| `playbook` | `incidents:read` | `playbook` |
+| `questions` | `incidents:read` | `question` |
+| `decisions` | `decisions:read` | `decision` |
+| `decisions_privileged` | `decisions:read_privileged` | `decision_privileged` |
+| `response_actions` | `response_actions:read` | `response_action` |
+| `review` | `incidents:read` | `review` |
+| `improvements` | `improvements:read` | `improvement_action` |
+
+New entities register with `realtime.register_entity(entity, scope, read_perm, serializer=None)`.
+
+Decision log (W4-DEC): a privileged decision is emitted **only** as entity `decision_privileged` to scope
+`decisions_privileged` (with data); nothing about it reaches scope `decisions`, and its audit `activity:new`
+uses resource type `decision_privileged` (same scope). When the flag flips, the old scope receives a `deleted`
+first and the new scope a `created`. `response_action` payloads never carry the id of a privileged decision.
 
 ---
 
 ## Client → Server
 
-| Event              | Payload                                           | Description                |
-|--------------------|---------------------------------------------------|----------------------------|
-| `join_incident`    | `{ incident_id, user_id, user_name }`             | Join incident room         |
-| `leave_incident`   | `{ incident_id }`                                 | Leave incident room        |
-| `cursor_move`      | `{ incident_id, user_id, user_name, position }`   | Broadcast cursor position  |
-| `typing_start`     | `{ incident_id, user_id, user_name, field }`       | Typing indicator on        |
-| `typing_stop`      | `{ incident_id, user_id, field }`                  | Typing indicator off       |
-| `graph_node_moved` | `{ incident_id, node_id, position, user_id }`      | Sync node position         |
-| `ping`             | —                                                 | Keep-alive                 |
+Every event is rate limited per socket (token bucket) and validated; invalid
+input is dropped with `rt:error`.
+
+| Event | Payload | Notes |
+|---|---|---|
+| `incident:join` | `{ incident_id }` | Requires incident access. Max 5 incidents per socket (the 6th join leaves the oldest). 10/min. Ack + `incident:joined`. |
+| `incident:leave` | `{ incident_id }` | Ignored unless the socket joined that incident. |
+| `presence:update` | `{ incident_id, focus: {entity, id} \| null, mode: 'viewing' \| 'editing' }` | Send debounced (300 ms) and as a 25 s heartbeat. `focus.entity` must be in a scope the user can read. 4/s, burst 8. |
+| `graph:node_drag` | `{ incident_id, node_id, x, y }` | Requires `attack_graph:update`; node must belong to the incident; finite `|x|,|y| < 1e6`. 15/s. |
+| `ping` | — | Allowed for anonymous sockets. |
+
+Other events: 20/s. More than 50 rate-limit violations in 60 s logs the
+security event `ws_rate_limited` and disconnects the socket. Denied joins log
+`ws_join_denied` (at most once per socket per minute). Frames are capped at
+64 KB (`max_http_buffer_size`).
 
 ## Server → Client
 
-| Event                  | Payload                                       | Description                |
-|------------------------|-----------------------------------------------|----------------------------|
-| `connected`            | `{ user_id, name }` or `{ anonymous: true }`  | Connection acknowledged    |
-| `user_joined`          | `{ sid, user_id, name }`                       | User entered room          |
-| `user_left`            | `{ sid }`                                      | User left room             |
-| `users_in_room`        | `{ users: [...] }`                             | Current room roster        |
-| `cursor_moved`         | `{ user_id, user_name, position }`             | Other user's cursor        |
-| `user_typing`          | `{ user_id, user_name, field, typing }`        | Other user typing          |
-| `graph_node_position`  | `{ node_id, position, user_id }`               | Other user moved node      |
-| `notification`         | `Notification`                                 | Real-time notification     |
-| `graph_node_added`     | `AttackGraphNode`                              | Node created via API       |
-| `graph_node_updated`   | `AttackGraphNode`                              | Node updated via API       |
-| `graph_node_deleted`   | `{ id }`                                       | Node deleted via API       |
-| `graph_edge_added`     | `AttackGraphEdge`                              | Edge created via API       |
-| `graph_edge_updated`   | `AttackGraphEdge`                              | Edge updated via API       |
-| `graph_edge_deleted`   | `{ id }`                                       | Edge deleted via API       |
-| `pong`                 | —                                              | Keep-alive response        |
+| Event | Room | Payload |
+|---|---|---|
+| `connected` | self | `{ user_id, name }` or `{ anonymous: true }` |
+| `incident:joined` | self (also the join ack) | `{ incident_id, scopes: [..], seq: {scope: int}, presence: [...] }` |
+| `entity:changed` | scope room | envelope below |
+| `incident:resync` | scope room (one per scope) | `{ incident_id, scopes: [scope], reason }` |
+| `incident:access_revoked` | `user_<id>` | `{ incident_id, reason? }` |
+| `presence:state` | `incident_<id>` | `{ incident_id, users: [{ pid, user_id, name, focus, mode, since }] }` — never socket ids; updates throttled to 1/s per incident, joins/leaves immediate |
+| `graph:node_drag` | `incident_<id>:attack_graph` (not echoed) | `{ incident_id, node_id, x, y, user_id }` |
+| `rt:error` | self | `{ code: 'denied' \| 'rate_limited' \| 'invalid', event }` |
+| `permissions_changed` | `user_<id>` | `{}` after a role assignment/revocation for that user or an edit of a role they hold (≤500 holders); refetch `/auth/me` (sockets are then disconnected) |
+| `session:revoked` | `user_<id>` | `{ reason }`: `disabled`, `deleted`, `force_logout`, `password_reset` or `mfa_reset` (services/token_revocation.py); the user's sockets are then disconnected. Sign the client out |
+| `notification` | `user_<id>` | `Notification` |
+| `activity:new` | incident / org rooms, or (admin actions) each holder of `audit_logs:read` | audit activity item (public details) |
+| `pong` | self | — |
+
+### `entity:changed` envelope
+
+```json
+{"incident_id": "uuid", "entity": "task", "op": "created|updated|deleted",
+ "id": "uuid", "version": 7, "scope": "tasks", "seq": 1234,
+ "actor": {"id": "uuid", "name": "Dana"}, "at": "ISO-8601",
+ "data": {"...": "same dict the list endpoint returns"}}
+```
+
+`data` is omitted for `deleted`. `seq` is a per-(incident, scope) counter
+(Redis `rt:seq:<incident>:<scope>`, 7-day TTL); a gap means missed events, so
+resync that scope. `seq` is `null` when Redis is unavailable. Apply `updated`
+only when `version` is newer than the local copy.
+
+### Removed legacy events
+
+Incident endpoints no longer emit the per-entity events `incident_updated`,
+`timeline_event_added|updated|deleted`, `task_added|updated|deleted`,
+`task_comment_added`, `case_note_created|updated|deleted`, `host_added`,
+`graph_node_added|updated|deleted` and `graph_edge_added|updated|deleted`.
+Every create/update/delete of an incident entity emits one `entity:changed`
+(after the commit) instead, and bulk changes (spreadsheet import, attack-graph
+auto-generate, graph updates from a new timeline event on a host, playbook
+actions, the host bulk update `PATCH /hosts/bulk` with reason `bulk_update`, adding
+library questions in bulk with reason `questions_added`, and applying a case template
+with reason `case_template_applied`, which resyncs `questions`, `tasks` and `playbook`)
+emit `incident:resync` for the affected scopes. `task` payloads include
+`evidence` refs with `missing` but `label: null`: labels depend on each
+reader's permissions, so clients read them over REST. The old client events
+`join_incident`, `leave_incident`, `cursor_move`, `typing_*` and
+`graph_node_moved` (and `user_joined`, `user_left`, `users_in_room`,
+`cursor_moved`, `user_typing`, `graph_node_position`) were removed earlier.
+
+### Revocation
+
+- Assignment removal, unlinking a team from an incident, linking the first team
+  (the incident stops being org-wide for team-scoped users) and TLP/team changes
+  evict every affected user who can no longer see the incident
+  (`incident:access_revoked` on `user_<id>`, sockets leave the incident rooms).
+- Archive and permanent delete send `incident:access_revoked`
+  `{incident_id, reason: 'archived'|'purged'}` to `incident_<id>` and close the
+  base and scope rooms (purge: `incident_purge` post-commit step `access_revoked`).
+- Removing a team member or deleting a team disconnects the affected users'
+  sockets; the client reconnects and rejoins with a fresh access check.
+
+---
+
+## Server-side API (`app/services/realtime.py`)
+
+- `emit_change(incident_id, entity, op, obj=None, id=None, data=None)` — after commit only.
+- `emit_resync(incident_id, scopes=None, reason='bulk')`
+- `emit_to_user(user_id, event, payload)`
+- `evict_user_from_incident(user_id, incident_id, reason=None)`
+- `disconnect_user_sockets(user_id)`, `notify_permissions_changed(user_ids)`
+- `close_incident_rooms(incident_id)` (archive / purge, after emitting `incident:access_revoked`)
+- `scope_for_resource_type(resource_type)`, `scopes_for_user(user)`, `register_entity(...)`
+- `get_emitter()` — the app `socketio` in the server; a write-only Redis emitter under the Flask CLI.
+
+Socket ids are tracked in Redis `ws:user_sids:<uid>`; presence in
+`rt:presence:<incident>` (entries older than 75 s are pruned on read).
+Cross-worker delivery uses the Socket.IO Redis message queue (`REDIS_URL`).
+
+## Optimistic concurrency
+
+Versioned rows expose `version`. Send `If-Match: "<version>"` (or the body key
+the endpoint documents, default `expected_version`) on PUT/PATCH/DELETE; a
+stale version returns `409 {error: 'conflict', current, current_version}`.
+Responses may carry `ETag: "<version>"`.
+
+Wired endpoints (If-Match is optional: without it the write is last-write-wins):
+
+| Entity | PUT/PATCH | DELETE | ETag on GET-one |
+|---|---|---|---|
+| incident | `PUT /incidents/<id>`, `PATCH /incidents/<id>/status` | — | `GET /incidents/<id>` |
+| timeline_event | `PUT .../timeline/<id>` | yes | — |
+| task | `PUT .../tasks/<id>` | yes | `GET .../tasks/<id>` |
+| case_note | `PUT .../case-notes/<id>` | yes | `GET .../case-notes/<id>` |
+| host, account | `PUT .../hosts/<id>`, `PUT .../accounts/<id>` | yes | `GET .../accounts/<id>` |
+| network_ioc, host_ioc, malware | `PUT .../network-iocs/<id>`, `.../host-iocs/<id>`, `.../malware/<id>` | yes | — |
+| graph_node, graph_edge | `PUT .../attack-graph/nodes/<id>`, `.../edges/<id>` | yes | — |
+| playbook (incident instance) | `PUT .../playbook/advance`, `PUT .../playbook/task` | — | `GET .../playbook` |
+| question | `PUT .../questions/<id>`, `PUT .../questions/<id>/leads` | archive (`DELETE`, emitted as `deleted`) | `GET .../questions/<id>` |
+| case template (org) | `PUT /case-templates/<id>` (the template revision is `version`) | yes | `GET /case-templates/<id>` |
+
+Update responses carry the new `ETag`. A concurrent writer that commits between
+the check and the commit also yields the 409 (SQLAlchemy `version_id_col`).

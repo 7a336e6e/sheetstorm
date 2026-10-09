@@ -3,9 +3,10 @@ from sqlalchemy import Column, String, Text, Integer, Boolean, DateTime, Foreign
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
+from app.models.provenance import ProvenanceMixin
 
 
-class TimelineEvent(BaseModel):
+class TimelineEvent(ProvenanceMixin, BaseModel):
     """Timeline event model for incident chronology."""
     __tablename__ = 'timeline_events'
 
@@ -32,11 +33,15 @@ class TimelineEvent(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='timeline_events')
     host = relationship('CompromisedHost', back_populates='timeline_events', foreign_keys=[host_id])
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
     host_indicators = relationship('HostBasedIndicator', back_populates='source_event', lazy='dynamic')
 
     CONFIDENCE_LEVELS = ['low', 'medium', 'high', 'certain']
@@ -344,6 +349,7 @@ class TimelineEvent(BaseModel):
         data = super().to_dict()
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
         data['host'] = self.host.to_dict() if self.host else None
+        data.update(self.provenance_to_dict())
         # Keep hostname for backwards compatibility
         if not data.get('hostname') and self.host:
             data['hostname'] = self.host.hostname

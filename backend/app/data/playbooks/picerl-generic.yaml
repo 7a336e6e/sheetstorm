@@ -1,0 +1,65 @@
+# Built-in playbook: generic PICERL incident response (SheetStorm, MIT).
+# Same definition schema as org playbooks; validated by
+# services/playbook_service.validate_definition at load time.
+# No action sets auto_run: built-ins never run actions (or send data to an AI
+# provider) on their own.
+schema: sheetstorm-playbook
+key: picerl-generic
+name: Generic incident response (PICERL)
+description: Phase-gated checklist for an incident of any type, following preparation, identification, containment, eradication, recovery and lessons learned.
+incident_type: generic
+metadata:
+  framework: NIST SP 800-61r3 / SANS PICERL
+  note: NIST SP 800-61r3 maps response to CSF 2.0 functions; the phases here stay PICERL 1-6, as in the SheetStorm incident model.
+  references:
+    - https://csrc.nist.gov/pubs/sp/800/61/r3/final
+    - https://www.sans.org/white-papers/33901/
+definition:
+  phases:
+    - phase: 1
+      name: Preparation
+      tasks:
+        - {title: "Open the case, assign a lead responder and record the incident scope", owner_role: lead}
+        - {title: "Confirm the communication channel and who has authority to approve containment", owner_role: lead}
+        - {title: "Set the TLP and the need-to-know list for this incident", owner_role: lead}
+        - {title: "Start evidence handling - record who collects what, with hashes", owner_role: forensics}
+    - phase: 2
+      name: Identification
+      tasks:
+        - {title: "Validate the detection and record the first known malicious activity", owner_role: analyst}
+        - {title: "Build the initial timeline from available logs", owner_role: analyst}
+        - {title: "List affected hosts, accounts and data", owner_role: analyst}
+        - {title: "Collect volatile data before any containment that could destroy it", owner_role: forensics}
+        - {title: "Extract indicators of compromise and enrich them", owner_role: analyst}
+      actions:
+        - {key: enrich-iocs, type: enrich_iocs, name: "Enrich network IOCs", config: {}, auto_run: false}
+        - {key: suggest-mitre, type: suggest_mitre, name: "Suggest MITRE ATT&CK mappings for timeline events", config: {}, auto_run: false}
+    - phase: 3
+      name: Containment
+      tasks:
+        - {title: "Decide the containment strategy and record the decision and who approved it", owner_role: lead}
+        - {title: "Isolate affected hosts or block attacker infrastructure", owner_role: responder}
+        - {title: "Disable or reset compromised accounts and revoke sessions and tokens", owner_role: responder}
+        - {title: "Check that containment holds - confirm no new attacker activity", owner_role: analyst}
+    - phase: 4
+      name: Eradication
+      tasks:
+        - {title: "Remove persistence mechanisms and attacker tooling", owner_role: responder}
+        - {title: "Rebuild or reimage systems that cannot be trusted", owner_role: it}
+        - {title: "Close the exploited weakness (patch, configuration, access)", owner_role: it}
+        - {title: "Sweep the environment for every known indicator", owner_role: analyst}
+    - phase: 5
+      name: Recovery
+      tasks:
+        - {title: "Restore services in priority order from known-good sources", owner_role: it}
+        - {title: "Monitor closely for return of the attacker for an agreed period", owner_role: analyst}
+        - {title: "Confirm with business owners that services are back to normal", owner_role: lead}
+    - phase: 6
+      name: Lessons Learned
+      tasks:
+        - {title: "Hold the post-incident review and record what worked and what did not", owner_role: lead}
+        - {title: "Create improvement actions with owners and due dates", owner_role: lead}
+        - {title: "Complete notification and reporting obligations", owner_role: lead}
+        - {title: "Update detections, playbooks and runbooks", owner_role: analyst}
+      actions:
+        - {key: executive-summary, type: generate_summary, name: "Generate executive summary", config: {report_type: executive}, auto_run: false}

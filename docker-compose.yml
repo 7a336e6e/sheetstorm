@@ -39,7 +39,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sheetstorm-backend
-    environment:
+    # Anchored so the `jobs` service runs with exactly the same settings.
+    environment: &backend-env
       DATABASE_URL: postgresql://${POSTGRES_USER:-sheetstorm}:${POSTGRES_PASSWORD:-changeme}@database:5432/${POSTGRES_DB:-sheetstorm}
       REDIS_URL: redis://redis:6379/0
       EVENTLET_NO_GREENDNS: 1
@@ -50,6 +51,9 @@ services:
       # HMAC key for chain-of-custody signatures (kept separate from SECRET_KEY
       # so rotating SECRET_KEY does not invalidate custody records).
       CUSTODY_SIGNING_KEY: ${CUSTODY_SIGNING_KEY:-}
+      TSA_URL: ${TSA_URL:-}
+      TSA_TIMEOUT_SECONDS: ${TSA_TIMEOUT_SECONDS:-10}
+      TSA_MAX_RESPONSE_BYTES: ${TSA_MAX_RESPONSE_BYTES:-65536}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -86,8 +90,31 @@ services:
       IOC_AUTO_ENRICH: ${IOC_AUTO_ENRICH:-false}
       JWT_REFRESH_GRACE_SECONDS: ${JWT_REFRESH_GRACE_SECONDS:-30}
       RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-600 per minute}
+      RATE_LIMIT_SETTINGS_LOCKED: ${RATE_LIMIT_SETTINGS_LOCKED:-false}
+      # Login lockout after N bad passwords/MFA codes (3..20) for M minutes (1..1440).
+      LOGIN_LOCKOUT_THRESHOLD: ${LOGIN_LOCKOUT_THRESHOLD:-10}
+      LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+      # Lifetime of admin-issued password reset links, in hours (1..72).
+      PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
+      # Audit log hash chain key (HMAC). Empty: falls back to SECRET_KEY with a
+      # startup warning. PREVIOUS_KEYS (comma list) keeps rows signed with
+      # rotated keys verifiable.
+      AUDIT_CHAIN_KEY: ${AUDIT_CHAIN_KEY:-}
+      AUDIT_CHAIN_PREVIOUS_KEYS: ${AUDIT_CHAIN_PREVIOUS_KEYS:-}
+      AUDIT_EXPORT_MAX_ROWS: ${AUDIT_EXPORT_MAX_ROWS:-100000}
+      AUDIT_PURGE_BATCH_SIZE: ${AUDIT_PURGE_BATCH_SIZE:-10000}
+      # API key hash pepper (openssl rand -hex 32). Empty: derived from
+      # SECRET_KEY with a startup warning.
+      API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      API_KEY_TOKEN_TTL_MINUTES: ${API_KEY_TOKEN_TTL_MINUTES:-15}
+      # Build metadata shown to platform admins in the system status.
+      APP_VERSION: ${APP_VERSION:-}
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      # Local evidence storage directory; must match the artifacts_data mount.
+      LOCAL_ARTIFACT_DIR: ${LOCAL_ARTIFACT_DIR:-/app/artifacts}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sheetstorm.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      # Empty: the seed generates a random admin password and prints it once.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -103,6 +130,30 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
+
+  # Periodic maintenance (`flask sheetstorm run-jobs`: retention, reminders,
+  # session pruning, ...). Same image and settings as the backend; no ports,
+  # no migrations (entrypoint bypassed: it starts after the backend is healthy).
+  # Without this service, run the command from host cron instead.
+  jobs:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sheetstorm-jobs
+    entrypoint: []
+    command: ["sh", "-c", "while true; do flask sheetstorm run-jobs; sleep \"$${JOBS_INTERVAL_SECONDS:-300}\"; done"]
+    environment:
+      <<: *backend-env
+      FLASK_APP: app:create_app
+      JOBS_INTERVAL_SECONDS: ${JOBS_INTERVAL_SECONDS:-300}
+    volumes:
+      - artifacts_data:/app/artifacts
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:

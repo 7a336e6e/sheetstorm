@@ -1,5 +1,5 @@
 """Report model"""
-from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy import BigInteger, Column, String, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -19,6 +19,10 @@ class Report(BaseModel):
     sections = Column(JSONB, default=list)
     generated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     is_archived = Column(Boolean, default=False, server_default='false')
+    # Immutable-snapshot metadata (filled by report snapshot storage).
+    sha256 = Column(String(64))
+    size_bytes = Column(BigInteger)
+    storage_type = Column(String(20))
 
     # Relationships
     incident = relationship('Incident', back_populates='reports')
@@ -33,6 +37,11 @@ class Report(BaseModel):
     def to_dict(self):
         """Convert to dictionary."""
         data = super().to_dict()
+        # The storage location is internal; clients see whether the report is
+        # an immutable stored snapshot and its hash / size.
+        data.pop('storage_path', None)
+        data.pop('storage_type', None)
+        data['is_snapshot'] = bool(self.storage_path and self.sha256)
         data['generator'] = {'id': str(self.generator.id), 'name': self.generator.name} if self.generator else None
         data['incident'] = {
             'id': str(self.incident.id),

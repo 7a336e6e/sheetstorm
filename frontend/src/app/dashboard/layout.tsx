@@ -9,6 +9,10 @@ import { useState } from 'react'
 import { Sidebar } from '@/components/layout/sidebar'
 import { useAuth } from '@/components/providers/auth-provider'
 import { SocketProvider } from '@/components/providers/socket-provider'
+import { ConflictProvider } from '@/components/providers/conflict-provider'
+import { PrimaryActionProvider } from '@/lib/primary-action'
+import { CommandPalette } from '@/components/layout/command-palette'
+import { ShortcutsHelp } from '@/components/layout/shortcuts-help'
 import { Loader2, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -32,6 +36,8 @@ export default function DashboardLayout({
 
   return (
     <SocketProvider>
+      <ConflictProvider>
+      <PrimaryActionProvider>
       <div className="flex h-screen bg-background">
         {/* Mobile top bar */}
         <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-card px-4 md:hidden">
@@ -70,6 +76,12 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+
+      {/* Global keyboard layer: mod+K palette, `?` help, g-chords, `n` */}
+      <CommandPalette />
+      <ShortcutsHelp />
+      </PrimaryActionProvider>
+      </ConflictProvider>
     </SocketProvider>
   )
 }

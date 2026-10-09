@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **108 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
+- **143 tools** covering the full SheetStorm IR workflow (incl. playbooks, investigative questions, case templates, response metrics and improvement actions, legal hold, custody export, CSV/STIX export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
@@ -55,11 +55,16 @@ Edit `.env`:
 # SheetStorm backend URL (no trailing slash)
 SHEETSTORM_API_URL=https://your-sheetstorm-instance.com/api/v1
 
-# Option A: Username/password (will auto-login)
-SHEETSTORM_USERNAME=admin@sheetstorm.local
-SHEETSTORM_PASSWORD=changeme
+# Option A (recommended): a scoped API key, created in SheetStorm under your
+# profile (or Settings > API Keys for a service account). Works with MFA.
+# Prefer passing it via the client config's env (see step 4) over this file.
+# SHEETSTORM_API_KEY=ssk_xxxxxxxxxxxx_...
 
-# Option B: Pre-existing API token (skip login)
+# Option B (legacy): Username/password auto-login (no MFA support)
+# SHEETSTORM_USERNAME=you@example.com
+# SHEETSTORM_PASSWORD=your-password
+
+# Option C (legacy): Pre-existing JWT (expires; no automatic renewal)
 # SHEETSTORM_API_TOKEN=your-jwt-token-here
 
 # Optional
@@ -92,15 +97,27 @@ Add to your Claude Desktop config file:
       "args": ["-m", "sheetstorm_bridge"],
       "env": {
         "SHEETSTORM_API_URL": "https://your-sheetstorm-instance.com/api/v1",
-        "SHEETSTORM_USERNAME": "admin@sheetstorm.local",
-        "SHEETSTORM_PASSWORD": "changeme"
+        "SHEETSTORM_API_KEY": "${env:SHEETSTORM_API_KEY}"
       }
     }
   }
 }
 ```
 
-> **Tip**: You can pass credentials via `env` in the config (as shown above) instead of using a `.env` file. The `env` block takes precedence.
+> **Tip**: You can pass credentials via `env` in the config (as shown above) instead of using a `.env` file. The `env` block takes precedence. Reference the key from your environment or secret store (`${env:SHEETSTORM_API_KEY}`, where your client supports it); never paste the key into a config file that is committed or synced.
+
+#### How API keys work
+
+Precedence: `SHEETSTORM_API_KEY` > `SHEETSTORM_API_TOKEN` > username/password.
+Give the key only the scopes the assistant needs (e.g. `incidents:read`,
+`timeline:read`, `timeline:create`); its effective permissions are always
+your own permissions intersected with those scopes. The bridge exchanges the
+key at `POST /api/v1/auth/token` for a 15-minute token, re-exchanges shortly
+before expiry and once after a 401, and stops with a clear error when the key
+is revoked, expired or disabled for your organization. The key is never
+logged (only its `ssk_xxxxxxxxxxxx` prefix). The `logout` tool only drops the
+current token; revoke the key itself in the SheetStorm UI. Keys cannot change
+passwords or MFA, manage keys, or open realtime (WebSocket) sessions.
 
 ### 5. Restart Claude Desktop
 
@@ -111,18 +128,19 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Category | Tools | Description |
 |----------|-------|-------------|
 | Auth | 2 | Get current user, logout |
-| Incidents | 9 | CRUD, status, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
+| Incidents | 10 | CRUD (milestones, lead, overview summary), status, dashboard stats, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
 | Assignments | 3 | Assign / unassign responders |
-| Timeline | 7 | Events (detection time, confidence), mark event as IOC, timeline MITRE lists |
-| Tasks | 6 | Tasks & investigative leads (type, outcome, direction, evidence refs), comments |
-| Assets | 9 | Hosts (triage / acquisition status), accounts (update, delete, single-account reveal) |
-| IOCs | 12 | Network IOCs, host IOCs, malware |
+| Timeline | 7 | Events (detection time, confidence, record provenance with raw timestamp + time zone), mark event as IOC, timeline MITRE lists |
+| Tasks | 7 | Tasks & investigative leads (type, outcome, direction, evidence refs with server-resolved labels), lead queue (`sheetstorm_list_leads`), comments |
+| Assets | 10 | Hosts (triage / acquisition status and filters, bulk triage via `sheetstorm_bulk_update_hosts`), accounts (update, delete, single-account reveal) |
+| IOCs | 12 | Network IOCs, host IOCs, malware (add/update take the provenance parameters) |
 | Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
+| Evidence | 5 | Evidence register (list, get, register items with tool-reported hashes), custody check-out / transfer / check-in (requires `attested=true`), ledger verification. Requests carry `X-SheetStorm-Client: mcp-bridge` |
 | Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |
 | Case Notes | 5 | Investigator notes |
 | Playbooks | 7 | Templates, activate, phase advance, run actions, tick tasks |
 | Reports | 3 | PDF and AI-generated summaries |
-| Admin | 9 | Users, notifications, audit logs, health |
+| Admin | 21 | Users, roles, permissions, invites (one-time join links), disable/enable, force logout, unlock, user activity, notifications, audit logs, health, system status, security policy (read-only). No password/MFA resets, policy or session changes over MCP |
 | Threat Intel | 7 | VirusTotal, MISP, CVE, reputation |
 | Knowledge Base | 6 | LOLBAS, event IDs, D3FEND, MITRE ATT&CK |
 | Advanced | 4 | Search, correlate, STIX export, bulk enrich |
@@ -146,18 +164,26 @@ mcp-bridge/
         ├── auth.py
         ├── incidents.py
         ├── timeline.py
+        ├── assignments.py
         ├── tasks.py
         ├── assets.py
         ├── iocs.py
         ├── artifacts.py
+        ├── evidence.py
         ├── attack_graph.py
         ├── case_notes.py
         ├── reports.py
+        ├── playbooks.py
+        ├── questions.py
+        ├── case_templates.py
+        ├── metrics.py
+        ├── decisions.py  # decision log & response actions (no approve/authorize)
         ├── admin.py
         ├── threat_intel.py
         ├── knowledge_base.py
         ├── advanced_analysis.py
         ├── defang.py
+        ├── _provenance.py  # shared provenance parameters (timeline, IOCs)
         ├── resources.py    # MCP resources
         └── prompts.py      # MCP prompts
 ```
@@ -185,7 +211,9 @@ If you see `No module named 'mcp'` or other import errors, the dependencies didn
 
 `mcp` must be a 1.x release (`>=1.30,<2`): mcp 2.x removed `mcp.server.fastmcp`.
 
-**"No credentials configured"**: Set either `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
+**"No credentials configured"**: Set `SHEETSTORM_API_KEY` (recommended), or the legacy `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
+
+**"API key ssk_… rejected (revoked, expired or disabled)"**: Create or rotate a key in SheetStorm; check that API keys are enabled for your organization and that the key has not expired. A 403 `password_change_required` means the key owner must change their password in the web UI first.
 
 **Authentication failures**: Verify your credentials work by logging into the SheetStorm web UI. Check the API URL includes `/api/v1`.
 

@@ -1,12 +1,10 @@
 "use client"
 
-import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { TableEmpty } from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -23,134 +21,191 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
+import { DataTable, FilterSelect, type DataTableColumn } from '@/components/ui/data-table'
+import { EntityPicker, UserPicker } from '@/components/ui/entity-picker'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission, usePermissionCheck } from '@/components/auth/permission-gate'
+import { useAllPages, usePaginatedQuery } from '@/hooks/use-paginated-query'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  Plus,
   CheckCircle2,
   Circle,
   Clock,
   Calendar,
   User,
-  Server,
-  CheckSquare,
-  Key,
-  Fingerprint,
-  Bug,
   Edit2,
   Link2,
   X,
   MessageSquare,
   Trash2,
   Send,
-  Search,
-  Filter,
+  Loader2,
 } from 'lucide-react'
 import { PHASE_INFO } from '@/lib/design-tokens'
-import { formatDateTime, formatRelativeTime } from '@/lib/utils'
+import { cn, formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError } from '@/lib/errors'
 import { useAuthStore } from '@/lib/store'
-import type { Task, CompromisedHost, CompromisedAccount, MalwareTool, HostBasedIndicator, User as UserType } from '@/types'
+import type { DfirTask, TaskEvidence, VersionedRow } from '@/types'
+import { FocusNotice, type IncidentTabBaseProps } from '../table-helpers'
+import {
+  EVIDENCE_TYPES,
+  EvidenceChips,
+  LeadOutcomeBadge,
+  LeadsView,
+  OUTCOME_OPTIONS,
+  evidenceLabel,
+  taskEvidence,
+  useOpenEvidence,
+} from './LeadsView'
 
-// ─── Tasks Tab (self-contained) ──────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────
 
-interface TasksTabProps {
-  incidentId: string
-  tasks: Task[]
-  hosts: CompromisedHost[]
-  onTasksChange: (tasks: Task[]) => void
+interface TaskComment {
+  id: string
+  content: string
+  author?: { id: string; name: string } | null
+  created_at: string
+  version?: number
 }
 
-export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabProps) {
-  const { user } = useAuthStore()
-  const isAdmin = user?.roles?.includes('Administrator') ?? false
-  const canWrite = user?.permissions?.includes('tasks:update') ?? false
+type TaskRow = VersionedRow<DfirTask> & { comments?: TaskComment[] }
+
+interface TaskForm {
+  title: string
+  description: string
+  priority: string
+  task_type: string
+  lead_outcome: string
+  investigation_direction: string
+  assignee_id: string
+  due_date: string
+  phase: string
+  /** Linked evidence (labels for display only; only refs are sent). */
+  evidence: TaskEvidence[]
+}
+
+const EMPTY_FORM: TaskForm = {
+  title: '', description: '', priority: 'medium',
+  task_type: 'action_item', lead_outcome: '', investigation_direction: '',
+  assignee_id: '', due_date: '', phase: '', evidence: [],
+}
+
+const TASK_TYPE_OPTIONS = [
+  { value: 'action_item', label: 'Action Item' },
+  { value: 'investigative_lead', label: 'Investigative Lead' },
+  { value: 'verification', label: 'Verification' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'reporting', label: 'Reporting' },
+]
+
+/** Evidence the link picker offers: list endpoint + server-searched labels. */
+interface LinkSource {
+  type: string
+  path: string
+  label: (item: Record<string, unknown>) => string
+  description?: (item: Record<string, unknown>) => string | undefined
+}
+
+const str = (v: unknown) => (v === null || v === undefined ? '' : String(v))
+
+const LINK_SOURCES: LinkSource[] = [
+  { type: 'host', path: 'hosts', label: (i) => str(i.hostname), description: (i) => str(i.ip_address) || undefined },
+  { type: 'account', path: 'accounts', label: (i) => (i.domain ? `${str(i.domain)}\\${str(i.account_name)}` : str(i.account_name)) },
+  { type: 'malware', path: 'malware', label: (i) => str(i.file_name) },
+  { type: 'host_ioc', path: 'host-iocs', label: (i) => `${str(i.artifact_type)}: ${str(i.artifact_value).slice(0, 60)}` },
+  { type: 'network_ioc', path: 'network-iocs', label: (i) => str(i.dns_ip) },
+  { type: 'timeline_event', path: 'timeline', label: (i) => str(i.activity).slice(0, 80), description: (i) => str(i.timestamp) || undefined },
+  { type: 'artifact', path: 'artifacts', label: (i) => str(i.original_filename || i.filename) },
+]
+
+/** `?tasks.view=leads` switches the tab to the lead queue (deep-linkable). */
+export const TASKS_VIEW_PARAM = 'tasks.view'
+
+const STATUS_OPTIONS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+const PRIORITY_OPTIONS = [
+  { value: 'critical', label: 'Critical' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+]
+
+const priorityColors: Record<string, string> = {
+  critical: 'border-red-500/20 bg-red-500/10 text-red-400',
+  high: 'border-amber-500/20 bg-amber-500/10 text-amber-400',
+  medium: 'border-yellow-500/20 bg-yellow-500/10 text-yellow-400',
+  low: 'border-teal-500/20 bg-teal-500/10 text-teal-400',
+}
+
+const statusInfo: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+  pending: { icon: <Circle className="w-5 h-5" />, color: 'text-muted-foreground', label: 'Pending' },
+  in_progress: { icon: <Clock className="w-5 h-5" />, color: 'text-blue-400', label: 'In Progress' },
+  completed: { icon: <CheckCircle2 className="w-5 h-5" />, color: 'text-emerald-400', label: 'Completed' },
+  blocked: { icon: <Circle className="w-5 h-5" />, color: 'text-red-400', label: 'Blocked' },
+  cancelled: { icon: <Circle className="w-5 h-5" />, color: 'text-muted-foreground', label: 'Cancelled' },
+}
+
+// ─── Tasks Tab ───────────────────────────────────────────────────────────
+
+export function TasksTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
+  const confirm = useConfirm()
+  const userId = useAuthStore((s) => s.user?.id)
+  const canCreate = usePermission('tasks:create')
+  const canUpdate = usePermission('tasks:update')
+  const canDeleteAny = usePermission('tasks:delete')
+
+  const endpoint = `/incidents/${incidentId}/tasks`
+  const leadsView = useSearchParams()?.get(TASKS_VIEW_PARAM) === 'leads'
+  const query = usePaginatedQuery<TaskRow>({
+    endpoint,
+    urlKey: 'tasks',
+    focus: leadsView ? null : focusRowId,
+    live: 'task',
+    enabled: !leadsView,
+  })
 
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false)
-  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [editingTask, setEditingTask] = useState<TaskRow | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Task form
-  const [taskForm, setTaskForm] = useState<{
-    title: string; description: string; priority: string;
-    task_type: string; lead_outcome: string;
-    assignee_id: string; due_date: string; phase: string;
-    linked_entities: { type: string; id: string; label: string }[];
-  }>({
-    title: '',
-    description: '',
-    priority: 'medium',
-    task_type: 'action_item',
-    lead_outcome: '',
-    assignee_id: '',
-    due_date: '',
-    phase: '',
-    linked_entities: [],
-  })
-
-  // Entity data for task linking
-  const [taskEntityData, setTaskEntityData] = useState<{
-    accounts: CompromisedAccount[]
-    malware: MalwareTool[]
-    hostIndicators: HostBasedIndicator[]
-    users: UserType[]
-  }>({ accounts: [], malware: [], hostIndicators: [], users: [] })
+  const [taskForm, setTaskForm] = useState<TaskForm>(EMPTY_FORM)
   const [linkEntityType, setLinkEntityType] = useState('')
+  const openEvidence = useOpenEvidence()
 
-  // Filters
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [priorityFilter, setPriorityFilter] = useState<string>('all')
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
-
-  // Comments
-  const [taskComments, setTaskComments] = useState<Record<string, any[]>>({})
-  const [expandedTaskComments, setExpandedTaskComments] = useState<string | null>(null)
-  const [newComment, setNewComment] = useState('')
-  const [isAddingComment, setIsAddingComment] = useState(false)
+  // ─── View: all tasks | leads (URL `tasks.view`) ────────────
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const view = searchParams?.get(TASKS_VIEW_PARAM) === 'leads' ? 'leads' : 'all'
+  const setView = (next: 'all' | 'leads') => {
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    if (next === 'leads') params.set(TASKS_VIEW_PARAM, 'leads')
+    else params.delete(TASKS_VIEW_PARAM)
+    params.delete('row')
+    const qs = params.toString()
+    router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false })
+  }
 
   // ─── Handlers ──────────────────────────────────────────────
 
-  const refreshTasks = async () => {
-    try {
-      const res = await api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`)
-      onTasksChange(res.items || [])
-    } catch (error) {
-      console.error('Failed to refresh tasks:', error)
-    }
-  }
-
-  const loadTaskEntityData = async () => {
-    try {
-      const [accountsRes, malwareRes, hostIocsRes, usersRes] = await Promise.all([
-        api.get<{ items: CompromisedAccount[] }>(`/incidents/${incidentId}/accounts`),
-        api.get<{ items: MalwareTool[] }>(`/incidents/${incidentId}/malware`),
-        api.get<{ items: HostBasedIndicator[] }>(`/incidents/${incidentId}/host-iocs`),
-        api.get<{ items: UserType[] }>('/users').catch(() => ({ items: [] as UserType[] })),
-      ])
-      setTaskEntityData({
-        accounts: accountsRes.items || [],
-        malware: malwareRes.items || [],
-        hostIndicators: hostIocsRes.items || [],
-        users: usersRes.items || [],
-      })
-    } catch (error) {
-      console.error('Failed to load entity data:', error)
-    }
-  }
-
   const handleOpenTaskModal = () => {
     setEditingTask(null)
-    setTaskForm({
-      title: '', description: '', priority: 'medium',
-      task_type: 'action_item', lead_outcome: '',
-      assignee_id: '', due_date: '', phase: '', linked_entities: [],
-    })
+    setTaskForm(EMPTY_FORM)
     setLinkEntityType('')
-    loadTaskEntityData()
     setShowTaskModal(true)
   }
 
-  const handleOpenEditTask = (task: Task) => {
+  const handleOpenEditTask = (task: TaskRow) => {
     setEditingTask(task)
     setTaskForm({
       title: task.title,
@@ -158,29 +213,31 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
       priority: task.priority,
       task_type: task.task_type || 'action_item',
       lead_outcome: task.lead_outcome || '',
+      investigation_direction: task.investigation_direction || '',
       assignee_id: task.assignee?.id || '',
       due_date: task.due_date || '',
       phase: task.phase?.toString() || '',
-      linked_entities: task.extra_data?.linked_entities || [],
+      evidence: taskEvidence(task),
     })
     setLinkEntityType('')
-    loadTaskEntityData()
     setShowTaskModal(true)
   }
 
-  const addLinkedEntity = (type: string, id: string, label: string) => {
-    if (taskForm.linked_entities.some((e) => e.id === id)) return
+  const addEvidence = (evidence_type: string, evidence_id: string, label: string) => {
+    if (taskForm.evidence.some((e) => e.evidence_type === evidence_type && e.evidence_id === evidence_id)) return
     setTaskForm({
       ...taskForm,
-      linked_entities: [...taskForm.linked_entities, { type, id, label }],
+      evidence: [...taskForm.evidence, { evidence_type, evidence_id, label, missing: false }],
     })
     setLinkEntityType('')
   }
 
-  const removeLinkedEntity = (id: string) => {
+  const removeEvidence = (e: TaskEvidence) => {
     setTaskForm({
       ...taskForm,
-      linked_entities: taskForm.linked_entities.filter((e) => e.id !== id),
+      evidence: taskForm.evidence.filter(
+        (x) => !(x.evidence_type === e.evidence_type && x.evidence_id === e.evidence_id)
+      ),
     })
   }
 
@@ -194,367 +251,382 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
         priority: taskForm.priority,
         task_type: taskForm.task_type,
         lead_outcome: taskForm.task_type === 'investigative_lead' ? (taskForm.lead_outcome || null) : null,
+        investigation_direction: taskForm.task_type === 'investigative_lead'
+          ? (taskForm.investigation_direction.trim() || null)
+          : (editingTask?.investigation_direction ?? null),
         assignee_id: taskForm.assignee_id || null,
         due_date: taskForm.due_date || null,
         phase: taskForm.phase ? parseInt(taskForm.phase) : null,
-        extra_data: {
-          linked_entities: taskForm.linked_entities.length > 0 ? taskForm.linked_entities : undefined,
-        },
+        // Server-validated refs; labels are resolved by the server on read.
+        evidence_refs: taskForm.evidence.map(({ evidence_type, evidence_id }) => ({ evidence_type, evidence_id })),
       }
       if (editingTask) {
-        await api.put(`/incidents/${incidentId}/tasks/${editingTask.id}`, payload)
+        await api.put(`${endpoint}/${editingTask.id}`, payload, { ifMatch: editingTask.version })
       } else {
-        await api.post(`/incidents/${incidentId}/tasks`, payload)
+        await api.post(endpoint, payload)
       }
-      await refreshTasks()
+      invalidate(endpoint)
       setShowTaskModal(false)
       setEditingTask(null)
     } catch (error) {
-      console.error('Failed to save task:', error)
+      notifyError(error, editingTask ? 'save the task' : 'add the task')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleDeleteTask = async (taskId: string) => {
+  const handleDeleteTask = async (task: TaskRow) => {
+    if (!(await confirmDelete(confirm, 'task', task.title))) return
     try {
-      await api.delete(`/incidents/${incidentId}/tasks/${taskId}`)
-      onTasksChange(tasks.filter(t => t.id !== taskId))
+      await api.delete(`${endpoint}/${task.id}`, undefined, { ifMatch: task.version })
+      invalidate(endpoint)
     } catch (error) {
-      console.error('Failed to delete task:', error)
+      notifyError(error, 'delete the task')
     }
   }
 
-  const handleToggleTaskStatus = async (task: Task) => {
+  const handleToggleTaskStatus = async (task: TaskRow) => {
     const nextStatus = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed'
     try {
-      await api.put(`/incidents/${incidentId}/tasks/${task.id}`, { status: nextStatus })
-      onTasksChange(tasks.map(t => t.id === task.id ? { ...t, status: nextStatus } : t))
+      await api.put(`${endpoint}/${task.id}`, { status: nextStatus }, { ifMatch: task.version })
+      invalidate(endpoint)
     } catch (error) {
-      console.error('Failed to toggle task status:', error)
+      notifyError(error, 'change the task status')
     }
   }
 
-  const handleToggleComments = async (taskId: string) => {
-    if (expandedTaskComments === taskId) {
-      setExpandedTaskComments(null)
-      return
-    }
-    setExpandedTaskComments(taskId)
-    if (!taskComments[taskId]) {
-      try {
-        const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
-        setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
-      } catch (error) {
-        console.error('Failed to load comments:', error)
-      }
-    }
-  }
+  // ─── Columns ───────────────────────────────────────────────
 
-  const handleAddComment = async (taskId: string) => {
-    if (!newComment.trim()) return
-    setIsAddingComment(true)
-    try {
-      await api.post(`/incidents/${incidentId}/tasks/${taskId}/comments`, { content: newComment })
-      const res = await api.get<{ items: any[] }>(`/incidents/${incidentId}/tasks/${taskId}/comments`)
-      setTaskComments(prev => ({ ...prev, [taskId]: res.items || [] }))
-      setNewComment('')
-    } catch (error) {
-      console.error('Failed to add comment:', error)
-    } finally {
-      setIsAddingComment(false)
-    }
-  }
-
-  const handleDeleteComment = async (taskId: string, commentId: string) => {
-    try {
-      await api.delete(`/incidents/${incidentId}/tasks/${taskId}/comments/${commentId}`)
-      setTaskComments(prev => ({
-        ...prev,
-        [taskId]: (prev[taskId] || []).filter(c => c.id !== commentId),
-      }))
-    } catch (error) {
-      console.error('Failed to delete comment:', error)
-    }
-  }
-
-  // ─── Task priority & status helpers ────────────────────────
-
-  const priorityColors: Record<string, string> = {
-    critical: 'border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-400',
-    high: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-    medium: 'border-yellow-500/20 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400',
-    low: 'border-teal-500/20 bg-teal-500/10 text-teal-700 dark:text-teal-400',
-  }
-
-  const statusInfo: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-    pending: { icon: <Circle className="w-5 h-5" />, color: 'text-muted-foreground', label: 'Pending' },
-    in_progress: { icon: <Clock className="w-5 h-5" />, color: 'text-blue-600 dark:text-blue-400', label: 'In Progress' },
-    completed: { icon: <CheckCircle2 className="w-5 h-5" />, color: 'text-emerald-600 dark:text-emerald-400', label: 'Completed' },
-  }
-
-  const entityIcons: Record<string, React.ReactNode> = {
-    host: <Server className="w-3 h-3" />,
-    account: <Key className="w-3 h-3" />,
-    malware: <Bug className="w-3 h-3" />,
-    host_indicator: <Fingerprint className="w-3 h-3" />,
-  }
-
-  // ─── Filtering ─────────────────────────────────────────────
-
-  const uniqueAssignees = Array.from(
-    new Map(tasks.filter(t => t.assignee).map(t => [t.assignee!.id, t.assignee!])).values()
-  )
-
-  const hasActiveFilters = search || statusFilter !== 'all' || priorityFilter !== 'all' || assigneeFilter !== 'all'
-
-  const filteredTasks = tasks.filter(t => {
-    if (statusFilter !== 'all' && t.status !== statusFilter) return false
-    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false
-    if (assigneeFilter !== 'all') {
-      if (assigneeFilter === 'unassigned' && t.assignee) return false
-      if (assigneeFilter !== 'unassigned' && t.assignee?.id !== assigneeFilter) return false
-    }
-    if (search) {
-      const q = search.toLowerCase()
-      return t.title.toLowerCase().includes(q) || (t.description?.toLowerCase().includes(q) ?? false)
-    }
-    return true
-  })
+  const columns: DataTableColumn<TaskRow>[] = [
+    {
+      id: 'toggle',
+      header: <span className="sr-only">Toggle status</span>,
+      className: 'w-10 px-2',
+      cell: (task) => {
+        const st = statusInfo[task.status] || statusInfo.pending
+        return canUpdate ? (
+          <button
+            type="button"
+            onClick={() => handleToggleTaskStatus(task)}
+            className={`${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
+            title={`Status: ${st.label} — Click to change`}
+            aria-label={`Change status of ${task.title} (now ${st.label})`}
+          >
+            {st.icon}
+          </button>
+        ) : (
+          <span className={st.color} title={`Status: ${st.label}`}>
+            {st.icon}
+          </span>
+        )
+      },
+    },
+    {
+      id: 'title',
+      header: 'Task',
+      sortKey: 'order_index',
+      cell: (task) => {
+        const evidence = taskEvidence(task)
+        const type = task.task_type || 'action_item'
+        return (
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                {task.title}
+              </span>
+              {type !== 'action_item' && (
+                <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                  {TASK_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type}
+                </Badge>
+              )}
+              {type === 'investigative_lead' && <LeadOutcomeBadge outcome={task.lead_outcome} />}
+            </div>
+            {task.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{task.description}</p>}
+            <EvidenceChips evidence={evidence} onOpen={openEvidence} className="mt-2" />
+          </div>
+        )
+      },
+    },
+    {
+      id: 'priority',
+      header: 'Priority',
+      sortKey: 'priority',
+      cell: (task) => (
+        <Badge className={`${priorityColors[task.priority] || ''} border text-[10px] px-1.5 py-0`}>
+          {task.priority}
+        </Badge>
+      ),
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      sortKey: 'status',
+      hideBelow: 'sm',
+      cell: (task) => {
+        const st = statusInfo[task.status] || statusInfo.pending
+        return (
+          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${st.color}`}>
+            {st.label}
+          </Badge>
+        )
+      },
+    },
+    {
+      id: 'assignee',
+      header: 'Assignee',
+      hideBelow: 'md',
+      cell: (task) =>
+        task.assignee ? (
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <User className="w-3 h-3" /> {task.assignee.name}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/60">Unassigned</span>
+        ),
+    },
+    {
+      id: 'due_date',
+      header: 'Due',
+      sortKey: 'due_date',
+      hideBelow: 'md',
+      cell: (task) =>
+        task.due_date ? (
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <Calendar className="w-3 h-3" /> <Timestamp value={task.due_date} seconds={false} />
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground/60">-</span>
+        ),
+    },
+    {
+      id: 'comments',
+      header: <MessageSquare className="h-3.5 w-3.5" aria-label="Comments" />,
+      hideBelow: 'lg',
+      className: 'w-12 text-xs text-muted-foreground tabular-nums',
+      cell: (task) => (task.comments?.length ? task.comments.length : ''),
+    },
+  ]
 
   // ─── Render ────────────────────────────────────────────────
 
   return (
     <>
       <div className="space-y-4">
-        {/* Filters & Action */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col lg:flex-row gap-4 justify-between">
-              <div className="flex flex-col lg:flex-row gap-4 flex-1">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search tasks..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="pl-10"
-                    variant="glass"
-                  />
-                </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[160px]">
-                    <Filter className="h-4 w-4 mr-2" />
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="blocked">Blocked</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-                  <SelectTrigger className="w-[160px]">
-                    <Filter className="h-4 w-4 mr-2" />
-                    <SelectValue placeholder="Priority" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Priorities</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="low">Low</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
-                  <SelectTrigger className="w-[160px]">
-                    <User className="h-4 w-4 mr-2" />
-                    <SelectValue placeholder="Assignee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Assignees</SelectItem>
-                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                    {uniqueAssignees.map(a => (
-                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {canWrite && (
-                <Button onClick={handleOpenTaskModal}>
-                  <Plus className="mr-2 h-4 w-4" /> Add Task
-                </Button>
+        <div role="group" aria-label="Tasks view" className="inline-flex h-8 items-center rounded-md border border-white/10 bg-slate-900 p-0.5 text-xs">
+          {(['all', 'leads'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+              className={cn(
+                'h-full rounded px-3 transition-colors',
+                view === v ? 'bg-white/10 text-foreground' : 'text-muted-foreground hover:text-foreground'
               )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Tasks List */}
-        {filteredTasks.length === 0 ? (
-          <Card>
-            <CardContent className="p-0">
-              <TableEmpty
-                title={hasActiveFilters ? 'No matching tasks' : 'No tasks yet'}
-                description={hasActiveFilters ? 'Try adjusting your search or filter criteria.' : 'Create tasks to track response actions, assignments, and progress for this incident.'}
-                icon={<CheckSquare className="w-8 h-8" />}
-                action={!hasActiveFilters && canWrite && (
-                  <Button size="sm" variant="outline" onClick={handleOpenTaskModal}>
-                    <Plus className="mr-2 h-3.5 w-3.5" /> Add Task
-                  </Button>
-                )}
-              />
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {filteredTasks.map(task => {
-                const linkedEntities = task.extra_data?.linked_entities
-                const st = statusInfo[task.status] || statusInfo.pending
-                const isExpanded = expandedTaskComments === task.id
-                const comments = taskComments[task.id] || []
-
-                return (
-                  <div key={task.id} className="rounded-xl bg-muted/50 border border-border p-4">
-                    <div className="flex gap-4">
-                      {canWrite ? (
-                        <button
-                          onClick={() => handleToggleTaskStatus(task)}
-                          className={`mt-0.5 ${st.color} hover:opacity-80 transition-opacity cursor-pointer`}
-                          title={`Status: ${st.label} — Click to change`}
-                        >
-                          {st.icon}
-                        </button>
-                      ) : (
-                        <span className={`mt-0.5 ${st.color}`} title={`Status: ${st.label}`}>
-                          {st.icon}
-                        </span>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className={`font-medium ${task.status === 'completed' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
-                            {task.title}
-                          </h4>
-                          <Badge className={`${priorityColors[task.priority] || ''} border text-[10px] px-1.5 py-0`}>
-                            {task.priority}
-                          </Badge>
-                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${st.color}`}>
-                            {st.label}
-                          </Badge>
-                        </div>
-                        {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                        <div className="flex items-center gap-3 mt-2 flex-wrap">
-                          {task.assignee && (
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <User className="w-3 h-3" /> {task.assignee.name}
-                            </span>
-                          )}
-                          {task.due_date && (
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Calendar className="w-3 h-3" /> {formatDateTime(task.due_date)}
-                            </span>
-                          )}
-                        </div>
-                        {linkedEntities && linkedEntities.length > 0 && (
-                          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                            <Link2 className="w-3 h-3 text-muted-foreground" />
-                            {linkedEntities.map((entity) => (
-                              <span key={entity.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                                {entityIcons[entity.type] || null}
-                                {entity.label}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-start gap-1 flex-shrink-0">
-                        <Button variant="ghost" size="sm" onClick={() => handleToggleComments(task.id)} title="Comments">
-                          <MessageSquare className="h-4 w-4" />
-                          {comments.length > 0 && <span className="ml-1 text-xs">{comments.length}</span>}
-                        </Button>
-                        {canWrite && (
-                          <Button variant="ghost" size="sm" onClick={() => handleOpenEditTask(task)} title="Edit">
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {isAdmin && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteTask(task.id)} className="text-destructive hover:text-destructive/80" title="Delete">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Expandable Comments */}
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-border ml-9">
-                        {comments.length === 0 ? (
-                          <p className="text-xs text-muted-foreground mb-2">No comments yet</p>
-                        ) : (
-                          <div className="space-y-2 mb-3">
-                            {comments.map((comment: any) => (
-                              <div key={comment.id} className="flex items-start gap-2 text-sm">
-                                <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-[10px] font-medium flex-shrink-0">
-                                  {comment.author?.name?.charAt(0) || '?'}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium text-foreground">{comment.author?.name || 'Unknown'}</span>
-                                    <span className="text-[10px] text-muted-foreground">{formatRelativeTime(comment.created_at)}</span>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-0.5">{comment.content}</p>
-                                </div>
-                                {isAdmin && (
-                                  <Button variant="ghost" size="sm" onClick={() => handleDeleteComment(task.id, comment.id)} className="h-6 w-6 p-0 text-destructive hover:text-destructive/80">
-                                    <X className="h-3 w-3" />
-                                  </Button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {canWrite && (
-                          <div className="flex items-center gap-2">
-                            <Input
-                              placeholder="Add a comment..."
-                              value={newComment}
-                              onChange={e => setNewComment(e.target.value)}
-                              className="text-xs h-8"
-                              onKeyDown={e => { if (e.key === 'Enter') handleAddComment(task.id) }}
-                            />
-                            <Button size="sm" onClick={() => handleAddComment(task.id)} disabled={isAddingComment || !newComment.trim()} className="h-8">
-                              <Send className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+            >
+              {v === 'all' ? 'All tasks' : 'Leads'}
+            </button>
+          ))}
         </div>
+        {view === 'leads' ? (
+          <LeadsView incidentId={incidentId} focusRowId={focusRowId} onEdit={(t) => handleOpenEditTask(t as TaskRow)} />
+        ) : (
+        <>
+        <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="task" />
+        <DataTable
+          query={query}
+          columns={columns}
+          getRowId={(t) => t.id}
+          ariaLabel="Tasks"
+          searchPlaceholder="Search tasks..."
+          toolbar={
+            <>
+              <FilterSelect
+                label="Status"
+                allLabel="All statuses"
+                value={query.state.filters.status}
+                onChange={(v) => query.setFilter('status', v)}
+                options={STATUS_OPTIONS}
+              />
+              <FilterSelect
+                label="Priority"
+                allLabel="All priorities"
+                value={query.state.filters.priority}
+                onChange={(v) => query.setFilter('priority', v)}
+                options={PRIORITY_OPTIONS}
+              />
+              <FilterSelect
+                label="Type"
+                allLabel="All types"
+                value={query.state.filters.task_type}
+                onChange={(v) => query.setFilter('task_type', v)}
+                options={TASK_TYPE_OPTIONS}
+              />
+              <FilterSelect
+                label="Lead outcome"
+                allLabel="Any outcome"
+                value={query.state.filters.lead_outcome}
+                onChange={(v) => query.setFilter('lead_outcome', v)}
+                options={OUTCOME_OPTIONS}
+              />
+              <UserPicker
+                ariaLabel="Filter by assignee"
+                placeholder="Any assignee"
+                className="w-[200px]"
+                value={query.state.filters.assignee_id ?? null}
+                onChange={(id) => query.setFilter('assignee_id', id ?? undefined)}
+              />
+            </>
+          }
+          primaryAction={{ label: 'Add Task', onSelect: handleOpenTaskModal, permission: 'tasks:create' }}
+          rowActions={(task) => [
+            { label: 'Edit', icon: Edit2, onSelect: () => handleOpenEditTask(task), permission: 'tasks:update' },
+            { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDeleteTask(task), permission: 'tasks:delete' },
+          ]}
+          renderExpanded={(task) => (
+            <TaskComments
+              endpoint={`${endpoint}/${task.id}/comments`}
+              canComment={canUpdate}
+              canDeleteComment={(c) => canUpdate && (canDeleteAny || (!!userId && c.author?.id === userId))}
+            />
+          )}
+          focusedRowId={focusRowId}
+          empty={{
+            title: 'No tasks yet',
+            description: 'Create tasks to track response actions, assignments, and progress for this incident.',
+            action: canCreate ? (
+              <Button size="sm" variant="outline" onClick={handleOpenTaskModal}>
+                Add Task
+              </Button>
+            ) : undefined,
+          }}
+        />
+        </>
+        )}
+      </div>
 
       {/* Add/Edit Task Modal */}
       <TaskFormModal
         open={showTaskModal}
         onOpenChange={(open) => { if (!open) { setShowTaskModal(false); setEditingTask(null) } }}
         editingTask={editingTask}
+        incidentId={incidentId}
         taskForm={taskForm}
         setTaskForm={setTaskForm}
         onSave={handleSaveTask}
         isSubmitting={isSubmitting}
-        taskEntityData={taskEntityData}
-        hosts={hosts}
         linkEntityType={linkEntityType}
         setLinkEntityType={setLinkEntityType}
-        addLinkedEntity={addLinkedEntity}
-        removeLinkedEntity={removeLinkedEntity}
+        addEvidence={addEvidence}
+        removeEvidence={removeEvidence}
       />
     </>
+  )
+}
+
+// ─── Comments (expanded row) ─────────────────────────────────────────────
+
+function TaskComments({
+  endpoint,
+  canComment,
+  canDeleteComment,
+}: {
+  endpoint: string
+  canComment: boolean
+  canDeleteComment: (c: TaskComment) => boolean
+}) {
+  const confirm = useConfirm()
+  // The full comment list (oldest first); the task row only embeds the latest 20.
+  const comments = useAllPages<TaskComment>(endpoint, { live: 'task_comment' })
+  const [newComment, setNewComment] = useState('')
+  const [isAdding, setIsAdding] = useState(false)
+
+  const handleAdd = async () => {
+    if (!newComment.trim()) return
+    setIsAdding(true)
+    try {
+      await api.post(endpoint, { content: newComment })
+      setNewComment('')
+      invalidate(endpoint)
+    } catch (error) {
+      notifyError(error, 'add the comment')
+    } finally {
+      setIsAdding(false)
+    }
+  }
+
+  const handleDelete = async (comment: TaskComment) => {
+    if (!(await confirmDelete(confirm, 'comment'))) return
+    try {
+      await api.delete(
+        `${endpoint}/${comment.id}`,
+        undefined,
+        comment.version !== undefined ? { ifMatch: comment.version } : undefined
+      )
+      invalidate(endpoint)
+    } catch (error) {
+      notifyError(error, 'delete the comment')
+    }
+  }
+
+  return (
+    <div className="pl-2">
+      {comments.isLoading ? (
+        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+          <Loader2 className="h-3 w-3 animate-spin" /> Loading comments…
+        </p>
+      ) : comments.error ? (
+        <p role="alert" className="text-xs text-destructive mb-2">
+          Couldn&apos;t load comments.{' '}
+          <button type="button" className="underline" onClick={() => void comments.refetch()}>Retry</button>
+        </p>
+      ) : comments.items.length === 0 ? (
+        <p className="text-xs text-muted-foreground mb-2">No comments yet</p>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {comments.items.map((comment) => (
+            <div key={comment.id} className="flex items-start gap-2 text-sm">
+              <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-[10px] font-medium flex-shrink-0">
+                {comment.author?.name?.charAt(0) || '?'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-foreground">{comment.author?.name || 'Unknown'}</span>
+                  <span className="text-[10px] text-muted-foreground">{formatRelativeTime(comment.created_at)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap">{comment.content}</p>
+              </div>
+              {canDeleteComment(comment) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleDelete(comment)}
+                  aria-label="Delete comment"
+                  className="h-6 w-6 p-0 text-destructive hover:text-destructive/80"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {canComment && (
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="Add a comment..."
+            aria-label="Add a comment"
+            value={newComment}
+            onChange={e => setNewComment(e.target.value)}
+            className="text-xs h-8"
+            onKeyDown={e => { if (e.key === 'Enter') void handleAdd() }}
+          />
+          <Button size="sm" onClick={handleAdd} disabled={isAdding || !newComment.trim()} className="h-8" aria-label="Send comment">
+            <Send className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -563,56 +635,36 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
 interface TaskFormModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  editingTask: Task | null
-  taskForm: {
-    title: string
-    description: string
-    priority: string
-    task_type: string
-    lead_outcome: string
-    assignee_id: string
-    due_date: string
-    phase: string
-    linked_entities: { type: string; id: string; label: string }[]
-  }
-  setTaskForm: (form: any) => void
+  editingTask: TaskRow | null
+  incidentId: string
+  taskForm: TaskForm
+  setTaskForm: (form: TaskForm) => void
   onSave: () => void
   isSubmitting: boolean
-  taskEntityData: {
-    accounts: CompromisedAccount[]
-    malware: MalwareTool[]
-    hostIndicators: HostBasedIndicator[]
-    users: UserType[]
-  }
-  hosts: CompromisedHost[]
   linkEntityType: string
   setLinkEntityType: (type: string) => void
-  addLinkedEntity: (type: string, id: string, label: string) => void
-  removeLinkedEntity: (id: string) => void
+  addEvidence: (type: string, id: string, label: string) => void
+  removeEvidence: (e: TaskEvidence) => void
 }
 
 function TaskFormModal({
   open,
   onOpenChange,
   editingTask,
+  incidentId,
   taskForm,
   setTaskForm,
   onSave,
   isSubmitting,
-  taskEntityData,
-  hosts,
   linkEntityType,
   setLinkEntityType,
-  addLinkedEntity,
-  removeLinkedEntity,
+  addEvidence,
+  removeEvidence,
 }: TaskFormModalProps) {
-  const entityIcons: Record<string, React.ReactNode> = {
-    host: <Server className="w-3 h-3" />,
-    account: <Key className="w-3 h-3" />,
-    malware: <Bug className="w-3 h-3" />,
-    host_indicator: <Fingerprint className="w-3 h-3" />,
-  }
-
+  const can = usePermissionCheck()
+  // Only offer evidence types the user can read (artifacts need artifacts:read).
+  const sources = LINK_SOURCES.filter((s) => can(EVIDENCE_TYPES[s.type]?.permission ?? 'incidents:read'))
+  const source = sources.find((s) => s.type === linkEntityType)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
@@ -659,6 +711,18 @@ function TaskFormModal({
               </div>
             )}
           </div>
+          {taskForm.task_type === 'investigative_lead' && (
+            <div className="space-y-2">
+              <Label htmlFor="task-direction">Investigation Direction</Label>
+              <Textarea
+                id="task-direction"
+                maxLength={5000}
+                value={taskForm.investigation_direction}
+                onChange={e => setTaskForm({ ...taskForm, investigation_direction: e.target.value })}
+                placeholder="What is this lead trying to prove or disprove?"
+              />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Priority</Label>
@@ -687,92 +751,68 @@ function TaskFormModal({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Assignee</Label>
-              <Select value={taskForm.assignee_id} onValueChange={v => setTaskForm({ ...taskForm, assignee_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
-                <SelectContent>
-                  {taskEntityData.users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <UserPicker
+                ariaLabel="Assignee"
+                placeholder="Unassigned"
+                value={taskForm.assignee_id || null}
+                valueLabel={editingTask?.assignee && editingTask.assignee.id === taskForm.assignee_id ? editingTask.assignee.name : undefined}
+                onChange={(id) => setTaskForm({ ...taskForm, assignee_id: id ?? '' })}
+              />
             </div>
             <div className="space-y-2">
               <Label>Due Date</Label>
-              <Input type="datetime-local" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })} />
+              <DateTimeInput step={60} value={taskForm.due_date} onChange={iso => setTaskForm({ ...taskForm, due_date: iso ?? '' })} />
             </div>
           </div>
 
-          {/* Linked Entities */}
+          {/* Linked evidence (server-validated refs) */}
           <div className="space-y-2">
             <Label className="flex items-center gap-2">
-              <Link2 className="w-4 h-4" /> Linked Entities
+              <Link2 className="w-4 h-4" /> Linked Evidence
             </Label>
-            {taskForm.linked_entities.length > 0 && (
+            {taskForm.evidence.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-2">
-                {taskForm.linked_entities.map((entity) => (
-                  <span key={entity.id} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-                    {entityIcons[entity.type] || null}
-                    {entity.label}
-                    <button onClick={() => removeLinkedEntity(entity.id)} className="ml-1 hover:text-destructive">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
+                {taskForm.evidence.map((e) => {
+                  const Icon = EVIDENCE_TYPES[e.evidence_type]?.icon
+                  const label = evidenceLabel(e)
+                  return (
+                    <span key={`${e.evidence_type}:${e.evidence_id}`} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
+                      {Icon && <Icon className="w-3 h-3" aria-hidden />}
+                      {label}
+                      <button type="button" aria-label={`Unlink ${label}`} onClick={() => removeEvidence(e)} className="ml-1 hover:text-destructive">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )
+                })}
               </div>
             )}
             <div className="grid grid-cols-2 gap-2">
               <Select value={linkEntityType} onValueChange={setLinkEntityType}>
-                <SelectTrigger><SelectValue placeholder="Entity type..." /></SelectTrigger>
+                <SelectTrigger aria-label="Evidence type"><SelectValue placeholder="Evidence type..." /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="host">Host</SelectItem>
-                  <SelectItem value="account">Account</SelectItem>
-                  <SelectItem value="malware">Malware</SelectItem>
-                  <SelectItem value="host_indicator">Host Indicator</SelectItem>
+                  {sources.map((s) => (
+                    <SelectItem key={s.type} value={s.type}>{EVIDENCE_TYPES[s.type]?.label ?? s.type}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-              {linkEntityType === 'host' && (
-                <Select onValueChange={(v) => {
-                  const host = hosts.find(h => h.id === v)
-                  if (host) addLinkedEntity('host', host.id, host.hostname)
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Select host..." /></SelectTrigger>
-                  <SelectContent>
-                    {hosts.map(h => <SelectItem key={h.id} value={h.id}>{h.hostname} ({h.ip_address})</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              {source ? (
+                <EntityPicker<Record<string, unknown>>
+                  key={source.type}
+                  ariaLabel={`Link ${EVIDENCE_TYPES[source.type]?.label ?? source.type}`}
+                  placeholder={`Search ${(EVIDENCE_TYPES[source.type]?.label ?? source.type).toLowerCase()}…`}
+                  endpoint={`/incidents/${incidentId}/${source.path}`}
+                  value={null}
+                  getId={(i) => str(i.id)}
+                  getLabel={source.label}
+                  getDescription={source.description}
+                  onChange={(id, item) => {
+                    if (id && item) addEvidence(source.type, id, source.label(item))
+                  }}
+                />
+              ) : (
+                <div />
               )}
-              {linkEntityType === 'account' && (
-                <Select onValueChange={(v) => {
-                  const acc = taskEntityData.accounts.find(a => a.id === v)
-                  if (acc) addLinkedEntity('account', acc.id, `${acc.domain ? acc.domain + '\\' : ''}${acc.account_name}`)
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Select account..." /></SelectTrigger>
-                  <SelectContent>
-                    {taskEntityData.accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.domain ? `${a.domain}\\` : ''}{a.account_name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              )}
-              {linkEntityType === 'malware' && (
-                <Select onValueChange={(v) => {
-                  const mal = taskEntityData.malware.find(m => m.id === v)
-                  if (mal) addLinkedEntity('malware', mal.id, mal.file_name)
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Select malware..." /></SelectTrigger>
-                  <SelectContent>
-                    {taskEntityData.malware.map(m => <SelectItem key={m.id} value={m.id}>{m.file_name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              )}
-              {linkEntityType === 'host_indicator' && (
-                <Select onValueChange={(v) => {
-                  const ioc = taskEntityData.hostIndicators.find(i => i.id === v)
-                  if (ioc) addLinkedEntity('host_indicator', ioc.id, `${ioc.artifact_type}: ${ioc.artifact_value.slice(0, 40)}`)
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Select indicator..." /></SelectTrigger>
-                  <SelectContent>
-                    {taskEntityData.hostIndicators.map(i => <SelectItem key={i.id} value={i.id}>{i.artifact_type}: {i.artifact_value.slice(0, 50)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              )}
-              {!linkEntityType && <div />}
             </div>
           </div>
         </DialogBody>

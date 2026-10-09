@@ -29,12 +29,16 @@ def _get_rate_limit_key():
     """
     from flask import request
 
-    # For authenticated users, key by user ID
+    # For authenticated users, key by user ID; API-key tokens get their own
+    # bucket per key, so automation never drains its owner's UI bucket.
     try:
-        from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+        from flask_jwt_extended import get_jwt, get_jwt_identity, verify_jwt_in_request
         verify_jwt_in_request(optional=True)
         identity = get_jwt_identity()
         if identity:
+            api_key_id = (get_jwt() or {}).get('api_key_id')
+            if api_key_id:
+                return f"apikey:{api_key_id}"
             return f"user:{identity}"
     except Exception:
         pass
@@ -48,13 +52,25 @@ def _get_rate_limit_key():
     return request.remote_addr or get_remote_address()
 
 
+def _default_limit():
+    from app.services.rate_limit_settings import effective_limit
+    return effective_limit('api_default')
+
+
+def _default_limit_exempt():
+    from app.services.rate_limit_settings import is_exempt
+    return is_exempt('api_default')
+
+
 limiter = Limiter(
     key_func=_get_rate_limit_key,
     storage_uri=os.getenv('REDIS_URL', 'memory://'),
-    # Generous per-key safety net against runaway abuse. Specific expensive
-    # endpoints (auth, bulk enrichment, search, report generation) declare
-    # their own stricter limits.
-    default_limits=[os.getenv('RATE_LIMIT_DEFAULT', '600 per minute')],
+    # Per-key safety net (group `api_default`, 600/minute unless an admin or
+    # RATE_LIMIT_DEFAULT changes it). Expensive or sensitive routes use
+    # stricter named groups via @limited('<group>'); every group is configurable
+    # from Settings → Security (services/rate_limit_settings.py).
+    default_limits=[_default_limit],
+    default_limits_exempt_when=_default_limit_exempt,
 )
 
 # Redis client (initialized in create_app)
@@ -118,8 +134,10 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
     """Shared revocation check (HTTP blocklist loader + WebSocket auth).
 
     Fails CLOSED when the blocklist store is unavailable. Rejects MFA-pending
-    pre-auth tokens, blocklisted jtis and tokens minted before the user's
-    current token epoch. A just-rotated refresh token is accepted exactly once
+    pre-auth tokens, blocklisted jtis, tokens of a revoked sign-in session
+    (`revoked_session:<sid>`), tokens of a revoked API key
+    (`revoked_api_key:<id>`) and tokens minted before the user's current
+    token epoch. A just-rotated refresh token is accepted exactly once
     during its short grace window when `consume_refresh_grace` is set.
     """
     from flask import current_app
@@ -135,6 +153,15 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
                     and redis_client.delete(f'refresh_grace:{jti}')):
                 # Concurrent refresh inside the grace window: allow once.
                 return False
+            return True
+        # A revoked sign-in session kills all of its tokens (access and
+        # refresh; services/session_service.py).
+        sid = jwt_payload.get('sid')
+        if sid and redis_client.get(f'revoked_session:{sid}') is not None:
+            return True
+        # API-key tokens die with their key (marker written on revoke/rotate).
+        api_key_id = jwt_payload.get('api_key_id')
+        if api_key_id and redis_client.get(f'revoked_api_key:{api_key_id}') is not None:
             return True
         # Per-user token epoch: tokens minted before the user's current epoch
         # (bumped on password change / reset / disable) are revoked.
@@ -184,6 +211,19 @@ def create_app(config_name=None):
             'to SECRET_KEY. Set a dedicated CUSTODY_SIGNING_KEY so rotating '
             'SECRET_KEY does not invalidate existing custody signatures.'
         )
+    if not app.config.get('AUDIT_CHAIN_KEY'):
+        app.logger.warning(
+            'AUDIT_CHAIN_KEY is not set; the audit log hash chain falls back to '
+            'SECRET_KEY. Set a dedicated AUDIT_CHAIN_KEY so rotating SECRET_KEY '
+            'keeps the audit chain verifiable.'
+        )
+
+    if not app.config.get('API_KEY_PEPPER'):
+        app.logger.warning(
+            'API_KEY_PEPPER is not set; API key hashes use a pepper derived from '
+            'SECRET_KEY. Set a dedicated API_KEY_PEPPER (openssl rand -hex 32) so '
+            'rotating SECRET_KEY does not invalidate every API key.'
+        )
 
     # Fix request.remote_addr when behind nginx reverse proxy.
     # This trusts 1 proxy (nginx) and uses X-Forwarded-For / X-Real-IP
@@ -218,18 +258,30 @@ def create_app(config_name=None):
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             # X-CSRF-TOKEN: double-submit header required by cookie (JWT) auth.
             "allow_headers": ["Content-Type", "Authorization", "X-CSRF-TOKEN"],
+            # Readable by a cross-origin frontend: download file names, report
+            # snapshot integrity (W3-DFIR-C) and optimistic-concurrency versions.
+            "expose_headers": ["Content-Disposition", "X-Report-SHA256", "X-Report-Id", "ETag"],
             "supports_credentials": True
         }
     })
 
-    # Initialize SocketIO with Redis message queue for scaling (no queue in
-    # tests: the in-process test client is used).
+    # Initialize SocketIO with the Redis message queue: emits, room changes
+    # (evictions) and disconnects then reach sockets on every worker, and the
+    # CLI can publish through a write-only emitter (services/realtime.py).
+    # No queue in tests: the in-process test client is used.
+    # max_http_buffer_size caps a single frame at 64 KB (no file data travels
+    # over the socket).
     socketio.init_app(
         app,
         cors_allowed_origins=_make_socketio_origin_check(cors_origins),
         message_queue=None if app.testing else app.config.get('REDIS_URL'),
         async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
+        max_http_buffer_size=64 * 1024,
     )
+
+    # Optimistic concurrency: a concurrent-update StaleDataError is a 409.
+    from app.utils.concurrency import register_conflict_handler
+    register_conflict_handler(app)
 
     # Initialize Redis client
     global redis_client
@@ -266,6 +318,10 @@ def create_app(config_name=None):
     from app.api.websocket import register_handlers
     register_handlers(socketio)
 
+    # `flask sheetstorm ...` commands (periodic jobs runner, maintenance)
+    from app.cli import register_cli
+    register_cli(app)
+
     # JWT error handlers
     @jwt.expired_token_loader
     def expired_token_callback(jwt_header, jwt_payload):
@@ -286,6 +342,22 @@ def create_app(config_name=None):
     # Token blocklist check — fail CLOSED (see is_token_revoked). Pre-auth
     # (MFA-pending) tokens are only valid at /auth/mfa/complete, which decodes
     # them manually, so they are rejected on every @jwt_required route.
+    # Session inventory: record activity of the token's sign-in session (at
+    # most every few minutes per session; never fails the response).
+    @app.after_request
+    def touch_sign_in_session(response):
+        try:
+            from flask import request
+            if response.status_code < 400 and request.path.startswith('/api/'):
+                from flask_jwt_extended import get_jwt
+                sid = (get_jwt() or {}).get('sid')
+                if sid:
+                    from app.services.session_service import touch
+                    touch(sid)
+        except Exception:
+            pass
+        return response
+
     @jwt.token_in_blocklist_loader
     def check_if_token_revoked(jwt_header, jwt_payload):
         from flask import request

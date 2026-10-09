@@ -123,21 +123,83 @@ async def test_permanent_delete_requires_exact_confirmation(client, backend):
 
 @pytest.mark.parametrize("given,expected", [
     ("analyst", "Analyst"), ("ADMIN", "Administrator"), ("incident_responder", "Incident Responder"),
-    ("Viewer", "Viewer"),
+    ("Viewer", "Viewer"), ("admin", "Administrator"),
 ])
 async def test_create_user_sends_canonical_role(client, backend, given, expected):
     await admin.sheetstorm_create_user("a@b.c", "A", "pw", role=given)
     assert backend.find("POST", "/users")["json"]["roles"] == [expected]
 
 
-async def test_create_user_rejects_unknown_role(client, backend):
-    out = await admin.sheetstorm_create_user("a@b.c", "A", "pw", role="superuser")
-    assert out.startswith("✗ Unknown role") and not backend.calls
+async def test_create_user_passes_custom_role_through(client, backend):
+    await admin.sheetstorm_create_user("a@b.c", "A", "pw", role="Hunters")
+    assert backend.find("POST", "/users")["json"]["roles"] == ["Hunters"]
+
+
+async def test_list_permissions_flags_dangerous_and_filters_group(client, backend):
+    backend.set("GET", "/permissions", {
+        "groups": [{"key": "incidents", "label": "Incidents"}, {"key": "users", "label": "Users"}],
+        "items": [
+            {"key": "incidents:purge", "group": "incidents", "label": "Purge", "description": "d", "dangerous": True},
+            {"key": "users:read", "group": "users", "label": "View users", "description": "d", "dangerous": False},
+        ]})
+    out = await admin.sheetstorm_list_permissions(group="incidents")
+    assert "incidents:purge" in out and "dangerous" in out and "users:read" not in out
+
+
+async def test_list_roles_tags_system_and_custom(client, backend):
+    backend.set("GET", "/roles", {"items": [
+        {"id": "r1", "name": "Analyst", "is_system": True, "permissions": ["a", "b"]},
+        {"id": "r2", "name": "Hunters", "is_system": False, "permissions": ["a"]}]})
+    out = await admin.sheetstorm_list_roles()
+    assert "Analyst** [system]" in out and "Hunters** [custom]" in out
 
 
 async def test_update_user_does_not_send_ignored_fields(client, backend):
     await admin.sheetstorm_update_user("u1", name="New")
     assert backend.find("PUT", "/users/u1")["json"] == {"name": "New"}
+
+
+async def test_delete_user_409_shows_counts(client, backend):
+    backend.set("DELETE", "/users/u1", {"error": "user_has_records", "message": "deactivate instead",
+                                        "counts": {"incidents": 2, "timeline_events": 5}, "hint": "deactivate"},
+                status=409)
+    out = await admin.sheetstorm_delete_user("u1")
+    assert out.startswith("✗") and "incidents: 2" in out and "timeline_events: 5" in out
+    assert "sheetstorm_disable_user" in out
+
+
+async def test_invite_user_resolves_role_and_builds_absolute_link(client, backend):
+    backend.set("GET", "/roles", {"items": [{"id": "r-analyst", "name": "Analyst"}]})
+    backend.set("POST", "/users/invites", {"id": "i1", "invite": {"id": "i1", "email": "a@b.c"},
+                                           "token": "tok", "accept_path": "/auth/invite#token=tok"}, status=201)
+    out = await admin.sheetstorm_invite_user("a@b.c", role="analyst", team_ids=["t1"])
+    body = backend.find("POST", "/users/invites")["json"]
+    assert body["role_ids"] == ["r-analyst"] and body["team_ids"] == ["t1"]
+    assert "http://backend.test/auth/invite#token=tok" in out
+
+
+async def test_invite_user_prefers_server_accept_url_and_rejects_unknown_role(client, backend):
+    backend.set("POST", "/users/invites", {"invite": {"id": "i1"}, "accept_path": "/auth/invite#token=t",
+                                           "accept_url": "https://ui.example/auth/invite#token=t"}, status=201)
+    assert "https://ui.example/auth/invite#token=t" in await admin.sheetstorm_invite_user("a@b.c")
+    out = await admin.sheetstorm_invite_user("a@b.c", role="nope")
+    assert out.startswith("✗ Unknown role")
+
+
+def test_reset_tools_not_exposed_over_mcp():
+    assert not hasattr(admin, "sheetstorm_reset_user_password")
+    assert not hasattr(admin, "sheetstorm_reset_user_mfa")
+    doc = admin.sheetstorm_invite_user.__doc__ or ""
+    assert "credential" in doc
+
+
+async def test_list_users_lifecycle_flags_and_status_validation(client, backend):
+    backend.set("GET", "/users", {"items": [{"id": "u1", "name": "A", "is_locked": True,
+                                             "locked_until": "2026-10-09T10:00:00Z",
+                                             "must_change_password": True}], "total": 1})
+    out = await admin.sheetstorm_list_users(status="locked")
+    assert "Locked until 2026-10-09T10:00:00Z" in out and "Must change password" in out
+    assert (await admin.sheetstorm_list_users(status="weird")).startswith("✗")
 
 
 # -- defang / d3fend --------------------------------------------------------------

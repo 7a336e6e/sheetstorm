@@ -17,16 +17,27 @@ CASES: dict[str, tuple] = {
     "sheetstorm_get_current_user": ({}, "GET", "/auth/me", None, None),
     "sheetstorm_logout": ({}, "POST", "/auth/logout", None, None),
     # incidents
-    "sheetstorm_list_incidents": ({"status": "open"}, "GET", "/incidents", None, {"status": "open"}),
+    "sheetstorm_list_incidents": ({"status": "open", "q": "x", "sort": "-severity", "per_page": 500}, "GET",
+                                  "/incidents", None,
+                                  {"status": "open", "q": "x", "sort": "-severity", "per_page": "200"}),
     "sheetstorm_get_incident": ({"incident_id": I}, "GET", f"/incidents/{I}", None, None),
-    "sheetstorm_create_incident": ({"title": "T", "description": "D"}, "POST", "/incidents",
-                                   {"title": "T", "description": "D", "severity": "medium"}, None),
-    "sheetstorm_update_incident": ({"incident_id": I, "title": "N"}, "PUT", f"/incidents/{I}", {"title": "N"}, None),
+    "sheetstorm_create_incident": ({"title": "T", "description": "D", "detected_at": "2026-01-01T00:00:00Z",
+                                    "lead_responder_id": "u1", "case_template": "builtin:ransomware"}, "POST",
+                                   "/incidents",
+                                   {"title": "T", "description": "D", "severity": "medium",
+                                    "detected_at": "2026-01-01T00:00:00Z", "lead_responder_id": "u1",
+                                    "case_template": "builtin:ransomware"}, None),
+    "sheetstorm_update_incident": ({"incident_id": I, "title": "N", "contained_at": "2026-01-02T00:00:00Z",
+                                    "lead_responder_id": "u2", "expected_version": 3}, "PUT", f"/incidents/{I}",
+                                   {"title": "N", "contained_at": "2026-01-02T00:00:00Z", "lead_responder_id": "u2",
+                                    "expected_version": 3}, None),
+    "sheetstorm_get_dashboard_stats": ({}, "GET", "/dashboard/stats", None, None),
     "sheetstorm_update_incident_status": ({"incident_id": I, "status": "contained"}, "PATCH",
                                           f"/incidents/{I}/status", {"status": "contained"}, None),
     "sheetstorm_archive_incident": ({"incident_id": I}, "POST", f"/incidents/{I}/archive", None, None),
     "sheetstorm_unarchive_incident": ({"incident_id": I}, "POST", f"/incidents/{I}/unarchive", None, None),
-    "sheetstorm_list_archived_incidents": ({"search": "x"}, "GET", "/incidents/archived", None, {"search": "x"}),
+    "sheetstorm_list_archived_incidents": ({"search": "x", "sort": "title"}, "GET", "/incidents/archived", None,
+                                           {"search": "x", "sort": "title"}),
     "sheetstorm_permanently_delete_incident": ({"incident_id": I, "confirmation": "DELETE PERMANENTLY"},
                                                "DELETE", f"/incidents/{I}/permanent", None, None),
     # assignments
@@ -40,11 +51,15 @@ CASES: dict[str, tuple] = {
                                         None, {"phase": "2"}),
     "sheetstorm_create_timeline_event": (
         {"incident_id": I, "timestamp": "2026-01-01T00:00:00Z", "activity": "x",
-         "detection_time": "2026-01-02T00:00:00Z", "confidence_level": "high"},
+         "detection_time": "2026-01-02T00:00:00Z", "confidence_level": "high",
+         "source_record_ref": "a.evtx#1", "source_timezone": "UTC"},
         "POST", f"/incidents/{I}/timeline",
-        {"activity": "x", "detection_time": "2026-01-02T00:00:00Z", "confidence_level": "high"}, None),
-    "sheetstorm_update_timeline_event": ({"incident_id": I, "event_id": "e1", "confidence_level": "low"},
-                                         "PUT", f"/incidents/{I}/timeline/e1", {"confidence_level": "low"}, None),
+        {"activity": "x", "detection_time": "2026-01-02T00:00:00Z", "confidence_level": "high",
+         "source_record_ref": "a.evtx#1", "source_timezone": "UTC"}, None),
+    "sheetstorm_update_timeline_event": ({"incident_id": I, "event_id": "e1", "confidence_level": "low",
+                                          "raw_timestamp": "2026-01-01 00:00:00"},
+                                         "PUT", f"/incidents/{I}/timeline/e1",
+                                         {"confidence_level": "low", "raw_timestamp": "2026-01-01 00:00:00"}, None),
     "sheetstorm_delete_timeline_event": ({"incident_id": I, "event_id": "e1"}, "DELETE",
                                          f"/incidents/{I}/timeline/e1", None, None),
     "sheetstorm_mark_timeline_event_as_ioc": ({"incident_id": I, "event_id": "e1", "artifact_type": "process"},
@@ -54,8 +69,12 @@ CASES: dict[str, tuple] = {
     "sheetstorm_list_timeline_mitre_techniques": ({"tactic": "execution"}, "GET", "/mitre/techniques",
                                                   None, {"tactic": "execution"}),
     # tasks
-    "sheetstorm_list_tasks": ({"incident_id": I, "status": "pending"}, "GET", f"/incidents/{I}/tasks",
-                              None, {"status": "pending"}),
+    "sheetstorm_list_tasks": ({"incident_id": I, "status": "pending", "task_type": "investigative_lead",
+                               "lead_outcome": "open"}, "GET", f"/incidents/{I}/tasks",
+                              None, {"status": "pending", "task_type": "investigative_lead", "lead_outcome": "open"}),
+    "sheetstorm_list_leads": ({"incident_id": I}, "GET", f"/incidents/{I}/tasks", None,
+                              {"task_type": "investigative_lead", "lead_outcome": "open", "lead_counts": "true",
+                               "include_comments": "false"}),
     "sheetstorm_create_task": (
         {"incident_id": I, "title": "Lead", "task_type": "investigative_lead",
          "investigation_direction": "check RDP", "evidence_refs": '[{"evidence_type": "artifact", "evidence_id": "a1"}]'},
@@ -70,7 +89,12 @@ CASES: dict[str, tuple] = {
     "sheetstorm_list_task_comments": ({"incident_id": I, "task_id": "t1"}, "GET",
                                       f"/incidents/{I}/tasks/t1/comments", None, None),
     # hosts & accounts
-    "sheetstorm_list_hosts": ({"incident_id": I}, "GET", f"/incidents/{I}/hosts", None, None),
+    "sheetstorm_list_hosts": ({"incident_id": I, "triage_status": "suspicious", "acquisition": "!disk_imaged"},
+                              "GET", f"/incidents/{I}/hosts", None,
+                              {"triage_status": "suspicious", "acquisition": "!disk_imaged"}),
+    "sheetstorm_bulk_update_hosts": ({"incident_id": I, "host_ids": ["h1", "h2"], "triage_status": "clean"},
+                                     "PATCH", f"/incidents/{I}/hosts/bulk",
+                                     {"host_ids": ["h1", "h2"], "triage_status": "clean"}, None),
     "sheetstorm_add_host": ({"incident_id": I, "hostname": "WS1", "triage_status": "suspicious",
                              "memory_captured": True}, "POST", f"/incidents/{I}/hosts",
                             {"hostname": "WS1", "triage_status": "suspicious",
@@ -123,10 +147,30 @@ CASES: dict[str, tuple] = {
                                   f"/incidents/{I}/artifacts/a1/custody/export", None, {"format": "json"}),
     "sheetstorm_download_artifact": ({"incident_id": I, "artifact_id": "a1"}, "GET",
                                      f"/incidents/{I}/artifacts/a1/download", None, None),
+    # evidence register / custody ledger
+    "sheetstorm_list_evidence": ({"incident_id": I, "custody_state": "checked_out", "search": "EV-0007",
+                                  "per_page": 500}, "GET", f"/incidents/{I}/evidence", None,
+                                 {"custody_state": "checked_out", "q": "EV-0007", "per_page": "200"}),
+    "sheetstorm_get_evidence": ({"incident_id": I, "evidence_id": "e1"}, "GET", f"/incidents/{I}/evidence/e1",
+                                None, None),
+    "sheetstorm_register_evidence": (
+        {"incident_id": I, "title": "SSD", "evidence_type": "disk_image", "seal_number": "S-1",
+         "hashes_json": '[{"algorithm": "sha256", "value": "ab", "source": "tool_reported"}]'},
+        "POST", f"/incidents/{I}/evidence",
+        {"title": "SSD", "evidence_type": "disk_image", "seal_number": "S-1",
+         "acquisition_hashes": [{"algorithm": "sha256", "value": "ab", "source": "tool_reported"}]}, None),
+    "sheetstorm_transfer_evidence": (
+        {"incident_id": I, "evidence_id": "e1", "mode": "transfer", "reason": "lab", "to_party_id": "p1",
+         "transfer_method": "courier", "attested": True},
+        "POST", f"/incidents/{I}/evidence/e1/custody/transfer",
+        {"reason": "lab", "to_party_id": "p1", "transfer_method": "courier"}, None),
+    "sheetstorm_verify_evidence_chain": ({"incident_id": I}, "GET", f"/incidents/{I}/evidence/custody/verify",
+                                         None, None),
     # attack graph
     "sheetstorm_get_attack_graph": ({"incident_id": I}, "GET", f"/incidents/{I}/attack-graph", None, None),
-    "sheetstorm_auto_generate_graph": ({"incident_id": I}, "POST", f"/incidents/{I}/attack-graph/auto-generate",
-                                       None, None),
+    "sheetstorm_auto_generate_graph": ({"incident_id": I, "mode": "replace", "confirm": True}, "POST",
+                                       f"/incidents/{I}/attack-graph/auto-generate",
+                                       {"mode": "replace", "confirm": True}, None),
     "sheetstorm_add_graph_node": ({"incident_id": I, "label": "DC", "node_type": "domain_controller",
                                    "metadata": '{"k": 1}'}, "POST", f"/incidents/{I}/attack-graph/nodes",
                                   {"label": "DC", "node_type": "domain_controller", "extra_data": {"k": 1}}, None),
@@ -175,15 +219,34 @@ CASES: dict[str, tuple] = {
     "sheetstorm_generate_ai_report": ({"incident_id": I, "summary_type": "technical"}, "POST",
                                       f"/incidents/{I}/reports/ai-generate", {"summary_type": "technical"}, None),
     # admin
-    "sheetstorm_list_users": ({}, "GET", "/users", None, None),
+    "sheetstorm_list_users": ({"search": "ann", "status": "locked", "role": "admin"}, "GET", "/users", None,
+                              {"q": "ann", "status": "locked", "role": "Administrator"}),
     "sheetstorm_create_user": ({"email": "a@b.c", "name": "A", "password": "pw", "role": "incident responder"},
                                "POST", "/users", {"roles": ["Incident Responder"]}, None),
     "sheetstorm_update_user": ({"user_id": "u1", "is_active": False}, "PUT", "/users/u1", {"is_active": False}, None),
     "sheetstorm_delete_user": ({"user_id": "u1"}, "DELETE", "/users/u1", None, None),
+    "sheetstorm_invite_user": ({"email": "a@b.c", "expires_in_days": 3}, "POST", "/users/invites",
+                               {"email": "a@b.c", "expires_in_days": 3}, None),
+    "sheetstorm_list_invites": ({}, "GET", "/users/invites", None, {"status": "pending"}),
+    "sheetstorm_revoke_invite": ({"invite_id": "i1"}, "DELETE", "/users/invites/i1", None, None),
+    "sheetstorm_disable_user": ({"user_id": "u1", "reason": "r"}, "POST", "/users/u1/disable", {"reason": "r"},
+                                None),
+    "sheetstorm_enable_user": ({"user_id": "u1"}, "POST", "/users/u1/enable", None, None),
+    "sheetstorm_force_logout_user": ({"user_id": "u1"}, "POST", "/users/u1/force-logout", None, None),
+    "sheetstorm_unlock_user": ({"user_id": "u1"}, "POST", "/users/u1/unlock", None, None),
+    "sheetstorm_get_user_activity": ({"user_id": "u1"}, "GET", "/users/u1/activity", None, {"scope": "all"}),
+    "sheetstorm_list_roles": ({}, "GET", "/roles", None, None),
+    "sheetstorm_list_permissions": ({}, "GET", "/permissions", None, None),
     "sheetstorm_list_notifications": ({"unread_only": True}, "GET", "/notifications", None, {"unread_only": "true"}),
     "sheetstorm_mark_notification_read": ({"notification_id": "n1"}, "POST", "/notifications/n1/read", None, None),
     "sheetstorm_mark_all_notifications_read": ({}, "POST", "/notifications/read-all", None, None),
-    "sheetstorm_get_audit_logs": ({"action": "login"}, "GET", "/audit-logs", None, {"action": "login"}),
+    "sheetstorm_get_audit_logs": ({"action": "login", "event_type": "authentication", "status": "denied",
+                                   "ip": "10.0.0.0/8", "sort": "-created_at", "per_page": 500},
+                                  "GET", "/audit-logs", None,
+                                  {"action_contains": "login", "event_type": "authentication", "status": "denied",
+                                   "ip": "10.0.0.0/8", "sort": "-created_at", "per_page": "200"}),
+    "sheetstorm_get_system_status": ({}, "GET", "/admin/system-status", None, None),
+    "sheetstorm_get_security_policy": ({}, "GET", "/organization/security-policy", None, None),
     "sheetstorm_health_check": ({}, "GET", "/health", None, None),
     # threat intel
     "sheetstorm_virustotal_lookup": ({"lookup_type": "hash", "value": "abc"}, "POST",
@@ -209,12 +272,73 @@ CASES: dict[str, tuple] = {
     "sheetstorm_get_mitre_techniques": ({"search": "rdp"}, "GET", "/knowledge-base/mitre-attack", None,
                                         {"search": "rdp"}),
     # advanced
-    "sheetstorm_search": ({"query": "evil"}, "GET", "/search", None, {"q": "evil"}),
-    "sheetstorm_correlate_iocs": ({"ioc_values": "1.2.3.4"}, "POST", "/correlate-iocs",
-                                  {"ioc_values": ["1.2.3.4"]}, None),
+    "sheetstorm_search": ({"query": "evil", "incident_id": I, "sort": "-timestamp", "since": "2026-01-01",
+                           "per_page": 500}, "GET", "/search", None,
+                          {"q": "evil", "incident_id": I, "sort": "-timestamp", "since": "2026-01-01",
+                           "per_page": "50"}),
+    "sheetstorm_correlate_iocs": ({"ioc_values": "1.2.3.4", "incident_id": I}, "POST", "/correlate-iocs",
+                                  {"ioc_values": ["1.2.3.4"], "incident_id": I}, None),
     "sheetstorm_export_stix": ({"incident_id": I}, "GET", f"/incidents/{I}/export/stix", None, None),
-    "sheetstorm_bulk_enrich": ({"ioc_values": "ip:1.2.3.4"}, "POST", "/bulk-enrich",
-                               {"ioc_values": [{"type": "ip", "value": "1.2.3.4"}]}, None),
+    "sheetstorm_export_csv": ({"incident_id": I, "entity": "hosts", "filters_json": '{"triage_status": "clean"}',
+                               "defang": True}, "GET", f"/incidents/{I}/export/hosts", None,
+                              {"triage_status": "clean", "defang": "true"}),
+    "sheetstorm_bulk_enrich": ({"ioc_values": "ip:1.2.3.4", "incident_id": I}, "POST", "/bulk-enrich",
+                               {"ioc_values": [{"type": "ip", "value": "1.2.3.4"}], "incident_id": I}, None),
+    # questions
+    "sheetstorm_list_open_questions": ({"status": "open", "limit": 500}, "GET", "/questions", None,
+                                       {"status": "open", "per_page": "200"}),
+    "sheetstorm_answer_question": ({"incident_id": I, "question_id": "q1", "answer": "WS-01", "confidence": "high",
+                                    "evidence_refs": [{"evidence_type": "host", "evidence_id": "h1"}],
+                                    "expected_version": 2}, "PUT", f"/incidents/{I}/questions/q1",
+                                   {"answer": "WS-01", "confidence": "high", "status": "answered",
+                                    "evidence_refs": [{"evidence_type": "host", "evidence_id": "h1"}],
+                                    "expected_version": 2}, None),
+    "sheetstorm_add_question": ({"incident_id": I, "question": "Which accounts?", "phase": 2, "priority": "high"},
+                                "POST", f"/incidents/{I}/questions",
+                                {"question": "Which accounts?", "phase": 2, "priority": "high"}, None),
+    "sheetstorm_get_question_report": ({"incident_id": I}, "GET", f"/incidents/{I}/questions/report-data",
+                                       None, None),
+    # case templates
+    "sheetstorm_list_case_templates": ({}, "GET", "/case-templates", None, None),
+    "sheetstorm_apply_case_template": ({"incident_id": I, "template_id": "builtin:ransomware",
+                                        "apply_defaults": True, "dry_run": True}, "POST",
+                                       f"/incidents/{I}/case-templates/builtin:ransomware/apply",
+                                       {"apply_defaults": True, "dry_run": True}, None),
+    # metrics & improvements
+    "sheetstorm_get_incident_metrics": ({"incident_id": I}, "GET", f"/incidents/{I}/metrics", None, None),
+    "sheetstorm_list_improvement_actions": (
+        {"status": "open,blocked", "owner_id": "me", "incident_id": I, "overdue": True, "per_page": 500},
+        "GET", "/improvement-actions", None,
+        {"status": "open,blocked", "owner_id": "me", "incident_id": I, "overdue": "true", "per_page": "100"}),
+    "sheetstorm_add_improvement_action": (
+        {"incident_id": I, "title": "Enable MFA", "owner_id": "u1", "due_date": "2026-04-01", "priority": "high",
+         "category": "technology", "control_framework": "d3fend", "control_ref": "D3-MFA"},
+        "POST", f"/incidents/{I}/improvement-actions",
+        {"title": "Enable MFA", "owner_id": "u1", "due_date": "2026-04-01", "priority": "high",
+         "category": "technology", "control_framework": "d3fend", "control_ref": "D3-MFA"}, None),
+    # decision log (W4-DEC)
+    "sheetstorm_log_decision": (
+        {"incident_id": I, "title": "No ransom", "decision": "Do not pay", "category": "ransom_legal",
+         "alternatives": '[{"option": "Pay", "reason_not_chosen": "Policy"}]', "approved_by_name": "General Counsel",
+         "links": '[{"evidence_type": "timeline_event", "evidence_id": "e1"}]'},
+        "POST", f"/incidents/{I}/decisions",
+        {"title": "No ransom", "decision": "Do not pay", "category": "ransom_legal",
+         "alternatives": [{"option": "Pay", "reason_not_chosen": "Policy"}], "approved_by_name": "General Counsel",
+         "links": [{"evidence_type": "timeline_event", "evidence_id": "e1"}]}, None),
+    "sheetstorm_list_decisions": ({"incident_id": I, "status": "approved", "per_page": 500}, "GET",
+                                  f"/incidents/{I}/decisions", None, {"status": "approved", "per_page": "100"}),
+    "sheetstorm_log_response_action": (
+        {"incident_id": I, "action_type": "isolate_host", "title": "Isolate", "target_type": "host",
+         "target_id": "h1", "executed_at": "2026-01-01T00:00:00Z", "executed_by_name": "MSSP"},
+        "POST", f"/incidents/{I}/response-actions",
+        {"action_type": "isolate_host", "title": "Isolate", "target_type": "host", "target_id": "h1",
+         "executed_at": "2026-01-01T00:00:00Z", "executed_by_name": "MSSP"}, None),
+    "sheetstorm_list_response_actions": ({"incident_id": I, "status": "executed"}, "GET",
+                                         f"/incidents/{I}/response-actions", None, {"status": "executed"}),
+    "sheetstorm_update_action_verification": (
+        {"incident_id": I, "action_id": "a1", "result": "success", "method": "EDR console"},
+        "POST", f"/incidents/{I}/response-actions/a1/verify",
+        {"verification_result": "success", "verification_method": "EDR console"}, None),
     # defang
     "sheetstorm_defang_iocs": ({"values": ["evil.com"]}, "POST", "/tools/defang", {"values": ["evil.com"]}, None),
     "sheetstorm_refang_iocs": ({"text": "evil[.]com"}, "POST", "/tools/refang", {"text": "evil[.]com"}, None),
@@ -240,7 +364,8 @@ def test_tool_names_are_unique(pkg):
 def _tool_fn(name: str):
     for mod in ("auth", "incidents", "assignments", "timeline", "tasks", "assets", "iocs", "artifacts",
                 "attack_graph", "case_notes", "playbooks", "reports", "admin", "threat_intel",
-                "knowledge_base", "advanced_analysis", "defang"):
+                "knowledge_base", "advanced_analysis", "defang", "evidence", "questions", "case_templates",
+                "metrics", "decisions"):
         m = importlib.import_module(f"{PKG}.tools.{mod}")
         if hasattr(m, name):
             return getattr(m, name)
@@ -267,6 +392,26 @@ async def test_tool_contract(name, client, backend, tmp_path):
         for k, v in params_subset.items():
             assert call["params"].get(k) == v, f"{name}: param {k}={call['params'].get(k)!r}, expected {v!r}"
     assert call["auth"] == "Bearer static-token"
+
+
+async def test_builtin_playbook_ids_route_to_builtin_endpoints(client, backend):
+    await _tool_fn("sheetstorm_get_playbook_template")(playbook_id="builtin:ransomware")
+    assert backend.find("GET", "/playbooks/builtin/ransomware") is not None
+    await _tool_fn("sheetstorm_activate_playbook")(incident_id=I, playbook_id="builtin:ransomware")
+    assert backend.find("POST", f"/incidents/{I}/playbooks/builtin/ransomware/activate") is not None
+    # org playbooks keep their uuid routes
+    await _tool_fn("sheetstorm_get_playbook_template")(playbook_id="p9")
+    assert backend.find("GET", "/playbooks/p9") is not None
+
+
+async def test_question_tools_per_incident_listing_and_input_guard(client, backend):
+    await _tool_fn("sheetstorm_list_open_questions")(incident_id=I)
+    call = backend.find("GET", f"/incidents/{I}/questions")
+    assert call is not None and call["params"]["status"] == "open,in_progress"
+    out = await _tool_fn("sheetstorm_add_question")(incident_id=I)
+    assert out.startswith("✗") and backend.find("POST", f"/incidents/{I}/questions") is None
+    await _tool_fn("sheetstorm_add_question")(incident_id=I, library_ref="ss:SSQ-006")
+    assert backend.find("POST", f"/incidents/{I}/questions")["json"]["library_ref"] == "ss:SSQ-006"
 
 
 async def test_every_prompt_renders_and_only_uses_known_routes(pkg, client, backend):

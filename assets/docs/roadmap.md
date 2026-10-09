@@ -19,7 +19,7 @@
 | Threat intelligence (VT, MISP, CVE, IP/domain/email, ransomware, defang) | ✅ 10/10 |
 | Knowledge base (LOLBAS, Event IDs, D3FEND) | ✅ 4/4 |
 | Auto-enrichment & soft fallback | ✅ 1/1 |
-| MCP server (70+ tools, 5 prompts, 5 resources, OAuth, Docker) | ✅ 20/20 |
+| MCP server (143 tools, 9 prompts, 7 resources, OAuth, Docker) | ✅ 20/20 |
 | Testing | 🔜 0/4 deferred |
 
 ---
@@ -46,7 +46,7 @@
 | P1 | 22 integration types with test buttons & DB-first config | ✅ Done |
 | P1 | Case notes & kill chain phase per event | ✅ Done |
 | P1 | VirusTotal lookup & MISP IOC push | ✅ Done |
-| P1 | MCP server for AI assistant integration (70+ tools) | ✅ Done |
+| P1 | MCP server for AI assistant integration (143 tools) | ✅ Done |
 | P1 | MITRE ATT&CK pattern model, suggest service & seed data | ✅ Done |
 | P1 | Test suite — pytest (started) · Vitest · Playwright | 🚧 In progress |
 | P1 | CI/CD — GitHub Actions | 🔜 Planned |
@@ -65,7 +65,7 @@
 | P1 | Investigative questions board linked to findings | 🔜 Planned |
 | P1 | Finding & timestamp provenance (source, tool, timezone, confidence) | 🔜 Planned |
 | P1 | Decision & response-action log | 🔜 Planned |
-| P2 | Case templates (ransomware, BEC, insider threat, cloud compromise) | 🔜 Planned |
+| P2 | Case templates (ransomware, BEC, insider threat, cloud compromise) | 🚧 Backend, API and MCP shipped (generic intrusion + ransomware); UI and remaining templates in progress |
 | P3 | VERIS incident classification & reporting | 🔜 Planned |
 | P2 | Global search UI across incidents, IOCs, notes, and evidence | 🔜 Planned |
 | P2 | Real-time collaboration (presence, conflict-safe concurrent edits) | 🔜 Planned |
@@ -154,22 +154,28 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 
 | Module | Tools | Description |
 |--------|-------|-------------|
-| **auth** | 3 | Login, logout, session info |
-| **incidents** | 7 | Full incident CRUD + search |
-| **timeline** | 6 | Timeline events + MITRE tactic/technique lookup |
-| **tasks** | 7 | Task management with comments |
-| **assets** | 8 | Compromised hosts + accounts |
-| **iocs** | 9 | Network IOCs, host IOCs, malware |
-| **artifacts** | 5 | Evidence upload/download + chain of custody |
-| **attack_graph** | 9 | Nodes, edges, auto-generation |
-| **reports** | 3 | PDF + AI report generation |
-| **admin** | 5 | Users, notifications, audit logs |
+| **auth** | 2 | Current user, logout |
+| **incidents** | 10 | Incident CRUD, milestones, status, dashboard stats, archive, permanent delete |
+| **assignments** | 3 | Assign / unassign responders |
+| **timeline** | 7 | Timeline events, mark as IOC, MITRE tactic/technique lookup |
+| **tasks** | 7 | Tasks and investigative leads with evidence refs, lead queue, comments |
+| **assets** | 10 | Compromised hosts (triage, bulk update) + accounts |
+| **iocs** | 12 | Network IOCs, host IOCs, malware |
+| **artifacts** | 7 | Evidence upload/download, verify, chain of custody, legal hold, custody export |
+| **evidence** | 5 | Evidence register, custody transfers, ledger verification |
+| **attack_graph** | 10 | Nodes, edges, auto-generation, node/edge types |
 | **case_notes** | 5 | Case note CRUD |
+| **playbooks** | 7 | Templates (incl. built-in `builtin:<key>`), activation, phases, actions, tasks |
+| **questions** | 4 | Investigative questions: list open, answer with evidence, add, report data |
+| **case_templates** | 2 | List templates, apply a template to an incident |
+| **reports** | 3 | PDF + AI report generation |
+| **admin** | 20 | Users and lifecycle, roles, permissions, notifications, audit logs, health, system status |
 | **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |
-| **knowledge_base** | 4 | LOLBAS, Event IDs, D3FEND |
+| **knowledge_base** | 6 | LOLBAS, Event IDs, D3FEND, MITRE ATT&CK |
+| **advanced_analysis** | 5 | Search, correlation, STIX export, CSV export, bulk enrich |
 | **defang** | 2 | IOC defanging/refanging |
-| **prompts** | 5 | IR analysis templates |
-| **resources** | 5 | Reference data (phases, severities, MITRE) |
+| **prompts** | 9 | IR analysis templates |
+| **resources** | 7 | Reference data (phases, severities, statuses, MITRE, graph types) |
 
 **Transport:** SSE on port 8811 · **Auth:** OAuth 2.1 with Redis-backed client persistence · **Runtime:** Python 3.12 + FastMCP SDK
 

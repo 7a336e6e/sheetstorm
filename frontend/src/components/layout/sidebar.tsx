@@ -9,81 +9,69 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/store'
-import api from '@/lib/api'
 import {
   Shield,
   LayoutDashboard,
   AlertTriangle,
-  Users,
-  UsersRound,
-  Settings,
   LogOut,
   Bell,
   FileText,
-  Activity,
   ChevronLeft,
   ChevronRight,
   Search,
   BookOpen,
-  Archive,
+  BarChart3,
+  ListChecks,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { useState, useEffect, useCallback } from 'react'
+import { Suspense, useState, useEffect, useMemo } from 'react'
 import { useSocketEvent } from '@/hooks/use-socket'
 import { NotificationPanel } from '@/components/layout/NotificationPanel'
+import { useCommandPalette } from '@/components/layout/command-palette'
+import { adminNavigation, visibleAdminItems } from '@/components/layout/nav-config'
+import { useNotificationStore } from '@/lib/feature-stores'
+import type { Notification } from '@/types'
 
-const navigation = [
+// `permission`: the item is shown only to holders of it (cosmetic; pages and API enforce).
+const navigation: { name: string; href: string; icon: typeof Shield; permission?: string }[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Incidents', href: '/dashboard/incidents', icon: AlertTriangle },
   { name: 'Threat Intel', href: '/dashboard/threat-intel', icon: Search },
   { name: 'Knowledge Base', href: '/dashboard/knowledge-base', icon: BookOpen },
-  { name: 'Reports', href: '/dashboard/reports', icon: FileText },
+  { name: 'Reports', href: '/dashboard/reports', icon: FileText, permission: 'reports:read' },
+  { name: 'Metrics', href: '/dashboard/metrics', icon: BarChart3, permission: 'metrics:read' },
+  { name: 'Improvements', href: '/dashboard/improvements', icon: ListChecks, permission: 'improvements:read' },
 ]
 
-const adminNavigation = [
-  { name: 'Activity', href: '/dashboard/activity', icon: Activity },
-  { name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive },
-  { name: 'Users', href: '/dashboard/admin/users', icon: Users },
-  { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
-  { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },
-  { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings },
-]
+// Admin items live in nav-config.ts, shared with the command palette.
+export { adminNavigation, visibleAdminItems }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()
-  const { user, logout, hasRole, hasPermission } = useAuthStore()
-  const isAdmin = hasRole('Administrator')
+  const { user, logout, hasPermission } = useAuthStore()
+  const permissions = user?.permissions
+  const visibleAdminNavigation = useMemo(() => visibleAdminItems(permissions), [permissions])
   const [collapsed, setCollapsed] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
   const [notifPanelOpen, setNotifPanelOpen] = useState(false)
+  const openPalette = useCommandPalette((s) => s.setOpen)
+  const unreadCount = useNotificationStore((s) => s.unreadCount)
+  const refreshUnreadCount = useNotificationStore((s) => s.refreshUnreadCount)
+  const onSocketNotification = useNotificationStore((s) => s.onSocketNotification)
 
   // Filter navigation items based on permissions
-  const filteredNavigation = navigation.filter((item) => {
-    if (item.href === '/dashboard/reports') return hasPermission('reports:read')
-    return true
-  })
+  const filteredNavigation = navigation.filter((item) => !item.permission || hasPermission(item.permission))
 
-  // Fetch unread notification count
-  const fetchUnreadCount = useCallback(async () => {
-    try {
-      const data = await api.get<{ unread_count: number }>('/notifications/unread-count')
-      setUnreadCount(data.unread_count)
-    } catch {
-      // Silently fail — badge just won't show
-    }
-  }, [])
-
+  // Unread badge: server count (re-synced every 60s) + socket increments.
+  // This is the only `notification` socket subscriber (see feature-stores).
   useEffect(() => {
-    fetchUnreadCount()
-    const interval = setInterval(fetchUnreadCount, 60000) // Refresh every 60s
+    void refreshUnreadCount()
+    const interval = setInterval(() => void refreshUnreadCount(), 60000)
     return () => clearInterval(interval)
-  }, [fetchUnreadCount])
+  }, [refreshUnreadCount])
 
-  // Real-time notification updates via WebSocket
-  useSocketEvent('notification', () => {
-    setUnreadCount((prev) => prev + 1)
+  useSocketEvent('notification', (data: Partial<Notification> | undefined) => {
+    onSocketNotification(data)
   })
 
   return (
@@ -115,6 +103,31 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         </Button>
       </div>
 
+      {/* Search / command palette */}
+      <div className="px-2 pt-3">
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.()
+            openPalette(true)
+          }}
+          aria-label="Search (Ctrl+K)"
+          title="Search (Ctrl+K / ⌘K)"
+          className={cn(
+            'flex w-full items-center rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+            collapsed && 'justify-center px-0'
+          )}
+        >
+          <Search className={cn('h-4 w-4 shrink-0', !collapsed && 'mr-2')} />
+          {!collapsed && (
+            <>
+              <span className="flex-1 text-left">Search</span>
+              <kbd className="rounded border border-white/10 px-1 text-[10px]">⌘K</kbd>
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
         <div className="space-y-1">
@@ -144,7 +157,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           })}
         </div>
 
-        {isAdmin && (
+        {visibleAdminNavigation.length > 0 && (
           <div className="pt-4">
             {!collapsed && (
               <p className="px-3 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -153,7 +166,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             )}
             {collapsed && <div className="border-t border-border my-2" />}
             <div className="space-y-1">
-              {adminNavigation.map((item) => {
+              {visibleAdminNavigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
                 return (
                   <Link
@@ -205,12 +218,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                 </p>
               </Link>
               <div className="flex items-center gap-1">
-                <ThemeToggle />
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   className="text-muted-foreground hover:text-foreground relative"
                   onClick={() => setNotifPanelOpen(true)}
+                  aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
                 >
                   <Bell className="h-4 w-4" />
                   {unreadCount > 0 && (
@@ -239,11 +252,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         </Button>
       </div>
 
-      <NotificationPanel
-        open={notifPanelOpen}
-        onClose={() => setNotifPanelOpen(false)}
-        onUnreadCountChange={setUnreadCount}
-      />
+      <Suspense fallback={null}>
+        <NotificationPanel open={notifPanelOpen} onClose={() => setNotifPanelOpen(false)} />
+      </Suspense>
     </div>
   )
 }

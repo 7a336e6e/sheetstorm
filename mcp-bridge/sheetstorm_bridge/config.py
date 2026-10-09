@@ -28,14 +28,21 @@ class Config:
             "SHEETSTORM_API_URL", "http://localhost:5000/api/v1"
         )
     )
+    # Credentials. Preferred: a scoped API key (SHEETSTORM_API_KEY,
+    # `ssk_...`), exchanged for short-lived tokens; works with MFA-enabled
+    # accounts. The pre-issued JWT and username/password (no MFA support)
+    # are legacy. repr=False keeps secrets out of logs and tracebacks.
+    api_key: str | None = field(
+        default_factory=lambda: os.getenv("SHEETSTORM_API_KEY") or None, repr=False
+    )
     api_token: str | None = field(
-        default_factory=lambda: os.getenv("SHEETSTORM_API_TOKEN")
+        default_factory=lambda: os.getenv("SHEETSTORM_API_TOKEN"), repr=False
     )
     username: str | None = field(
         default_factory=lambda: os.getenv("SHEETSTORM_USERNAME")
     )
     password: str | None = field(
-        default_factory=lambda: os.getenv("SHEETSTORM_PASSWORD")
+        default_factory=lambda: os.getenv("SHEETSTORM_PASSWORD"), repr=False
     )
 
     # Logging
@@ -52,8 +59,19 @@ class Config:
     )
 
     @property
+    def auth_mode(self) -> str | None:
+        """Credential in use: api_key > api_token > password."""
+        if self.api_key:
+            return "api_key"
+        if self.api_token:
+            return "api_token"
+        if self.username and self.password:
+            return "password"
+        return None
+
+    @property
     def has_credentials(self) -> bool:
-        return bool(self.api_token) or (bool(self.username) and bool(self.password))
+        return self.auth_mode is not None
 
 
 def get_config() -> Config:

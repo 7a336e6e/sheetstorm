@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from './api'
+import { invalidate } from './query-cache'
 import { supabase, getSupabase } from './supabase'
+import { isTimeMode, type TimeMode } from './time'
+import type { SecurityStatus } from '@/types/security'
 
 export interface User {
   id: string
@@ -12,6 +15,19 @@ export interface User {
   permissions?: string[]
   organization_id?: string
   mfa_enabled?: boolean
+  must_change_password?: boolean
+  preferences?: { display_timezone?: TimeMode }
+  /**
+   * Security-policy status (W3-SEC) from sign-in and /auth/me. While
+   * `mfa_enrollment_required` is set the API only serves MFA enrollment, so
+   * AuthProvider keeps the user on /dashboard/profile?enroll_mfa=1.
+   */
+  security?: SecurityStatus
+}
+
+/** Whether the user must enroll in MFA before using the app (policy, past grace). */
+export function needsMfaEnrollment(user: Pick<User, 'security' | 'mfa_enabled'> | null | undefined): boolean {
+  return !!user?.security?.mfa_enrollment_required && !user.mfa_enabled
 }
 
 interface AuthState {
@@ -23,6 +39,9 @@ interface AuthState {
   logout: () => Promise<void>
   checkAuth: () => Promise<void>
   hasPermission: (permission: string) => boolean
+  /** True when the user holds at least one of `permissions` (false for an empty list). */
+  hasAnyPermission: (permissions: readonly string[]) => boolean
+  /** @deprecated Display only (e.g. a role badge). Never authorize by role name. */
   hasRole: (role: string) => boolean
   refreshUser: () => Promise<void>
 }
@@ -154,6 +173,11 @@ export const useAuthStore = create<AuthState>()(
         return user?.permissions?.includes(permission) ?? false
       },
 
+      hasAnyPermission: (permissions: readonly string[]) => {
+        const granted = get().user?.permissions ?? []
+        return permissions.some((p) => granted.includes(p))
+      },
+
       hasRole: (role: string) => {
         const { user } = get()
         return user?.roles?.includes(role) ?? false
@@ -182,6 +206,59 @@ export const useAuthStore = create<AuthState>()(
 // the cached user so persisted state can't claim we're still logged in.
 api.onUnauthorized(() => {
   useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false })
+})
+
+// Time display preference (UTC / Local). Persisted locally for instant
+// first paint and server-side in users.preferences.display_timezone so it
+// follows the user across browsers. The server value wins when it loads.
+interface TimePrefState {
+  mode: TimeMode
+  setMode: (mode: TimeMode) => void
+  /** Apply a server-side preference (from /auth/me) without writing it back. */
+  hydrate: (mode: unknown) => void
+}
+
+export const useTimePrefStore = create<TimePrefState>()(
+  persist(
+    (set, get) => ({
+      mode: 'local',
+
+      setMode: (mode: TimeMode) => {
+        if (!isTimeMode(mode)) return
+        const previous = get().mode
+        set({ mode })
+        const auth = useAuthStore.getState()
+        if (!auth.isAuthenticated || !auth.user) return
+        // Keep the cached user in sync so the auth subscription below does
+        // not snap back to the old server value.
+        useAuthStore.setState({
+          user: { ...auth.user, preferences: { ...auth.user.preferences, display_timezone: mode } },
+        })
+        api.patch('/auth/me/preferences', { display_timezone: mode }).catch(() => {
+          // Roll back: restoring the cached server value makes the auth
+          // subscription below hydrate the previous mode again.
+          const current = useAuthStore.getState().user
+          if (current) {
+            useAuthStore.setState({
+              user: { ...current, preferences: { ...current.preferences, display_timezone: previous } },
+            })
+          }
+        })
+      },
+
+      hydrate: (mode: unknown) => {
+        if (isTimeMode(mode) && mode !== get().mode) set({ mode })
+      },
+    }),
+    { name: 'sheetstorm-time-pref', partialize: (state) => ({ mode: state.mode }) }
+  )
+)
+
+useAuthStore.subscribe((state, prev) => {
+  const next = state.user?.preferences?.display_timezone
+  if (next !== undefined && next !== prev.user?.preferences?.display_timezone) {
+    useTimePrefStore.getState().hydrate(next)
+  }
 })
 
 // Incident store
@@ -216,38 +293,30 @@ export interface Incident {
   }
 }
 
+// The incident *lists* live in usePaginatedQuery / useAllPages (server
+// paging, filters, URL state). This store keeps the open incident and the
+// mutations; every mutation invalidates the cached lists so readers refetch.
+// `/incidents?` (with the `?`) matches list queries only, not the
+// per-incident tab endpoints under `/incidents/<id>/…`.
+function invalidateIncidentLists() {
+  invalidate('/incidents?')
+  invalidate('/incidents/archived')
+}
+
 interface IncidentState {
-  incidents: Incident[]
-  archivedIncidents: Incident[]
   currentIncident: Incident | null
   isLoading: boolean
-  fetchIncidents: (params?: Record<string, string>) => Promise<void>
   fetchIncident: (id: string) => Promise<void>
   createIncident: (data: Partial<Incident>) => Promise<Incident>
   updateIncident: (id: string, data: Partial<Incident>) => Promise<void>
   archiveIncident: (id: string) => Promise<void>
-  fetchArchivedIncidents: (params?: Record<string, string>) => Promise<void>
   unarchiveIncident: (id: string) => Promise<void>
   permanentDeleteIncident: (id: string) => Promise<void>
 }
 
-export const useIncidentStore = create<IncidentState>((set, get) => ({
-  incidents: [],
-  archivedIncidents: [],
+export const useIncidentStore = create<IncidentState>((set) => ({
   currentIncident: null,
   isLoading: false,
-
-  fetchIncidents: async (params?: Record<string, string>) => {
-    set({ isLoading: true })
-    try {
-      const query = params ? '?' + new URLSearchParams(params).toString() : ''
-      const response = await api.get<{ items: Incident[] }>(`/incidents${query}`)
-      set({ incidents: response.items, isLoading: false })
-    } catch (error) {
-      set({ isLoading: false })
-      throw error
-    }
-  },
 
   fetchIncident: async (id: string) => {
     set({ isLoading: true })
@@ -262,57 +331,36 @@ export const useIncidentStore = create<IncidentState>((set, get) => ({
 
   createIncident: async (data: Partial<Incident>) => {
     const incident = await api.post<Incident>('/incidents', data)
-    set((state) => ({ incidents: [incident, ...state.incidents] }))
+    invalidateIncidentLists()
     return incident
   },
 
   updateIncident: async (id: string, data: Partial<Incident>) => {
     const updated = await api.put<Incident>(`/incidents/${id}`, data)
     set((state) => ({
-      incidents: state.incidents.map((i) => (i.id === id ? updated : i)),
       currentIncident: state.currentIncident?.id === id ? updated : state.currentIncident,
     }))
-  },
-
-  deleteIncident: async (id: string) => {
-    await api.delete(`/incidents/${id}`)
-    set((state) => ({
-      incidents: state.incidents.filter((i) => i.id !== id),
-      currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
-    }))
+    invalidateIncidentLists()
   },
 
   archiveIncident: async (id: string) => {
     await api.post(`/incidents/${id}/archive`, {})
     set((state) => ({
-      incidents: state.incidents.filter((i) => i.id !== id),
       currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
     }))
-  },
-
-  fetchArchivedIncidents: async (params?: Record<string, string>) => {
-    set({ isLoading: true })
-    try {
-      const query = params ? '?' + new URLSearchParams(params).toString() : ''
-      const response = await api.get<{ items: Incident[]; total: number }>(`/incidents/archived${query}`)
-      set({ archivedIncidents: response.items, isLoading: false })
-    } catch (error) {
-      set({ isLoading: false })
-      throw error
-    }
+    invalidateIncidentLists()
   },
 
   unarchiveIncident: async (id: string) => {
     await api.post(`/incidents/${id}/unarchive`, {})
-    set((state) => ({
-      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
-    }))
+    invalidateIncidentLists()
   },
 
   permanentDeleteIncident: async (id: string) => {
     await api.delete(`/incidents/${id}/permanent`)
     set((state) => ({
-      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
+      currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
     }))
+    invalidateIncidentLists()
   },
 }))

@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'custody_key_id_admin_perm'
+EXPECTED_HEAD = 'add_decision_log'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -102,3 +102,676 @@ def test_fresh_install_upgrade_downgrade_upgrade(scratch_db):
     r = _flask_db(scratch_db, 'heads')
     assert r.returncode == 0
     assert [ln for ln in r.stdout.splitlines() if ln.strip()] == [f'{EXPECTED_HEAD} (head)']
+
+
+# ── admin_guardrails_rbac ───────────────────────────────────────────
+
+def test_roles_org_column_and_partial_unique_indexes(app, db):
+    cols = db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='roles'")).scalars().all()
+    assert 'organization_id' in cols
+    idx = dict(db.session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename='roles'")).all())
+    assert 'WHERE (organization_id IS NULL)' in idx['uq_roles_system_name']
+    assert 'lower' in idx['uq_roles_org_name'] and 'WHERE (organization_id IS NOT NULL)' in idx['uq_roles_org_name']
+    assert not db.session.execute(text(
+        "SELECT 1 FROM pg_constraint WHERE conname='roles_name_key'")).first()
+
+
+def test_guardrails_permission_backfill(app, db):
+    perms = dict(db.session.execute(text(
+        "SELECT name, permissions FROM roles WHERE is_system AND organization_id IS NULL")).all())
+    assert {'incidents:archive', 'incidents:purge', 'incidents:read_all', 'case_notes:delete'} <= set(perms['Administrator'])
+    assert 'incidents:read_tlp_white' in perms['Viewer']
+    assert 'incidents:read_all' in perms['Manager']
+    assert 'incidents:read_team' in perms['Analyst'] and 'incidents:read_team' in perms['Incident Responder']
+    assert not any('incidents:delete' in p for p in perms.values())
+
+
+def _seed_legacy_roles(url):
+    """At custody_key_id_admin_perm: 3 orgs, global custom roles in use."""
+    eng = create_engine(url)
+    try:
+        with eng.begin() as conn:
+            def q(sql, **kw):
+                return conn.execute(text(sql), kw)
+            orgs = {}
+            for i, slug in enumerate(('default', 'org-x', 'org-y')):
+                orgs[slug] = q("INSERT INTO organizations (name, slug, settings, created_at) "
+                               "VALUES (:s, :s, '{}', now() + make_interval(secs => :i)) RETURNING id",
+                               s=slug, i=i).scalar()
+            users = {}
+            for slug in ('org-x', 'org-y'):
+                users[slug] = q("INSERT INTO users (organization_id, email, name) VALUES (:o, :e, 'u') RETURNING id",
+                                o=orgs[slug], e=f'u@{slug}.test').scalar()
+            roles = {}
+            for name, perms in (
+                ('Shared Hunters', '["incidents:read", "incidents:delete", "users:manage", "users:read",'
+                                   ' "incidents:create", "reports:generate"]'),
+                ('Lonely', '["tasks:read"]'),
+                ('Only X', '["incidents:read"]'),
+            ):
+                roles[name] = q("INSERT INTO roles (name, permissions, is_system) "
+                                "VALUES (:n, CAST(:p AS jsonb), false) RETURNING id", n=name, p=perms).scalar()
+            for slug in ('org-x', 'org-y'):
+                q("INSERT INTO user_roles (user_id, role_id, organization_id) VALUES (:u, :r, :o)",
+                  u=users[slug], r=roles['Shared Hunters'], o=orgs[slug])
+            q("INSERT INTO user_roles (user_id, role_id, organization_id) VALUES (:u, :r, :o)",
+              u=users['org-x'], r=roles['Only X'], o=orgs['org-x'])
+            before = dict(conn.execute(text("SELECT name, permissions FROM roles")).all())
+        return orgs, users, before
+    finally:
+        eng.dispose()
+
+
+def test_custom_roles_rehomed_split_and_access_preserved(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'custody_key_id_admin_perm')
+    assert r.returncode == 0, r.stderr[-3000:]
+    orgs, users, before = _seed_legacy_roles(scratch_db)
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            by_name = {}
+            for rid, name, org_id, perms in conn.execute(text(
+                    "SELECT id, name, organization_id, permissions FROM roles")).all():
+                by_name.setdefault(name, []).append((str(rid), org_id, set(perms)))
+            # The shared role is split into one row per org and user_roles are repointed.
+            shared = by_name['Shared Hunters']
+            assert sorted(str(o) for _, o, _ in shared) == sorted(str(orgs[s]) for s in ('org-x', 'org-y'))
+            owner = {rid: org for rid, org, _ in shared}
+            for slug in ('org-x', 'org-y'):
+                rid = conn.execute(text(
+                    "SELECT ur.role_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+                    "WHERE ur.user_id = :u AND r.name = 'Shared Hunters'"), {'u': users[slug]}).scalar()
+                assert owner[str(rid)] == orgs[slug]
+            assert by_name['Only X'][0][1] == orgs['org-x']
+            assert by_name['Lonely'][0][1] == orgs['default']  # unused -> default org
+            # Effective access preserved (only incidents:delete is dropped) + backfills.
+            for name, old in before.items():
+                for _, _, new in by_name[name]:
+                    assert set(old) - {'incidents:delete'} <= new, name
+                    assert 'incidents:delete' not in new
+            hunters = shared[0][2]
+            assert {'incidents:read_team', 'decisions:read', 'response_actions:read', 'improvements:read',
+                    'users:create', 'users:delete', 'teams:create', 'teams:update', 'teams:delete',
+                    'teams:read', 'templates:manage', 'incidents:export'} <= hunters
+            assert 'incidents:archive' not in hunters and 'system:manage' not in hunters
+            assert by_name['Lonely'][0][2] == {'tasks:read'}
+            # The existing default org keeps registration open (moved into its
+            # security policy by security_policy_sessions).
+            settings = conn.execute(text("SELECT settings FROM organizations WHERE slug='default'")).scalar()
+            assert 'registration_enabled' not in settings
+            policy = conn.execute(text(
+                "SELECT p.policy FROM organization_security_policies p JOIN organizations o "
+                "ON o.id = p.organization_id WHERE o.slug='default'")).scalar()
+            assert policy['provisioning']['registration_enabled'] is True
+    finally:
+        eng.dispose()
+
+    # Lossy but clean downgrade: global UNIQUE(name) restored over the split rows.
+    r = _flask_db(scratch_db, 'downgrade', 'custody_key_id_admin_perm')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            names = conn.execute(text("SELECT name FROM roles WHERE name LIKE 'Shared Hunters%'")).scalars().all()
+            assert len(names) == 2 and len(set(names)) == 2
+            admin = conn.execute(text("SELECT permissions FROM roles WHERE name='Administrator'")).scalar()
+            assert 'incidents:delete' in admin and 'incidents:archive' not in admin
+    finally:
+        eng.dispose()
+
+
+# ── audit_governance ────────────────────────────────────────────────
+
+def test_audit_governance_schema_at_head(app, db):
+    fks = db.session.execute(text(
+        "SELECT conname FROM pg_constraint WHERE conrelid = 'audit_logs'::regclass AND contype = 'f'")).all()
+    assert fks == []
+    triggers = set(db.session.execute(text(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'audit_logs'::regclass AND NOT tgisinternal")).scalars())
+    assert {'audit_logs_append_only_row', 'audit_logs_append_only_truncate'} <= triggers
+    cols = set(db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='audit_logs'")).scalars())
+    assert {'chain_seq', 'prev_hash', 'row_hash', 'chain_key_id'} <= cols
+    assert db.session.execute(text("SELECT to_regclass('ledger_heads')")).scalar() == 'ledger_heads'
+    idx = set(db.session.execute(text("SELECT indexname FROM pg_indexes WHERE tablename='audit_logs'")).scalars())
+    assert {'uq_audit_org_seq', 'idx_audit_org_created_id', 'idx_audit_org_user_created',
+            'idx_audit_org_event_created'} <= idx
+    icols = set(db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='integrations'")).scalars())
+    assert {'last_tested_at', 'last_test_ok'} <= icols
+
+
+def test_audit_governance_round_trip_with_data(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            org = conn.execute(text("INSERT INTO organizations (name, slug, settings) "
+                                    "VALUES ('o', 'o', '{}') RETURNING id")).scalar()
+            conn.execute(text("INSERT INTO audit_logs (organization_id, event_type, action) "
+                              "VALUES (:o, 'system_event', 'legacy')"), {'o': org})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            # A chained-looking row with a dangling user id (no FK any more).
+            conn.execute(text("INSERT INTO audit_logs (organization_id, user_id, event_type, action, chain_seq, "
+                              "prev_hash, row_hash) VALUES (:o, :u, 'system_event', 'new', 1, 'p', 'h')"),
+                         {'o': org, 'u': '00000000-0000-0000-0000-0000000000ff'})
+        with eng.begin() as conn:
+            assert conn.execute(text("SELECT count(*) FROM audit_logs WHERE chain_seq IS NULL")).scalar() == 1
+    finally:
+        eng.dispose()
+
+    # Down: triggers dropped first, FKs come back NOT VALID despite the dangling id.
+    r = _flask_db(scratch_db, 'downgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            fks = dict(conn.execute(text(
+                "SELECT conname, convalidated FROM pg_constraint "
+                "WHERE conrelid = 'audit_logs'::regclass AND contype = 'f'")).all())
+            assert set(fks) == {'audit_logs_organization_id_fkey', 'audit_logs_user_id_fkey',
+                                'audit_logs_incident_id_fkey'}
+            assert conn.execute(text("SELECT to_regclass('ledger_heads')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM audit_logs")).scalar() == 2
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── user_lifecycle (W1-LIFE-BE) ─────────────────────────────────────
+
+def test_user_lifecycle_backfill_round_trip(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'audit_governance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            org = conn.execute(text("INSERT INTO organizations (name, slug, settings) "
+                                    "VALUES ('lc', 'lc', '{}') RETURNING id")).scalar()
+            conn.execute(text(
+                "INSERT INTO users (organization_id, email, name, is_active, updated_at) VALUES "
+                "(:o, 'gone@x.test', 'gone', false, '2026-01-02T03:04:05+00'), "
+                "(:o, 'here@x.test', 'here', true, '2026-01-02T03:04:05+00')"), {'o': org})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            rows = dict(conn.execute(text(
+                "SELECT email, deactivated_at IS NOT NULL AND deactivated_at = '2026-01-02T03:04:05+00' FROM users "
+                "WHERE email IN ('gone@x.test', 'here@x.test')")).all())
+            # Inactive users: deactivated_at = their pre-migration updated_at.
+            assert rows == {'gone@x.test': True, 'here@x.test': False}
+            flags = conn.execute(text(
+                "SELECT bool_and(failed_login_count = 0 AND NOT must_change_password AND locked_until IS NULL) "
+                "FROM users")).scalar()
+            assert flags is True  # existing accounts are not locked or forced to change password
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'downgrade', 'audit_governance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            cols = set(conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='users'")).scalars())
+            assert not cols & {'failed_login_count', 'locked_until', 'must_change_password', 'deactivated_at'}
+            assert conn.execute(text("SELECT to_regclass('user_invites')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM users WHERE email LIKE '%@x.test'")).scalar() == 2
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── evidence_register_ledger (W1-EVD-CORE) ─────────────────────────────────
+
+def _seed_legacy_evidence(url, key):
+    """At realtime_versions: 2 incidents, 3 artifacts, v2-signed legacy custody rows."""
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    from app.models import ChainOfCustody
+    from app.models.artifact import custody_key_id
+
+    eng = create_engine(url)
+    t0 = datetime(2026, 3, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+    try:
+        with eng.begin() as conn:
+            def q(sql, **kw):
+                return conn.execute(text(sql), kw)
+            org = q("INSERT INTO organizations (name, slug, settings) VALUES ('ev', 'ev-org', '{}') RETURNING id").scalar()
+            user = q("INSERT INTO users (organization_id, email, name) VALUES (:o, 'ev@x.test', 'ev') RETURNING id",
+                     o=org).scalar()
+            incs = [q("INSERT INTO incidents (organization_id, title, severity, status, phase, created_by) "
+                      "VALUES (:o, :t, 'high', 'open', 1, :u) RETURNING id", o=org, t=f'inc{i}', u=user).scalar()
+                    for i in range(2)]
+            arts = []
+            # Inserted out of order: numbering must follow created_at, not insert order.
+            for inc, offset, name in ((incs[0], 2, 'second.e01'), (incs[0], 1, 'first.raw'), (incs[1], 0, 'other.bin')):
+                aid = q("INSERT INTO artifacts (incident_id, filename, original_filename, storage_path, storage_type, "
+                        "file_size, md5, sha256, sha512, uploaded_by, created_at, source_host, acquisition_tool) "
+                        "VALUES (:i, 'f', :n, 'p', 'local', 1, :md5, :sha256, :sha512, :u, :ts, 'WS-01', 'FTK') "
+                        "RETURNING id", i=inc, n=name, md5='A' * 32, sha256='b' * 64, sha512='c' * 128, u=user,
+                        ts=t0 + timedelta(minutes=offset)).scalar()
+                arts.append((aid, inc, name))
+            rows = []
+            for n, (aid, inc, _) in enumerate(arts):
+                for k, action in enumerate(('upload', 'download')):
+                    ts = t0 + timedelta(hours=1, minutes=n * 10 + k)
+                    row = ChainOfCustody(id=uuid.uuid4(), artifact_id=aid, action=action, performed_by=user,
+                                         ip_address='10.0.0.5', user_agent='ua', purpose='p',
+                                         verification_result=None, extra_data={'k': n}, created_at=ts)
+                    sig = ChainOfCustody._hmac(key, row._payload_v2())
+                    q("INSERT INTO chain_of_custody (id, artifact_id, action, performed_by, ip_address, user_agent, "
+                      "purpose, extra_data, signature, signature_key_id, created_at) VALUES "
+                      "(:id, :a, :act, :u, '10.0.0.5', 'ua', 'p', CAST(:ed AS jsonb), :s, :kid, :ts)",
+                      id=row.id, a=aid, act=action, u=user, ed=f'{{"k": {n}}}', s=sig, kid=custody_key_id(key), ts=ts)
+                    rows.append(row.id)
+        return {'user': user, 'incidents': incs, 'artifacts': arts, 'custody_ids': rows}
+    finally:
+        eng.dispose()
+
+
+def test_evidence_register_backfill_round_trip(app, scratch_db):
+    import uuid
+    from app.models import ChainOfCustody
+    key = app.config['CUSTODY_SIGNING_KEY']
+
+    r = _flask_db(scratch_db, 'upgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    seed = _seed_legacy_evidence(scratch_db, key)
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            items = conn.execute(text(
+                "SELECT a.original_filename, e.sequence_number, e.incident_id, e.evidence_type, e.title, "
+                "e.created_by, e.source_host_label, e.acquisition_tool, e.acquisition_hashes, e.organization_id "
+                "FROM artifacts a JOIN evidence_items e ON e.id = a.evidence_item_id")).mappings().all()
+            by_name = {i['original_filename']: i for i in items}
+            assert len(items) == 3
+            assert by_name['first.raw']['sequence_number'] == 1 and by_name['second.e01']['sequence_number'] == 2
+            assert by_name['other.bin']['sequence_number'] == 1
+            first = by_name['first.raw']
+            assert first['evidence_type'] == 'digital_file' and first['title'] == 'first.raw'
+            assert first['created_by'] == seed['user'] and first['source_host_label'] == 'WS-01'
+            assert first['acquisition_tool'] == 'FTK'
+            hashes = {h['algorithm']: h for h in first['acquisition_hashes']}
+            assert hashes['md5']['value'] == 'a' * 32 and hashes['sha512']['source'] == 'computed_on_upload'
+
+            custody = conn.execute(text(
+                "SELECT c.*, a.evidence_item_id AS art_item, a.incident_id AS art_inc FROM chain_of_custody c "
+                "JOIN artifacts a ON a.id = c.artifact_id")).mappings().all()
+            assert len(custody) == 6
+            for row in custody:
+                assert row['evidence_item_id'] == row['art_item'] and row['incident_id'] == row['art_inc']
+                assert row['chain_version'] is None
+                cols = {c.name for c in ChainOfCustody.__table__.columns}
+                legacy = ChainOfCustody(**{k: v for k, v in row.items() if k in cols})
+                assert legacy.signature_status(key) == 'valid'  # legacy signatures survive the backfill
+
+            triggers = conn.execute(text(
+                "SELECT tgname FROM pg_trigger WHERE tgname IN "
+                "('coc_append_only','coc_no_truncate','anchors_append_only','anchors_no_truncate')")).scalars().all()
+            assert sorted(triggers) == ['anchors_append_only', 'anchors_no_truncate', 'coc_append_only',
+                                        'coc_no_truncate']
+            deltype = conn.execute(text(
+                "SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_custody_artifact'")).scalar()
+            assert deltype == 'a'  # NO ACTION (was CASCADE)
+            for table, col in (('artifacts', 'evidence_item_id'), ('chain_of_custody', 'evidence_item_id'),
+                               ('chain_of_custody', 'incident_id')):
+                nullable = conn.execute(text(
+                    "SELECT is_nullable FROM information_schema.columns WHERE table_name=:t AND column_name=:c"),
+                    {'t': table, 'c': col}).scalar()
+                assert nullable == 'NO', (table, col)
+
+            # Rows the downgrade must drop: one v3 entry and one tombstoned artifact.
+            aid, inc, _ = seed['artifacts'][2]
+            item = conn.execute(text('SELECT evidence_item_id FROM artifacts WHERE id=:a'), {'a': aid}).scalar()
+            conn.execute(text(
+                "INSERT INTO chain_of_custody (id, artifact_id, evidence_item_id, incident_id, action, performed_by, "
+                "seq, incident_seq, prev_hash, incident_prev_hash, entry_hash, chain_version, created_at) VALUES "
+                "(:id, NULL, :e, :i, 'register', :u, 1, 1, :h, :h, :h, 3, now())"),
+                {'id': uuid.uuid4(), 'e': item, 'i': inc, 'u': seed['user'], 'h': '0' * 64})
+            conn.execute(text('UPDATE artifacts SET deleted_at = now() WHERE id=:a'), {'a': aid})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'downgrade', 'realtime_versions')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            assert not conn.execute(text("SELECT to_regclass('evidence_items')")).scalar()
+            cols = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='chain_of_custody'")).scalars().all()
+            assert 'chain_version' not in cols and 'evidence_item_id' not in cols
+            # Lossy: the tombstoned artifact and its rows are gone; the v3 row is gone.
+            assert conn.execute(text('SELECT count(*) FROM artifacts')).scalar() == 2
+            assert conn.execute(text('SELECT count(*) FROM chain_of_custody')).scalar() == 4
+            deltype = conn.execute(text(
+                "SELECT confdeltype FROM pg_constraint WHERE conname = 'chain_of_custody_artifact_id_fkey'")).scalar()
+            assert deltype == 'c'
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── security_policy_sessions (W3-SEC) ───────────────────────────────────────
+
+def test_security_policy_sessions_schema_at_head(app, db):
+    assert db.session.execute(text("SELECT to_regclass('organization_security_policies')")).scalar()
+    assert db.session.execute(text("SELECT to_regclass('system_settings')")).scalar()
+    cols = {r[0]: r[1] for r in db.session.execute(text(
+        "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name='sessions'")).all()}
+    assert {'organization_id', 'refresh_jti', 'last_seen_at', 'auth_method', 'revoked_reason'} <= set(cols)
+    assert cols['token_hash'] == 'YES'
+    idx = set(db.session.execute(text("SELECT indexname FROM pg_indexes WHERE tablename='sessions'")).scalars())
+    assert {'uq_sessions_refresh_jti', 'idx_sessions_user_revoked'} <= idx
+
+
+def test_security_policy_sessions_registration_round_trip(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'task_evidence_refs_backfill')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            orgs = {}
+            for slug, settings in (('sp-open', '{"registration_enabled": true, "timezone": "UTC"}'),
+                                   ('sp-closed', '{"registration_enabled": false}'),
+                                   ('sp-odd', '{"registration_enabled": "yes"}'),
+                                   ('sp-none', '{"timezone": "UTC"}')):
+                orgs[slug] = conn.execute(text(
+                    "INSERT INTO organizations (name, slug, settings) VALUES (:s, :s, CAST(:j AS jsonb)) "
+                    "RETURNING id"), {'s': slug, 'j': settings}).scalar()
+            user = conn.execute(text("INSERT INTO users (organization_id, email, name) "
+                                     "VALUES (:o, 'sp@x.test', 'sp') RETURNING id"), {'o': orgs['sp-open']}).scalar()
+            conn.execute(text("INSERT INTO sessions (user_id, token_hash, expires_at) "
+                              "VALUES (:u, 'legacy', now() + interval '1 day')"), {'u': user})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            def policy(slug):
+                return conn.execute(text(
+                    "SELECT p.policy FROM organization_security_policies p WHERE p.organization_id = :o"),
+                    {'o': orgs[slug]}).scalar()
+            assert policy('sp-open') == {'provisioning': {'registration_enabled': True}}
+            assert policy('sp-closed') == {'provisioning': {'registration_enabled': False}}
+            assert policy('sp-odd') == {'provisioning': {'registration_enabled': False}}
+            assert policy('sp-none') is None  # no legacy key -> no row (code defaults)
+            settings = dict(conn.execute(text(
+                "SELECT slug, settings FROM organizations WHERE slug LIKE 'sp-%'")).all())
+            assert all('registration_enabled' not in s for s in settings.values())
+            assert settings['sp-open']['timezone'] == 'UTC'
+            # A session written by the new code (no token_hash).
+            conn.execute(text("INSERT INTO sessions (user_id, organization_id, refresh_jti, expires_at) "
+                              "VALUES (:u, :o, 'jti-1', now() + interval '1 day')"),
+                         {'u': user, 'o': orgs['sp-open']})
+    finally:
+        eng.dispose()
+
+    # Re-running the data step is a no-op (idempotent upgrade).
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+
+    r = _flask_db(scratch_db, 'downgrade', 'task_evidence_refs_backfill')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            settings = dict(conn.execute(text(
+                "SELECT slug, settings FROM organizations WHERE slug LIKE 'sp-%'")).all())
+            assert settings['sp-open']['registration_enabled'] is True
+            assert settings['sp-closed']['registration_enabled'] is False
+            assert 'registration_enabled' not in settings['sp-none']
+            assert conn.execute(text("SELECT to_regclass('organization_security_policies')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('system_settings')")).scalar() is None
+            # Legacy rows survive; rows without token_hash are dropped.
+            assert conn.execute(text("SELECT count(*) FROM sessions")).scalar() == 1
+            nullable = conn.execute(text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name='sessions' AND column_name='token_hash'")).scalar()
+            assert nullable == 'NO'
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── questions_case_templates ─────────────────────────────────────────
+
+def test_questions_case_templates_schema(app, db):
+    insp_tables = set(db.session.execute(text(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")).scalars().all())
+    assert {'investigative_questions', 'investigative_question_leads', 'case_templates',
+            'incident_case_templates'} <= insp_tables
+
+    def cols(table):
+        return set(db.session.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = :t"), {'t': table}).scalars().all())
+
+    assert 'custom_fields' in cols('incidents')
+    assert 'cloned_from' in cols('playbooks') and 'builtin_key' in cols('incident_playbooks')
+    assert {'version', 'dedupe_key', 'evidence_refs', 'is_archived'} <= cols('investigative_questions')
+    assert 'version' in cols('case_templates')
+    idx = dict(db.session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'investigative_questions'")).all())
+    assert 'WHERE (dedupe_key IS NOT NULL)' in idx['uq_investigative_questions_dedupe']
+    # No feature migration touches role grants (C13): Administrator got templates:manage from the RBAC migration.
+    perms = db.session.execute(text("SELECT permissions FROM roles WHERE name='Administrator' AND is_system")).scalar()
+    assert 'templates:manage' in perms
+
+
+def test_questions_case_templates_roundtrip_and_idempotent(scratch_db):
+    import importlib.util
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+    # downgrade one step: the 4 tables and 3 columns are gone, data of other tables untouched
+    r = _flask_db(scratch_db, 'downgrade', 'add_record_provenance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            tables = set(conn.execute(text("SELECT table_name FROM information_schema.tables "
+                                           "WHERE table_schema = 'public'")).scalars().all())
+            assert not tables & {'investigative_questions', 'investigative_question_leads', 'case_templates',
+                                 'incident_case_templates'}
+            for table, col in (('incidents', 'custom_fields'), ('playbooks', 'cloned_from'),
+                               ('incident_playbooks', 'builtin_key')):
+                assert not conn.execute(text(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = :t AND column_name = :c"),
+                    {'t': table, 'c': col}).first()
+    finally:
+        eng.dispose()
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+    # Idempotent: running the upgrade body again over an existing schema is a no-op.
+    path = os.path.join(BACKEND_DIR, 'migrations', 'versions', 'questions_case_templates.py')
+    spec = importlib.util.spec_from_file_location('questions_case_templates_mig', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx):
+                mod.upgrade()
+                mod.upgrade()
+    finally:
+        eng.dispose()
+
+
+def test_questions_case_templates_models_match_migration(app, db):
+    """The ORM models of the 4 new tables (and the 3 added columns) describe
+    exactly what the migration created."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    tables = {'investigative_questions', 'investigative_question_leads', 'case_templates',
+              'incident_case_templates'}
+    columns = {('incidents', 'custom_fields'), ('playbooks', 'cloned_from'), ('incident_playbooks', 'builtin_key')}
+
+    def relevant(obj):
+        if getattr(obj, 'name', None) in tables or getattr(obj, 'table', None) is not None and obj.table.name in tables:
+            return True
+        return False
+
+    with db.engine.connect() as conn:
+        ctx = MigrationContext.configure(conn, opts={'compare_type': True})
+        diffs = compare_metadata(ctx, db.metadata)
+
+    def flatten(items):
+        for d in items:
+            if isinstance(d, list):
+                yield from flatten(d)
+            else:
+                yield d
+
+    problems = []
+    for d in flatten(diffs):
+        kind = d[0]
+        if kind in ('add_table', 'remove_table'):
+            name = d[1].name
+            if name in tables:
+                problems.append(d)
+        elif kind in ('add_column', 'remove_column'):
+            table, col = d[2], d[3].name
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+        elif kind in ('add_index', 'remove_index', 'add_constraint', 'remove_constraint'):
+            obj = d[1]
+            if relevant(obj):
+                problems.append(d)
+        elif kind.startswith('modify_'):
+            table, col = d[2], d[3]
+            if table in tables or (table, col) in columns:
+                problems.append(d)
+    assert not problems, problems
+
+
+# ── post_incident_metrics (W3-RT-POST) ──────────────────────────────
+
+def test_post_incident_metrics_schema_at_head(app, db):
+    from sqlalchemy import inspect
+    insp = inspect(db.engine)
+    cols = {c['name'] for c in insp.get_columns('incidents')}
+    assert {'first_malicious_at', 'responded_at'} <= cols
+    for table in ('incident_reviews', 'improvement_actions', 'reminder_log'):
+        assert insp.has_table(table)
+    assert {'version', 'status', 'contributing_factors'} <= {c['name'] for c in insp.get_columns('incident_reviews')}
+    assert 'version' in {c['name'] for c in insp.get_columns('improvement_actions')}
+    fks = {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+           for fk in insp.get_foreign_keys('improvement_actions')}
+    assert fks['incident_id'] == 'SET NULL'                       # actions outlive a permanent delete
+    assert {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+            for fk in insp.get_foreign_keys('incident_reviews')}['incident_id'] == 'CASCADE'
+    uniques = {u['name'] for u in insp.get_unique_constraints('reminder_log')}
+    assert 'uq_reminder_log_entity_stage' in uniques
+
+
+def test_post_incident_metrics_round_trip_and_idempotent(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        r = _flask_db(scratch_db, 'downgrade', 'questions_case_templates')
+        assert r.returncode == 0, r.stderr[-3000:]
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT to_regclass('public.improvement_actions')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('public.incident_reviews')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('public.reminder_log')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM information_schema.columns WHERE table_name='incidents' "
+                                     "AND column_name IN ('first_malicious_at','responded_at')")).scalar() == 0
+        # a half-applied schema (column already there) must not break the upgrade
+        with eng.begin() as conn:
+            conn.execute(text('ALTER TABLE incidents ADD COLUMN responded_at timestamptz'))
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT to_regclass('public.improvement_actions')")).scalar() is not None
+    finally:
+        eng.dispose()
+
+
+# ── add_decision_log (W4-DEC) ───────────────────────────────────────
+
+def test_decision_log_schema_at_head(app, db):
+    from sqlalchemy import inspect
+    insp = inspect(db.engine)
+    for table in ('incident_decisions', 'response_actions', 'decision_log_revisions'):
+        assert insp.has_table(table)
+    assert 'version' in {c['name'] for c in insp.get_columns('incident_decisions')}
+    assert 'version' in {c['name'] for c in insp.get_columns('response_actions')}
+    assert 'version' not in {c['name'] for c in insp.get_columns('decision_log_revisions')}
+    fks = {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+           for fk in insp.get_foreign_keys('decision_log_revisions')}
+    assert fks['actor_id'] is None                                  # C3: NO ACTION, never SET NULL
+    triggers = db.session.execute(text(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'decision_log_revisions'::regclass "
+        "AND NOT tgisinternal")).scalars().all()
+    assert set(triggers) == {'decision_log_revisions_no_update', 'decision_log_revisions_no_truncate'}
+
+
+def test_decision_log_round_trip_and_idempotent(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        r = _flask_db(scratch_db, 'downgrade', 'post_incident_metrics')
+        assert r.returncode == 0, r.stderr[-3000:]
+        with eng.connect() as conn:
+            for table in ('incident_decisions', 'response_actions', 'decision_log_revisions'):
+                assert conn.execute(text(f"SELECT to_regclass('public.{table}')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM pg_proc WHERE proname = "
+                                     "'decision_log_revisions_immutable'")).scalar() == 0
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
+        # Re-running the upgrade body on an already-upgraded schema is a no-op.
+        with eng.begin() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = 'post_incident_metrics'"))
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
+    finally:
+        eng.dispose()

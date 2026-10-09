@@ -7,25 +7,25 @@ from flask_jwt_extended import (
     jwt_required, get_jwt_identity, get_jwt,
     set_access_cookies, set_refresh_cookies, unset_jwt_cookies
 )
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import User, Role, UserRole, Session, Organization
-from app.middleware.audit import log_auth_event
+from app.middleware.audit import audit_log, log_auth_event
+from app.middleware.rbac import get_current_user as rbac_current_user, require_interactive_session
+from app.utils.validation import check_choice, json_body
+# Importing session_service registers its revocation hook and the
+# prune-sessions job (W3-SEC).
+from app.services import security_policy, session_service
+from app.services.security_policy import PasswordPolicyError
 
 
 def validate_password(password: str) -> tuple:
-    """Validate password meets requirements."""
-    if len(password) < 12:
-        return False, "Password must be at least 12 characters"
-    if not re.search(r'[A-Z]', password):
-        return False, "Password must contain an uppercase letter"
-    if not re.search(r'[a-z]', password):
-        return False, "Password must contain a lowercase letter"
-    if not re.search(r'\d', password):
-        return False, "Password must contain a number"
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-        return False, "Password must contain a special character"
-    return True, None
+    """(ok, first message) against the code-default policy. Thin wrapper
+    kept for importers; new code calls services.security_policy with the
+    org policy (and set_password for writes)."""
+    ok, messages = security_policy.validate_password(password)
+    return ok, (messages[0] if messages else None)
 
 
 def validate_email(email: str) -> bool:
@@ -52,15 +52,41 @@ def _current_token_epoch(user_id: str) -> int:
         return 0
 
 
-def _bump_token_epoch(user_id: str) -> None:
-    """Invalidate all existing tokens for a user by advancing their epoch."""
-    redis_client = _redis()
-    if redis_client is None:
-        return
+def _bump_token_epoch(user_id: str) -> int:
+    """Invalidate all existing tokens for a user by advancing their epoch.
+
+    Strict (raises SessionRevocationError when the token store is down); use
+    services.token_revocation directly in new code."""
+    from app.services.token_revocation import bump_token_epoch_strict
+    return bump_token_epoch_strict(user_id)
+
+
+# Bcrypt hash of a random throwaway secret, checked when the email is
+# unknown so the response time does not reveal whether an account exists.
+_DUMMY_HASH = None
+
+
+def _dummy_password_check(password) -> None:
+    global _DUMMY_HASH
+    import bcrypt
+    import secrets as _secrets
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = bcrypt.hashpw(_secrets.token_bytes(16), bcrypt.gensalt(rounds=12))
     try:
-        redis_client.incr(f'token_epoch:{user_id}')
+        bcrypt.checkpw((password or '').encode('utf-8'), _DUMMY_HASH)
     except Exception:
         pass
+
+
+def _invalid_credentials():
+    """The one 401 for unknown email, wrong password, locked or disabled."""
+    return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+
+
+def _service_account_rejected(user, action):
+    """Service accounts never sign in or refresh; they only own API keys.
+    Audited, then answered like any other refused sign-in."""
+    log_auth_event(action, user=user, success=False, details={'reason': 'service_account'})
 
 
 def _revoke_jti(jti, exp) -> None:
@@ -75,16 +101,19 @@ def _revoke_jti(jti, exp) -> None:
         pass
 
 
-def issue_tokens(user):
-    """Mint an access + refresh token pair stamped with the user's token epoch.
+def issue_tokens(user, *, session=None, auth_method='password'):
+    """Mint an access + refresh token pair on a sign-in session (a new one
+    unless `session` is given). Thin wrapper over
+    services.session_service.issue_tokens (claims token_epoch + sid,
+    lifetimes from the org security policy)."""
+    return session_service.issue_tokens(user, session=session, auth_method=auth_method)
 
-    Centralised so session-invalidation (token epoch) and, later, cookie
-    delivery are applied consistently everywhere tokens are issued.
-    """
-    claims = {'token_epoch': _current_token_epoch(str(user.id))}
-    access = create_access_token(identity=str(user.id), additional_claims=claims)
-    refresh = create_refresh_token(identity=str(user.id), additional_claims=claims)
-    return access, refresh
+
+def _user_payload(user):
+    """User dict for sign-in responses, with the security status block."""
+    data = user.to_dict(include_permissions=True)
+    data['security'] = security_policy.security_status(user)
+    return data
 
 
 def _auth_cookies(resp, access_token=None, refresh_token=None):
@@ -101,11 +130,35 @@ def _auth_cookies(resp, access_token=None, refresh_token=None):
 
 
 def _is_registration_enabled() -> bool:
-    """Check if registration is enabled in the default organization settings."""
-    org = Organization.query.filter_by(slug='default').first()
-    if not org or not org.settings:
-        return True  # Default: registration is enabled
-    return org.settings.get('registration_enabled', True)
+    """Whether self-registration / first SSO sign-in may create accounts:
+    the platform org's security policy ``provisioning.registration_enabled``
+    (default false; the security_policy_sessions migration moved the old
+    organization setting there)."""
+    return security_policy.registration_enabled()
+
+
+def _provisioning_refusal(email, policy):
+    """403 response when the platform policy refuses to create `email`, else None."""
+    if not policy.provisioning.registration_enabled:
+        return jsonify({'error': 'registration_disabled',
+                        'message': 'Registration is currently disabled by the administrator'}), 403
+    if not security_policy.check_email_domain(email, policy):
+        log_auth_event('register', success=False,
+                       details={'email': email, 'reason': 'email_domain_not_allowed'})
+        return jsonify({'error': 'email_domain_not_allowed',
+                        'message': 'Accounts with this email domain cannot be created'}), 403
+    return None
+
+
+def _platform_org_for_signup():
+    """The platform org new self-provisioned accounts join (created if absent)."""
+    org = security_policy.platform_org()
+    if not org:
+        slug = current_app.config.get('PLATFORM_ORG_SLUG', 'default')
+        org = Organization(name='Default Organization', slug=slug)
+        db.session.add(org)
+        db.session.flush()
+    return org
 
 
 @api_bp.route('/auth/registration-status', methods=['GET'])
@@ -114,67 +167,88 @@ def registration_status():
     return jsonify({'registration_enabled': _is_registration_enabled()}), 200
 
 
+@api_bp.route('/auth/password-policy', methods=['GET'])
+@limited('auth_me')
+def password_policy():
+    """Public password rules (form hints): the caller's org policy when
+    authenticated, otherwise the platform org's (registration)."""
+    org_id = None
+    try:
+        from flask_jwt_extended import verify_jwt_in_request
+        verify_jwt_in_request(optional=True)
+        identity = get_jwt_identity()
+        if identity:
+            caller = db.session.get(User, identity)
+            org_id = caller.organization_id if caller is not None and caller.is_active else None
+    except Exception:
+        org_id = None
+    policy = security_policy.get_policy(org_id) if org_id else security_policy.platform_policy()
+    return jsonify(security_policy.password_rules(policy)), 200
+
+
 @api_bp.route('/auth/register', methods=['POST'])
-@limiter.limit("3 per hour")
+@limited('auth_register')
 def register():
-    """Register a new user account."""
-    if not _is_registration_enabled():
+    """Register a new user account in the platform org (its security policy
+    decides: registration_enabled, allowed email domains, password rules,
+    default role)."""
+    policy = security_policy.platform_policy()
+    if not policy.provisioning.registration_enabled:
         return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
 
     try:
         from app.schemas.auth import UserRegister
-        data = UserRegister(**request.get_json())
+        data = UserRegister(**(request.get_json(silent=True) or {}))
     except ValueError:
         return jsonify({'error': 'bad_request', 'message': 'Invalid request data'}), 400
 
     email = data.email.lower().strip()
-    
-    # Check if user exists
-    if User.query.filter_by(email=email).first():
-        log_auth_event('register', success=False, details={'email': email, 'reason': 'email_exists'})
-        return jsonify({'error': 'conflict', 'message': 'Email already registered'}), 409
+    refusal = _provisioning_refusal(email, policy)
+    if refusal:
+        return refusal
 
-    # Get or create default organization
-    org = Organization.query.filter_by(slug='default').first()
-    if not org:
-        org = Organization(name='Default Organization', slug='default')
-        db.session.add(org)
-        db.session.flush()
-
-    # Create user
+    org = _platform_org_for_signup()
     user = User(
         email=email,
         name=data.name.strip(),
         organization_id=org.id,
         auth_provider='local'
     )
-    user.set_password(data.password)
+    ok, messages = security_policy.validate_password(data.password, policy, user)
+    if not ok:
+        db.session.rollback()
+        return PasswordPolicyError(messages).response()
+
+    # Check if user exists
+    if User.query.filter_by(email=email).first():
+        db.session.rollback()
+        log_auth_event('register', success=False, details={'email': email, 'reason': 'email_exists'})
+        return jsonify({'error': 'conflict', 'message': 'Email already registered'}), 409
+
+    security_policy.set_password(user, data.password, policy=policy, enforce_history=False)
     db.session.add(user)
     db.session.flush()
 
-    # Assign default Viewer role
-    viewer_role = Role.query.filter_by(name='Viewer').first()
-    if viewer_role:
-        user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
-        db.session.add(user_role)
+    role = security_policy.default_role(policy, org.id)
+    if role:
+        db.session.add(UserRole(user_id=user.id, role_id=role.id, organization_id=org.id))
 
     db.session.commit()
 
-    # Generate tokens
-    access_token, refresh_token = issue_tokens(user)
+    access_token, refresh_token = issue_tokens(user, auth_method='password')
 
     log_auth_event('register', user=user, success=True)
 
     resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'user': user.to_dict(include_permissions=True)
+        'user': _user_payload(user)
     })
     return _auth_cookies(resp, access_token, refresh_token), 201
 
 
 @api_bp.route('/auth/login', methods=['POST'])
-@limiter.limit("5 per minute")
+@limited('auth_login')
 def login():
     """Authenticate user and return tokens."""
     try:
@@ -184,31 +258,51 @@ def login():
         return jsonify({'error': 'bad_request', 'message': 'Invalid request data'}), 400
 
     email = data.email.lower().strip()
-    
-    # Find user
+
+    # Login order (_integration.md C1): lifecycle lockout -> api-keys
+    # service-account reject -> security-policy MFA, expiry, session issue.
+    # Unknown, wrong-password, locked and disabled all get the same 401, and
+    # bcrypt always runs so timing does not tell them apart.
+    from app.services.user_lifecycle import register_failed_login, register_successful_login
+    from app.middleware.audit import log_security_event
+
     user = User.query.filter_by(email=email).first()
 
     if not user:
+        _dummy_password_check(data.password)
         log_auth_event('login', success=False, details={'email': email, 'reason': 'user_not_found'})
-        # Use generic message for security
-        return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+        return _invalid_credentials()
+
+    if user.is_locked:
+        user.check_password(data.password)  # result discarded: a lock never reveals it
+        log_security_event('login_while_locked', resource_type='user', resource_id=user.id, user=user,
+                           details={'until': user.locked_until.isoformat()})
+        return _invalid_credentials()
+
+    # Service accounts (API-key owners) never log in. Same generic 401 and
+    # bcrypt cost; no lockout count (there is no password to guess).
+    if user.is_service_account:
+        _dummy_password_check(data.password)
+        _service_account_rejected(user, 'login')
+        return _invalid_credentials()
+
+    # An OAuth/SSO-only account (no password hash) can't log in with a
+    # password. Same generic 401, bcrypt and lockout count as a wrong
+    # password, so the answer doesn't reveal that the account exists.
+    if user.auth_provider != 'local' and not user.password_hash:
+        _dummy_password_check(data.password)
+        register_failed_login(user, 'wrong_provider')
+        log_auth_event('login', user=user, success=False, details={'reason': 'wrong_provider'})
+        return _invalid_credentials()
+
+    if not user.check_password(data.password):
+        register_failed_login(user, 'invalid_password')
+        log_auth_event('login', user=user, success=False, details={'reason': 'invalid_password'})
+        return _invalid_credentials()
 
     if not user.is_active:
         log_auth_event('login', user=user, success=False, details={'reason': 'account_disabled'})
-        return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
-
-    # Only reject non-local providers if the user has NO password hash
-    # (i.e. they were created purely via OAuth and never set a password)
-    if user.auth_provider != 'local' and not user.password_hash:
-        log_auth_event('login', user=user, success=False, details={'reason': 'wrong_provider'})
-        return jsonify({
-            'error': 'unauthorized',
-            'message': f'Please login with {user.auth_provider}'
-        }), 401
-
-    if not user.check_password(data.password):
-        log_auth_event('login', user=user, success=False, details={'reason': 'invalid_password'})
-        return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+        return _invalid_credentials()
 
     # MFA check: if user has MFA enabled, require code
     if user.mfa_enabled and user.mfa_secret:
@@ -224,36 +318,53 @@ def login():
         import pyotp
         totp = pyotp.TOTP(user.mfa_secret)
         if not totp.verify(str(mfa_code), valid_window=1):
+            # The password was already proven, so the MFA error stays specific.
+            register_failed_login(user, 'invalid_mfa')
             log_auth_event('login', user=user, success=False, details={'reason': 'invalid_mfa_code'})
             return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
-    # Update last login
-    user.last_login = datetime.now(timezone.utc)
+    register_successful_login(user)
+    # Security policy (C1, after lockout and the service-account reject): an
+    # expired password restricts the account to changing it; a missing
+    # required MFA enrollment is enforced per request (account_state) and
+    # reported in user.security.
+    expired = security_policy.apply_password_expiry(user)
     db.session.commit()
 
-    # Generate tokens
-    access_token, refresh_token = issue_tokens(user)
+    access_token, refresh_token = issue_tokens(user, auth_method='password')
 
-    log_auth_event('login', user=user, success=True)
+    log_auth_event('login', user=user, success=True,
+                   details={'password_expired': True} if expired else None)
 
     resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'user': user.to_dict(include_permissions=True)
+        'user': _user_payload(user)
     })
     return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/refresh', methods=['POST'])
-@limiter.limit("30 per hour")
+@limited('auth_refresh')
 @jwt_required(refresh=True)
 def refresh():
-    """Refresh access token, rotating the refresh token."""
+    """Refresh access token, rotating the refresh token (same session)."""
     identity = get_jwt_identity()
     user = User.query.get(identity)
 
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Invalid user'}), 401
+    if user.is_service_account:
+        _service_account_rejected(user, 'refresh')
+        return jsonify({'error': 'unauthorized', 'message': 'Invalid user'}), 401
+
+    # The session must still exist and be live (defence in depth next to the
+    # revoked_session marker). Tokens minted before sessions existed carry
+    # no sid and get a new session on this refresh.
+    sid = get_jwt().get('sid')
+    session = session_service.get_session(sid) if sid else None
+    if sid and (session is None or session.revoked_at is not None or str(session.user_id) != str(user.id)):
+        return jsonify({'error': 'token_revoked', 'message': 'Token has been revoked'}), 401
 
     # Rotate: revoke the presented refresh token and issue a fresh pair, so a
     # leaked refresh token has a bounded lifetime. The first rotation of a
@@ -273,14 +384,19 @@ def refresh():
         except Exception:
             current_app.logger.error('Failed to revoke rotated refresh token')
             return jsonify({'error': 'server_error', 'message': 'Token rotation failed'}), 503
-    access_token, refresh_token = issue_tokens(user)
+    if security_policy.apply_password_expiry(user):
+        db.session.commit()
+    if session is not None:
+        access_token, refresh_token = session_service.rotate(session, user)
+    else:
+        access_token, refresh_token = issue_tokens(user, auth_method='refresh')
 
     resp = jsonify({'access_token': access_token, 'refresh_token': refresh_token})
     return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
-@limiter.limit("30 per minute")
+@limited('auth_logout')
 @jwt_required()
 def logout():
     """Logout and revoke the current access token (and refresh token if given)."""
@@ -301,6 +417,10 @@ def logout():
 
     identity = get_jwt_identity()
     user = User.query.get(identity)
+    session = session_service.get_session(jwt_data.get('sid'))
+    if session is not None and user is not None and session.user_id == user.id:
+        session_service.revoke(session, 'logout', strict=False)
+        db.session.commit()
     if user:
         log_auth_event('logout', user=user, success=True)
 
@@ -310,7 +430,7 @@ def logout():
 
 
 @api_bp.route('/auth/me', methods=['GET'])
-@limiter.limit("60 per minute")
+@limited('auth_me')
 @jwt_required()
 def get_current_user():
     """Get current authenticated user."""
@@ -320,12 +440,65 @@ def get_current_user():
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
-    return jsonify(user.to_dict(include_permissions=True)), 200
+    body = user.to_dict(include_permissions=True)
+    body['security'] = security_policy.security_status(user)
+    # API-key tokens: which key, its scopes and expiry (permissions above are
+    # already the owner's permissions intersected with the scopes).
+    claims = get_jwt()
+    if claims.get('api_key_id'):
+        from app.models.api_key import ApiKey
+        key = db.session.get(ApiKey, claims['api_key_id'])
+        exp = claims.get('exp')
+        body['auth'] = {
+            'method': 'api_key',
+            'api_key_id': str(claims['api_key_id']),
+            'prefix': claims.get('api_key_prefix'),
+            'name': key.name if key else None,
+            'scopes': list(claims.get('scopes') or []),
+            'expires_at': key.expires_at.isoformat() if key else None,
+            'token_expires_at': datetime.fromtimestamp(exp, timezone.utc).isoformat() if exp else None,
+        }
+    return jsonify(body), 200
+
+
+# Allowlist of users.preferences keys -> allowed values. New preference keys
+# must be added here (and nowhere else); unknown keys are rejected.
+PREFERENCE_KEYS = {
+    'display_timezone': ('utc', 'local'),
+}
+
+
+@api_bp.route('/auth/me/preferences', methods=['PATCH'])
+@limited('auth_preferences')
+@jwt_required()
+@require_interactive_session
+@audit_log('data_modification', 'update_preferences', 'user')
+def update_my_preferences():
+    """Merge allowlisted keys into the caller's own preferences."""
+    user = rbac_current_user()
+    if not user:
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
+
+    data = json_body()
+    unknown = sorted(set(data) - set(PREFERENCE_KEYS))
+    if unknown:
+        return jsonify({'error': 'bad_request', 'message': f'Unknown preference keys: {unknown}'}), 400
+    if not data:
+        return jsonify({'error': 'bad_request', 'message': 'No preferences provided'}), 400
+    for key, value in data.items():
+        check_choice(value, PREFERENCE_KEYS[key], key)
+
+    # Reassign (not mutate) so SQLAlchemy sees the JSONB change.
+    user.preferences = {**(user.preferences or {}), **data}
+    user.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'id': str(user.id), 'preferences': dict(user.preferences)}), 200
 
 
 @api_bp.route('/auth/change-password', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('auth_password_change')
 @jwt_required()
+@require_interactive_session
 def change_password():
     """Change user password."""
     data = request.get_json()
@@ -349,21 +522,38 @@ def change_password():
         log_auth_event('change_password', user=user, success=False, details={'reason': 'invalid_current'})
         return jsonify({'error': 'unauthorized', 'message': 'Current password is incorrect'}), 401
 
-    # Validate new password
-    valid, message = validate_password(new_password)
+    # Validate new password (org policy incl. history) before anything else.
+    valid, messages = security_policy.validate_password(new_password, user=user)
     if not valid:
-        return jsonify({'error': 'bad_request', 'message': message}), 400
+        return PasswordPolicyError(messages).response()
+    if user.must_change_password and user.check_password(new_password):
+        return jsonify({'error': 'bad_request', 'message': 'Choose a password different from the current one'}), 400
 
-    user.set_password(new_password)
+    try:
+        security_policy.set_password(user, new_password)
+    except PasswordPolicyError as e:
+        db.session.rollback()
+        return e.response()
+    user.must_change_password = False
     # Invalidate every existing session for this user (revokes all outstanding
-    # access + refresh tokens via the token epoch).
-    _bump_token_epoch(identity)
+    # access + refresh tokens via the token epoch). Strict: if the token store
+    # is down nothing changes (503). No session:revoked event: this tab stays
+    # signed in with the tokens issued below.
+    from app.services.token_revocation import SessionRevocationError, revoke_all_sessions, \
+        revocation_failed_response
+    try:
+        revoke_all_sessions(user, 'password_changed', notify=False)
+    except SessionRevocationError:
+        db.session.rollback()
+        return revocation_failed_response()
     db.session.commit()
 
     log_auth_event('change_password', user=user, success=True)
 
-    # Re-issue tokens for the current session so the user stays logged in here.
-    access_token, refresh_token = issue_tokens(user)
+    # Every session was revoked above; this tab continues on a new one.
+    current = session_service.get_session(get_jwt().get('sid'))
+    access_token, refresh_token = issue_tokens(
+        user, auth_method=(current.auth_method if current is not None else None) or 'password')
 
     resp = jsonify({
         'message': 'Password changed successfully',
@@ -374,7 +564,7 @@ def change_password():
 
 
 @api_bp.route('/auth/supabase', methods=['POST'])
-@limiter.limit("10 per minute")
+@limited('auth_sso_supabase')
 def supabase_auth():
     """Authenticate with Supabase JWT."""
     data = request.get_json(silent=True) or {}
@@ -417,16 +607,12 @@ def supabase_auth():
         user = User.query.filter_by(email=email).first()
 
         if not user:
-            # Check if registration is enabled before creating new user
-            if not _is_registration_enabled():
-                return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
-
-            # Get or create default organization
-            org = Organization.query.filter_by(slug='default').first()
-            if not org:
-                org = Organization(name='Default Organization', slug='default')
-                db.session.add(org)
-                db.session.flush()
+            # Auto-provisioning follows the platform org's security policy.
+            policy = security_policy.platform_policy()
+            refusal = _provisioning_refusal(email.lower(), policy)
+            if refusal:
+                return refusal
+            org = _platform_org_for_signup()
 
             user = User(
                 email=email,
@@ -445,12 +631,15 @@ def supabase_auth():
             if sb_roles:
                 assign_roles_from_list(user, sb_roles, organization_id=org.id)
             else:
-                viewer_role = Role.query.filter_by(name='Viewer').first()
-                if viewer_role:
-                    user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
-                    db.session.add(user_role)
+                role = security_policy.default_role(policy, org.id)
+                if role:
+                    db.session.add(UserRole(user_id=user.id, role_id=role.id, organization_id=org.id))
 
             db.session.commit()
+
+        if user.is_service_account:
+            _service_account_rejected(user, 'supabase_login')
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
 
         if not user.is_active:
             log_auth_event('supabase_login', user=user, success=False, details={'reason': 'account_disabled'})
@@ -494,14 +683,14 @@ def supabase_auth():
         db.session.commit()
 
         # Generate our tokens
-        access_token, refresh_token = issue_tokens(user)
+        access_token, refresh_token = issue_tokens(user, auth_method='supabase')
 
         log_auth_event('supabase_login', user=user, success=True)
 
         resp = jsonify({
             'access_token': access_token,
             'refresh_token': refresh_token,
-            'user': user.to_dict(include_permissions=True)
+            'user': _user_payload(user)
         })
         return _auth_cookies(resp, access_token, refresh_token), 200
 
@@ -543,7 +732,7 @@ def _get_github_credentials():
 
 
 @api_bp.route('/auth/github', methods=['GET'])
-@limiter.limit("20 per minute")
+@limited('auth_sso_github')
 def github_auth_redirect():
     """Return the GitHub OAuth authorization URL for the frontend to redirect to."""
     client_id, _ = _get_github_credentials()
@@ -573,7 +762,7 @@ def github_auth_redirect():
 
 
 @api_bp.route('/auth/github/callback', methods=['POST'])
-@limiter.limit("20 per minute")
+@limited('auth_sso_github')
 def github_auth_callback():
     """Exchange GitHub OAuth code for user tokens."""
     import requests as http_requests
@@ -653,6 +842,10 @@ def github_auth_callback():
         user = User.query.filter_by(email=primary_email.lower()).first()
         github_id = str(gh_user.get('id', ''))
 
+        if user and user.is_service_account:
+            _service_account_rejected(user, 'github_login')
+            return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
+
         if user:
             # Existing user — update provider info if needed
             if user.auth_provider == 'local':
@@ -661,16 +854,12 @@ def github_auth_callback():
             elif user.auth_provider == 'github' and user.auth_provider_id != github_id:
                 return jsonify({'error': 'conflict', 'message': 'Email is associated with a different GitHub account'}), 409
         else:
-            # Check if registration is enabled before creating new user
-            if not _is_registration_enabled():
-                return jsonify({'error': 'registration_disabled', 'message': 'Registration is currently disabled by the administrator'}), 403
-
-            # Create new user
-            org = Organization.query.filter_by(slug='default').first()
-            if not org:
-                org = Organization(name='Default Organization', slug='default')
-                db.session.add(org)
-                db.session.flush()
+            # Auto-provisioning follows the platform org's security policy.
+            policy = security_policy.platform_policy()
+            refusal = _provisioning_refusal(primary_email.lower(), policy)
+            if refusal:
+                return refusal
+            org = _platform_org_for_signup()
 
             display_name = gh_user.get('name') or gh_user.get('login') or primary_email.split('@')[0]
 
@@ -685,11 +874,9 @@ def github_auth_callback():
             db.session.add(user)
             db.session.flush()
 
-            # Assign default Viewer role
-            viewer_role = Role.query.filter_by(name='Viewer').first()
-            if viewer_role:
-                user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
-                db.session.add(user_role)
+            role = security_policy.default_role(policy, org.id)
+            if role:
+                db.session.add(UserRole(user_id=user.id, role_id=role.id, organization_id=org.id))
 
         if not user.is_active:
             db.session.rollback()
@@ -733,14 +920,14 @@ def github_auth_callback():
                     return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
         # Generate JWT tokens
-        access_token, refresh_token = issue_tokens(user)
+        access_token, refresh_token = issue_tokens(user, auth_method='github')
 
         log_auth_event('github_login', user=user, success=True)
 
         resp = jsonify({
             'access_token': access_token,
             'refresh_token': refresh_token,
-            'user': user.to_dict(include_permissions=True),
+            'user': _user_payload(user),
         })
         return _auth_cookies(resp, access_token, refresh_token), 200
 
@@ -753,8 +940,9 @@ def github_auth_callback():
 # ── MFA Endpoints ──────────────────────────────────────────────────
 
 @api_bp.route('/auth/mfa/setup', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('mfa_enroll')
 @jwt_required()
+@require_interactive_session
 def mfa_setup():
     """
     Generate a TOTP secret and provisioning URI for QR code.
@@ -797,8 +985,9 @@ def mfa_setup():
 
 
 @api_bp.route('/auth/mfa/verify', methods=['POST'])
-@limiter.limit("10 per hour")
+@limited('mfa_verify')
 @jwt_required()
+@require_interactive_session
 def mfa_verify():
     """
     Verify a TOTP code to confirm MFA setup and enable it.
@@ -837,7 +1026,7 @@ def mfa_verify():
 
 
 @api_bp.route('/auth/mfa/complete', methods=['POST'])
-@limiter.limit("10 per minute")
+@limited('mfa_complete')
 def mfa_complete_oauth():
     """Complete OAuth login by verifying MFA code using a pre-auth token.
 
@@ -866,9 +1055,20 @@ def mfa_complete_oauth():
     user = User.query.get(user_id)
     if not user or not user.is_active:
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
-
     if not user.mfa_enabled or not user.mfa_secret:
         return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled for this user'}), 400
+
+    from app.services.user_lifecycle import register_failed_login, register_successful_login
+    if user.is_locked:
+        from app.middleware.audit import log_security_event
+        log_security_event('login_while_locked', resource_type='user', resource_id=user.id, user=user,
+                           details={'until': user.locked_until.isoformat(), 'flow': 'mfa_complete'})
+        return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
+    # C1 order: lockout, then the service-account reject.
+    if user.is_service_account:
+        _service_account_rejected(user, 'mfa_complete_oauth')
+        return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(str(mfa_code), valid_window=1):
@@ -881,29 +1081,31 @@ def mfa_complete_oauth():
                 user.mfa_backup_codes = ','.join(codes)
                 backup_valid = True
         if not backup_valid:
+            register_failed_login(user, 'invalid_mfa')
             log_auth_event('mfa_complete_oauth', user=user, success=False, details={'reason': 'invalid_mfa_code'})
             return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
     # MFA verified — issue full tokens
-    user.last_login = datetime.now(timezone.utc)
+    register_successful_login(user)
     db.session.commit()
 
-    access_token, refresh_token = issue_tokens(user)
-
     auth_method = decoded.get('auth_method', 'oauth')
+    access_token, refresh_token = issue_tokens(user, auth_method=str(auth_method))
+
     log_auth_event(f'{auth_method}_login_mfa', user=user, success=True)
 
     resp = jsonify({
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'user': user.to_dict(include_permissions=True),
+        'user': _user_payload(user),
     })
     return _auth_cookies(resp, access_token, refresh_token), 200
 
 
 @api_bp.route('/auth/mfa/disable', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('mfa_enroll')
 @jwt_required()
+@require_interactive_session
 def mfa_disable():
     """Disable MFA for the current user. Requires password confirmation."""
     data = request.get_json() or {}
@@ -919,6 +1121,11 @@ def mfa_disable():
 
     if not user.mfa_enabled:
         return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled'}), 400
+
+    if security_policy.mfa_required(user):
+        log_auth_event('mfa_disable', user=user, success=False, details={'reason': 'mfa_required_by_policy'})
+        return jsonify({'error': 'mfa_required_by_policy',
+                        'message': 'Your organization requires multi-factor authentication'}), 403
 
     if not user.check_password(password):
         log_auth_event('mfa_disable', user=user, success=False, details={'reason': 'invalid_password'})

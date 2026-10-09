@@ -1,110 +1,122 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+/**
+ * Slide-over notification list. Pages through `/notifications` 20 at a time
+ * ("Load more"); the unread badge lives in `useNotificationStore` and the
+ * sidebar is the only socket subscriber (it invalidates this list).
+ * Each row is a link to its `action_url` (internal `/dashboard/...` paths
+ * only) or its incident, and marks the notification read.
+ */
+import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
+import {
+  AlertTriangle,
+  AtSign,
+  Bell,
+  CheckCheck,
+  ClipboardList,
+  Clock,
+  Inbox,
+  ListChecks,
+  Loader2,
+  MessageSquare,
+  Paperclip,
+  RefreshCw,
+  UserPlus,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useToast } from '@/components/ui/use-toast'
-import { useSocketEvent } from '@/hooks/use-socket'
-import api from '@/lib/api'
-import { formatRelativeTime } from '@/lib/utils'
+import { usePaginatedQuery } from '@/hooks/use-paginated-query'
+import { describeError, notifyError } from '@/lib/errors'
+import { notificationHref, NOTIFICATIONS_ENDPOINT, useNotificationStore } from '@/lib/feature-stores'
+import { cn, formatRelativeTime } from '@/lib/utils'
 import type { Notification } from '@/types'
-import {
-  Bell, X, CheckCheck, AlertTriangle, FileText, Shield, Users, Activity,
-  Loader2, Inbox, ChevronRight,
-} from 'lucide-react'
 
 interface NotificationPanelProps {
   open: boolean
   onClose: () => void
-  onUnreadCountChange: (count: number) => void
 }
 
-const typeIcons: Record<string, React.ReactNode> = {
-  incident_created: <AlertTriangle className="h-4 w-4 text-orange-400" />,
-  incident_updated: <Activity className="h-4 w-4 text-blue-400" />,
-  report_generated: <FileText className="h-4 w-4 text-cyan-400" />,
-  artifact_uploaded: <Shield className="h-4 w-4 text-green-400" />,
-  user_assigned: <Users className="h-4 w-4 text-purple-400" />,
-  status_changed: <Activity className="h-4 w-4 text-yellow-400" />,
+/** Keyed on the backend `Notification.NOTIFICATION_TYPES`; Bell is the fallback. */
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  incident_assigned: <UserPlus className="h-4 w-4 text-purple-400" />,
+  incident_updated: <RefreshCw className="h-4 w-4 text-blue-400" />,
+  task_assigned: <ClipboardList className="h-4 w-4 text-cyan-400" />,
+  task_due: <Clock className="h-4 w-4 text-amber-400" />,
+  improvement_due: <ListChecks className="h-4 w-4 text-amber-400" />,
+  comment_added: <MessageSquare className="h-4 w-4 text-sky-400" />,
+  artifact_uploaded: <Paperclip className="h-4 w-4 text-emerald-400" />,
+  mention: <AtSign className="h-4 w-4 text-pink-400" />,
+  system: <AlertTriangle className="h-4 w-4 text-orange-400" />,
 }
 
-export function NotificationPanel({ open, onClose, onUnreadCountChange }: NotificationPanelProps) {
-  const { toast } = useToast()
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [loading, setLoading] = useState(true)
-  const [markingAll, setMarkingAll] = useState(false)
+const PAGE_SIZE = 20
 
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const res = await api.get<{ items: Notification[]; total: number }>('/notifications?per_page=50')
-      setNotifications(res.items || [])
-      const unread = (res.items || []).filter(n => !n.is_read).length
-      onUnreadCountChange(unread)
-    } catch {
-      // silent
-    } finally {
-      setLoading(false)
-    }
-  }, [onUnreadCountChange])
+export function NotificationPanel({ open, onClose }: NotificationPanelProps) {
+  const unreadCount = useNotificationStore((s) => s.unreadCount)
+  const markRead = useNotificationStore((s) => s.markRead)
+  const markAllRead = useNotificationStore((s) => s.markAllRead)
+  const refreshUnreadCount = useNotificationStore((s) => s.refreshUnreadCount)
 
-  useEffect(() => {
-    if (open) {
-      setLoading(true)
-      fetchNotifications()
-    }
-  }, [open, fetchNotifications])
-
-  // Real-time updates
-  useSocketEvent('notification', (data: Notification) => {
-    setNotifications(prev => [data, ...prev])
-    onUnreadCountChange(notifications.filter(n => !n.is_read).length + 1)
+  const query = usePaginatedQuery<Notification>({
+    endpoint: NOTIFICATIONS_ENDPOINT,
+    mode: 'append',
+    defaults: { perPage: PAGE_SIZE },
+    enabled: open,
   })
 
-  const markAsRead = async (id: string) => {
+  // Opening the panel re-syncs the badge with the server.
+  useEffect(() => {
+    if (open) void refreshUnreadCount()
+  }, [open, refreshUnreadCount])
+
+  // Escape closes.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  const handleMarkAll = async () => {
     try {
-      await api.post(`/notifications/${id}/read`)
-      setNotifications(prev =>
-        prev.map(n => n.id === id ? { ...n, is_read: true } : n)
-      )
-      const newUnread = notifications.filter(n => !n.is_read && n.id !== id).length
-      onUnreadCountChange(newUnread)
-    } catch {
-      // silent
+      await markAllRead()
+    } catch (err) {
+      notifyError(err, 'mark notifications as read')
     }
   }
 
-  const markAllRead = async () => {
-    setMarkingAll(true)
-    try {
-      await api.post('/notifications/read-all')
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
-      onUnreadCountChange(0)
-      toast({ title: 'All caught up', description: 'All notifications marked as read' })
-    } catch {
-      toast({ title: 'Error', description: 'Failed to mark notifications', variant: 'destructive' })
-    } finally {
-      setMarkingAll(false)
+  const handleRowActivate = (n: Notification) => {
+    if (!n.is_read) {
+      markRead(n).catch((err) => notifyError(err, 'mark the notification as read'))
     }
   }
 
-  const unreadCount = notifications.filter(n => !n.is_read).length
-
-  if (!open) return null
+  const { items } = query
+  const hasMore = query.state.page < query.pages
 
   return createPortal(
     <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={onClose} aria-hidden />
 
-      {/* Panel */}
-      <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-card border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="notification-panel-title"
+        className="fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-card shadow-2xl animate-in slide-in-from-right duration-200"
+      >
+        <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-2">
             <Bell className="h-5 w-5" />
-            <h2 className="text-lg font-semibold">Notifications</h2>
+            <h2 id="notification-panel-title" className="text-lg font-semibold">
+              Notifications
+            </h2>
             {unreadCount > 0 && (
               <Badge variant="destructive" className="text-xs">
                 {unreadCount}
@@ -113,90 +125,116 @@ export function NotificationPanel({ open, onClose, onUnreadCountChange }: Notifi
           </div>
           <div className="flex items-center gap-2">
             {unreadCount > 0 && (
-              <Button variant="ghost" size="sm" onClick={markAllRead} disabled={markingAll}>
-                {markingAll ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <CheckCheck className="h-4 w-4 mr-1" />}
+              <Button variant="ghost" size="sm" onClick={() => void handleMarkAll()}>
+                <CheckCheck className="mr-1 h-4 w-4" />
                 Mark all read
               </Button>
             )}
-            <Button variant="ghost" size="icon-sm" onClick={onClose}>
+            <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close notifications">
               <X className="h-4 w-4" />
             </Button>
           </div>
         </div>
 
-        {/* Notification list */}
         <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+          {query.isLoading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </div>
-          ) : notifications.length === 0 ? (
+          ) : query.error && items.length === 0 ? (
+            <div role="alert" className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+              <p className="text-sm font-medium">{describeError(query.error).title}</p>
+              <p className="text-xs text-muted-foreground">{describeError(query.error).description}</p>
+              <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-              <Inbox className="h-12 w-12 mb-4 opacity-50" />
+              <Inbox className="mb-4 h-12 w-12 opacity-50" />
               <p className="font-medium">No notifications</p>
-              <p className="text-sm mt-1">You&apos;re all caught up!</p>
+              <p className="mt-1 text-sm">You&apos;re all caught up.</p>
             </div>
           ) : (
-            <div className="divide-y divide-border">
-              {notifications.map(notification => {
-                const icon = typeIcons[notification.type] || <Bell className="h-4 w-4 text-muted-foreground" />
-                const href = notification.incident
-                  ? `/dashboard/incidents/${notification.incident.id}`
-                  : notification.action_url || '#'
+            <ul className="divide-y divide-border" aria-label="Notifications">
+              {items.map((n) => (
+                <li key={n.id}>
+                  <NotificationRow notification={n} onActivate={handleRowActivate} onNavigate={onClose} />
+                </li>
+              ))}
+            </ul>
+          )}
 
-                return (
-                  <div
-                    key={notification.id}
-                    className={`p-4 hover:bg-muted/50 transition-colors cursor-pointer ${
-                      !notification.is_read ? 'bg-primary/5' : ''
-                    }`}
-                    onClick={() => {
-                      if (!notification.is_read) markAsRead(notification.id)
-                    }}
-                  >
-                    <div className="flex gap-3">
-                      <div className="mt-0.5 shrink-0">
-                        {icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm ${!notification.is_read ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
-                            {notification.title}
-                          </p>
-                          {!notification.is_read && (
-                            <div className="w-2 h-2 rounded-full bg-cyan-500 shrink-0 mt-1.5" />
-                          )}
-                        </div>
-                        {notification.message && (
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                            {notification.message}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-[10px] text-muted-foreground">
-                            {formatRelativeTime(notification.created_at)}
-                          </span>
-                          {notification.incident && (
-                            <Link
-                              href={href}
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
-                            >
-                              #{notification.incident.incident_number}
-                              <ChevronRight className="h-3 w-3" />
-                            </Link>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+          {hasMore && items.length > 0 && (
+            <div className="p-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full"
+                disabled={query.isFetching}
+                onClick={() => query.setPage(query.state.page + 1)}
+              >
+                {query.isFetching && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Load more
+              </Button>
             </div>
           )}
         </div>
       </div>
     </>,
     document.body
+  )
+}
+
+function NotificationRow({
+  notification: n,
+  onActivate,
+  onNavigate,
+}: {
+  notification: Notification
+  onActivate: (n: Notification) => void
+  onNavigate: () => void
+}) {
+  const href = notificationHref(n)
+  const body = (
+    <div className="flex gap-3">
+      <div className="mt-0.5 shrink-0">{TYPE_ICONS[n.type] ?? <Bell className="h-4 w-4 text-muted-foreground" />}</div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className={cn('text-sm', n.is_read ? 'text-muted-foreground' : 'font-medium text-foreground')}>{n.title}</p>
+          {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-cyan-500" aria-label="Unread" />}
+        </div>
+        {n.message && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{n.message}</p>}
+        <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>{formatRelativeTime(n.created_at)}</span>
+          {n.incident && <span className="text-cyan-400">#{n.incident.incident_number}</span>}
+        </div>
+      </div>
+    </div>
+  )
+  const className = cn(
+    'block w-full p-4 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/60 focus-visible:outline-none',
+    !n.is_read && 'bg-primary/5'
+  )
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={className}
+        onClick={() => {
+          onActivate(n)
+          onNavigate()
+        }}
+      >
+        {body}
+      </Link>
+    )
+  }
+  return (
+    <button type="button" className={className} onClick={() => onActivate(n)}>
+      {body}
+    </button>
   )
 }

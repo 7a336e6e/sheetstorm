@@ -6,17 +6,21 @@ api_bp = Blueprint('api_v1', __name__)
 # Import and register endpoint modules
 from app.api.v1.endpoints import health
 from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import api_keys
 from app.api.v1.endpoints import users
 from app.api.v1.endpoints import incidents
 from app.api.v1.endpoints import timeline
+from app.api.v1.endpoints import provenance
 from app.api.v1.endpoints import compromised
 from app.api.v1.endpoints import iocs
 from app.api.v1.endpoints import artifacts
+from app.api.v1.endpoints import evidence
 from app.api.v1.endpoints import tasks
 from app.api.v1.endpoints import attack_graph
 from app.api.v1.endpoints import reports
 from app.api.v1.endpoints import integrations
 from app.api.v1.endpoints import audit
+from app.api.v1.endpoints import admin_status
 from app.api.v1.endpoints import notifications
 from app.api.v1.endpoints import organization
 from app.api.v1.endpoints import teams
@@ -27,5 +31,21 @@ from app.api.v1.endpoints import threat_intel
 from app.api.v1.endpoints import knowledge_base
 from app.api.v1.endpoints import defang
 from app.api.v1.endpoints import search
+from app.api.v1.endpoints import sessions
+from app.api.v1.endpoints import exports
 from app.api.v1.endpoints import custom_fields
 from app.api.v1.endpoints import playbooks
+from app.api.v1.endpoints import questions
+from app.api.v1.endpoints import case_templates
+from app.api.v1.endpoints import dashboard
+from app.api.v1.endpoints import decision_log
+from app.api.v1.endpoints import metrics
+from app.api.v1.endpoints import user_admin
+from app.api.v1.endpoints import auth_lifecycle
+from app.api.v1.endpoints import system
+from app.api.v1.endpoints import question_library_admin
+
+# Restricted-account gate (must-change-password, MFA enrollment): one
+# before_request for the whole API.
+from app.middleware import account_state
+account_state.register(api_bp)

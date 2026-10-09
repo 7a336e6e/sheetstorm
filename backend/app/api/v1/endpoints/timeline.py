@@ -3,39 +3,64 @@ import re
 from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from sqlalchemy import case
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
+from app.services import provenance_service as prov
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
+from app.utils.pagination import in_list, list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
+
+
+# Confidence ranks low < medium < high < certain (unset ranks lowest).
+_CONFIDENCE_RANK = case({c: i + 1 for i, c in enumerate(TimelineEvent.CONFIDENCE_LEVELS)},
+                        value=TimelineEvent.confidence_level, else_=0)
+
+TIMELINE_SORTABLE = {
+    'timestamp': TimelineEvent.timestamp,
+    # Dual time: events without a detection time sort last either way.
+    'detection_time': TimelineEvent.detection_time,
+    # Dwell = detection_time - timestamp (NULL without a detection time).
+    'dwell': TimelineEvent.detection_time - TimelineEvent.timestamp,
+    'confidence': _CONFIDENCE_RANK,
+    'created_at': TimelineEvent.created_at,
+    'hostname': TimelineEvent.hostname,
+    'phase': TimelineEvent.phase,
+}
+TIMELINE_FILTERS = {
+    'phase': (TimelineEvent.phase, 'int'),
+    'hostname': (TimelineEvent.hostname, 'ilike'),
+    'host_id': (TimelineEvent.host_id, 'uuid'),
+    'start_date': (TimelineEvent.timestamp, 'date_from'),
+    'end_date': (TimelineEvent.timestamp, 'date_to'),
+    'key_only': (TimelineEvent.is_key_event == True, 'flag'),  # noqa: E712
+    'ioc_only': (TimelineEvent.is_ioc == True, 'flag'),  # noqa: E712
+    'confidence': (TimelineEvent.confidence_level, in_list(TimelineEvent.CONFIDENCE_LEVELS)),
+    'has_detection': (TimelineEvent.detection_time.isnot(None), 'bool'),
+    **prov.list_filters(TimelineEvent),
+}
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline', methods=['GET'])
 @jwt_required()
 @require_incident_access('timeline:read')
 def list_timeline_events(incident_id):
-    """List timeline events for an incident."""
+    """List timeline events (utils/pagination.py contract; q/search over
+    activity+hostname; filters phase, hostname, host_id, mitre_tactic,
+    start_date, end_date, key_only, ioc_only, confidence (comma list of
+    low|medium|high|certain), has_detection (true|false); provenance filters
+    provenance_level (none|partial|full|verified), source_artifact_id,
+    source_evidence_id, unverified (provenance recorded, not yet verified)).
+
+    Sort: timestamp (default), detection_time, dwell, confidence, created_at,
+    hostname, phase; NULLs (no detection time / confidence) sort last."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = TimelineEvent.query.filter_by(incident_id=incident.id)
-
-    # Filters
-    phase = request.args.get('phase', type=int)
-    if phase:
-        query = query.filter(TimelineEvent.phase == phase)
-
-    hostname = request.args.get('hostname')
-    if hostname:
-        query = query.filter(TimelineEvent.hostname.ilike(f'%{hostname}%'))
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(TimelineEvent.host_id == host_id)
 
     mitre_tactic = request.args.get('mitre_tactic')
     if mitre_tactic and (len(mitre_tactic) > 64 or not re.fullmatch(r'[a-z0-9-]+', mitre_tactic)):
@@ -48,33 +73,11 @@ def list_timeline_events(incident_id):
             TimelineEvent.mitre_mappings.contains([{'tactic': mitre_tactic}])
         ))
 
-    start_date = parse_datetime(request.args.get('start_date'), 'start_date')
-    if start_date:
-        query = query.filter(TimelineEvent.timestamp >= start_date)
-
-    end_date = parse_datetime(request.args.get('end_date'), 'end_date')
-    if end_date:
-        query = query.filter(TimelineEvent.timestamp <= end_date)
-
-    key_only = request.args.get('key_only')
-    if key_only and key_only.lower() == 'true':
-        query = query.filter(TimelineEvent.is_key_event == True)
-
-    ioc_only = request.args.get('ioc_only')
-    if ioc_only and ioc_only.lower() == 'true':
-        query = query.filter(TimelineEvent.is_ioc == True)
-
-    pagination = query.order_by(TimelineEvent.timestamp.asc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [e.to_dict() for e in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=TIMELINE_SORTABLE, default_sort='timestamp', id_col=TimelineEvent.id,
+        filters=TIMELINE_FILTERS, search_columns=(TimelineEvent.activity, TimelineEvent.hostname),
+        serialize=lambda e: e.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline', methods=['POST'])
@@ -87,7 +90,9 @@ def create_timeline_event(incident_id):
     incident = g.incident
     data = json_body()
 
-    timestamp = parse_datetime(data.get('timestamp'), 'timestamp', required=True)
+    # `timestamp` may be omitted when `raw_timestamp` (+ timezone) lets the
+    # server derive it (provenance_service.apply).
+    timestamp = parse_datetime(data.get('timestamp'), 'timestamp', required=not data.get('raw_timestamp'))
     detection_time = parse_datetime(data.get('detection_time'), 'detection_time')
     confidence_level = check_choice(data.get('confidence_level') or None,
                                     TimelineEvent.CONFIDENCE_LEVELS, 'confidence_level', allow_none=True)
@@ -139,6 +144,7 @@ def create_timeline_event(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     hostname = data.get('hostname')
+    host = None
     if host_id:
         host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host:
@@ -163,6 +169,9 @@ def create_timeline_event(incident_id):
         extra_data=data.get('extra_data') or {},
         created_by=user.id
     )
+    prov.apply(event, data, host=host, creating=True)
+    if event.timestamp is None:
+        return jsonify({'error': 'bad_request', 'message': 'timestamp is required'}), 400
 
     db.session.add(event)
     db.session.commit()
@@ -174,8 +183,9 @@ def create_timeline_event(incident_id):
         # Don't fail the request if graph update fails, just log it
         print(f"Error updating attack graph: {e}")
 
-    # Broadcast to incident room
-    socketio.emit('timeline_event_added', event.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'timeline_event', 'created', obj=event)
+    if event.host_id:  # the graph automation above may have added nodes/edges
+        realtime.emit_resync(incident.id, ['attack_graph'], 'timeline_automation')
 
     return jsonify(event.to_dict()), 201
 
@@ -192,6 +202,10 @@ def update_timeline_event(incident_id, event_id):
     event = TimelineEvent.query.filter_by(id=event_id, incident_id=incident.id).first()
     if not event:
         return jsonify({'error': 'not_found', 'message': 'Timeline event not found'}), 404
+    conflict = precondition(event)
+    if conflict:
+        return conflict, conflict.status_code
+    prov_before = prov.snapshot(event)
 
     # Validate before mutating anything.
     if 'timestamp' in data:
@@ -284,12 +298,14 @@ def update_timeline_event(incident_id, event_id):
     if 'extra_data' in data:
         event.extra_data = data['extra_data']
 
-    db.session.commit()
+    prov.apply(event, data, before=prov_before, host=prov.host_for(event))
 
-    # Broadcast update
-    socketio.emit('timeline_event_updated', event.to_dict(), room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(event)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'timeline_event', 'updated', obj=event)
 
-    return jsonify(event.to_dict()), 200
+    return set_etag(jsonify(event.to_dict()), event), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline/<uuid:event_id>', methods=['DELETE'])
@@ -303,12 +319,15 @@ def delete_timeline_event(incident_id, event_id):
     event = TimelineEvent.query.filter_by(id=event_id, incident_id=incident.id).first()
     if not event:
         return jsonify({'error': 'not_found', 'message': 'Timeline event not found'}), 404
+    conflict = precondition(event)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(event)
-    db.session.commit()
-
-    # Broadcast deletion
-    socketio.emit('timeline_event_deleted', {'id': str(event_id)}, room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(event)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'timeline_event', 'deleted', id=event_id)
 
     return jsonify({'message': 'Timeline event deleted'}), 200
 
@@ -347,9 +366,12 @@ def mark_event_as_ioc(incident_id, event_id):
         is_malicious=data.get('is_malicious', True),
         created_by=user.id
     )
+    prov.copy_provenance(event, ioc)  # the indicator cites the same source as the event
 
     db.session.add(ioc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'timeline_event', 'updated', obj=event)
+    realtime.emit_change(incident.id, 'host_ioc', 'created', obj=ioc)
 
     return jsonify({
         'message': 'Event marked as IOC',

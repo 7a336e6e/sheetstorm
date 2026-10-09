@@ -1,11 +1,22 @@
-"""Audit logging middleware"""
+"""Audit logging middleware.
+
+Every audit row is written by :func:`_write_audit_row` (the single writer),
+called from the ``@audit_log`` decorator and :func:`log_audit_event`. It
+links the row into its organization's keyed hash chain (``services/ledger``)
+in the same transaction as the insert. ``audit_logs`` is append-only (DB
+trigger), so rows are never updated afterwards.
+"""
+import json
 import logging
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 from functools import wraps
-from flask import request, g
+from flask import request, g, has_request_context
 from app import db
 from app.models import AuditLog
+from app.utils.hash_chain import canonical_json
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +41,10 @@ _BROADCAST_EVENT_TYPES = {
 _PRIVATE_DETAIL_KEYS = {
     'hashes', 'computed_hashes', 'stored_hashes', 'md5', 'sha1', 'sha256', 'sha512',
     'reason', 'args', 'purpose',
+    # Before/after diffs (utils/audit_diff.py): admins fetch the full row.
+    'changes',
+    # Evidence register / custody ledger (hashes, acknowledgment names, party PII).
+    'acquisition_hashes', 'observed_hash', 'expected_hash', 'entry_hash', 'typed_name', 'email', 'phone',
 }
 
 
@@ -40,13 +55,33 @@ def public_activity_details(details):
     return {k: v for k, v in details.items() if k not in _PRIVATE_DETAIL_KEYS}
 
 
-def _broadcast_activity(log_entry):
-    """Emit a WebSocket event for the activity feed.
+def _incident_activity_room(log_entry):
+    """Scope room for an incident-scoped activity event, or None to drop it.
 
-    Incident-scoped events go only to that incident's room (whose members
-    passed an incident access check on join). Org-wide events go to the org
-    room, except admin actions which go only to the org's administrators.
-    Sensitive detail keys are never broadcast.
+    The event goes to the room of the scope its resource belongs to
+    (``realtime.scope_for_resource_type``), so only members holding that
+    scope's read permission receive it (e.g. artifact activity never reaches
+    a Viewer without ``artifacts:read``). Events without a resource type are
+    incident-level (base room). Unknown resource types are dropped: their
+    read permission is not known.
+    """
+    from app.services import realtime
+    if not log_entry.resource_type:
+        scope = realtime.BASE_SCOPE
+    else:
+        scope = realtime.scope_for_resource_type(log_entry.resource_type)
+        if scope is None:
+            return None
+    return realtime.scope_room(log_entry.incident_id, scope)
+
+
+def _broadcast_activity(log_entry):
+    """Emit a WebSocket ``activity:new`` event for the activity feed.
+
+    Incident-scoped events go only to the incident's scope room for the
+    resource (see :func:`_incident_activity_room`). Org-wide events go to the
+    org room, except admin actions which go only to holders of
+    audit_logs:read. Sensitive detail keys are never broadcast.
     """
     if not log_entry or not log_entry.organization_id:
         return
@@ -67,15 +102,23 @@ def _broadcast_activity(log_entry):
             'details': public_activity_details(log_entry.details),
         }
         if log_entry.incident_id:
-            socketio.emit('activity:new', payload, room=f'incident_{log_entry.incident_id}')
+            room = _incident_activity_room(log_entry)
+            if room is None:
+                logger.debug('activity:new dropped (no scope for resource_type %r)', log_entry.resource_type)
+                return
+            socketio.emit('activity:new', payload, room=room)
         elif log_entry.event_type == 'admin_action':
+            # Admin actions go only to users who may read the audit log.
             from app.models import User, UserRole, Role
             admin_ids = [
-                uid for (uid,) in db.session.query(User.id)
+                uid for (uid,) in db.session.query(User.id).distinct()
                 .join(UserRole, UserRole.user_id == User.id)
                 .join(Role, Role.id == UserRole.role_id)
                 .filter(User.organization_id == log_entry.organization_id,
-                        Role.name == 'Administrator', User.is_active.is_(True))
+                        Role.permissions.contains(['audit_logs:read']),
+                        db.or_(db.and_(Role.organization_id.is_(None), Role.is_system.is_(True)),
+                               Role.organization_id == log_entry.organization_id),
+                        User.is_active.is_(True))
                 .all()
             ]
             for uid in admin_ids:
@@ -84,6 +127,74 @@ def _broadcast_activity(log_entry):
             socketio.emit('activity:new', payload, room=f'org_{log_entry.organization_id}')
     except Exception:
         logger.debug('Activity broadcast skipped', exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# The single writer
+# ---------------------------------------------------------------------------
+
+_UUID_FIELDS = ('organization_id', 'user_id', 'resource_id', 'incident_id')
+
+
+def _as_uuid(value):
+    if value is None or isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))
+
+
+def _write_audit_row(**fields):
+    """Insert one audit row, chained, and commit. Returns the row.
+
+    The only place that creates ``AuditLog`` rows. In one transaction it:
+    flushes the caller's pending changes (so their row locks are taken
+    before the chain-head lock, never after), locks the org's chain head
+    (``ledger.advance``), stamps id / created_at / chain_seq / prev_hash,
+    adds ``details.auth_context`` for API-key requests, canonicalizes
+    ``details`` (so the stored JSONB hashes identically when
+    read back), computes the keyed ``row_hash``, inserts the row, moves the
+    head and commits. Raises on failure; callers roll back and log.
+    """
+    from app.services import ledger
+
+    details = fields.pop('details', None)
+    details = dict(details) if isinstance(details, dict) else {}
+    # API-key attribution: a row written while serving a key token records
+    # which key acted, next to the owner user (no new column).
+    if has_request_context() and 'auth_context' not in details:
+        from app.utils.token_scopes import api_key_auth_context
+        auth_context = api_key_auth_context()
+        if auth_context:
+            details['auth_context'] = auth_context
+    details = json.loads(canonical_json(details, strict=False))
+    for name in _UUID_FIELDS:
+        value = fields.get(name)
+        try:
+            fields[name] = _as_uuid(value)
+        except (ValueError, TypeError, AttributeError):
+            # Not a UUID (e.g. a numeric id): keep the reference in details.
+            fields[name] = None
+            details.setdefault(f'{name}_ref', str(value)[:200])
+
+    session = db.session
+    session.flush()
+
+    org_id = fields.get('organization_id')
+    chain_key = ledger.audit_chain_key(org_id)
+    key, key_id = ledger.ledger_key()
+    seq, prev = ledger.advance(chain_key, session)
+
+    row = AuditLog(**fields)
+    row.id = uuid.uuid4()
+    row.created_at = datetime.now(timezone.utc)
+    row.details = details
+    row.chain_seq = seq
+    row.prev_hash = prev or ledger.audit_genesis(org_id)
+    row.chain_key_id = key_id
+    row.row_hash = ledger.keyed_link_hash(key)(ledger.AUDIT_DOMAIN, row.prev_hash, row.chain_payload())
+    session.add(row)
+    ledger.commit_head(chain_key, seq, row.row_hash, session)
+    session.commit()
+    return row
 
 
 def _parse_user_agent(ua_string: str) -> dict:
@@ -214,6 +325,17 @@ def _collect_request_context() -> dict:
     }
 
 
+def _response_status(result):
+    """HTTP status of a view's return value: ``(body, status[, headers])``,
+    ``(response, headers)``, a ``Response`` or a bare body (200)."""
+    if isinstance(result, tuple):
+        if len(result) >= 2 and isinstance(result[1], int):
+            return result[1]
+        result = result[0] if result else None
+    status = getattr(result, 'status_code', None)
+    return status if isinstance(status, int) else 200
+
+
 def audit_log(event_type, action, resource_type=None):
     """Decorator to log actions to audit trail.
 
@@ -226,6 +348,9 @@ def audit_log(event_type, action, resource_type=None):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             start_time = time.monotonic()
+            # Diff slots filled by the endpoint via utils.audit_diff.record_changes.
+            g.pop('audit_changes', None)
+            g.pop('audit_extra', None)
 
             # Execute the wrapped function
             result = f(*args, **kwargs)
@@ -234,6 +359,13 @@ def audit_log(event_type, action, resource_type=None):
 
             # Log after successful execution
             try:
+                status_code = _response_status(result)
+                if status_code >= 400:
+                    # An error response must not persist a half-applied
+                    # change (fields set before a validation 400): the audit
+                    # row's commit below would flush it. Work the handler
+                    # already committed (e.g. security events) is unaffected.
+                    db.session.rollback()
                 user = getattr(g, 'current_user', None)
                 incident = getattr(g, 'incident', None)
 
@@ -248,7 +380,19 @@ def audit_log(event_type, action, resource_type=None):
 
                 ctx = _collect_request_context()
 
-                log_entry = AuditLog(
+                details = {
+                    'args': {k: str(v) for k, v in kwargs.items() if k != 'password'},
+                }
+                # Diff / extra context recorded by the handler via
+                # utils.audit_diff.record_changes().
+                audit_extra = g.pop('audit_extra', None)
+                audit_changes = g.pop('audit_changes', None)
+                if audit_extra:
+                    details.update({k: v for k, v in audit_extra.items() if k not in ('args', 'changes')})
+                if audit_changes:
+                    details['changes'] = audit_changes
+
+                log_entry = _write_audit_row(
                     organization_id=user.organization_id if user else None,
                     user_id=user.id if user else None,
                     user_email=user.email if user else None,
@@ -257,15 +401,11 @@ def audit_log(event_type, action, resource_type=None):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     incident_id=incident.id if incident else kwargs.get('incident_id'),
-                    status_code=result[1] if isinstance(result, tuple) and len(result) >= 2 else 200,
+                    status_code=status_code,
                     duration_ms=duration_ms,
-                    details={
-                        'args': {k: str(v) for k, v in kwargs.items() if k != 'password'},
-                    },
+                    details=details,
                     **ctx,
                 )
-                db.session.add(log_entry)
-                db.session.commit()
                 _broadcast_activity(log_entry)
             except Exception:
                 try:
@@ -286,7 +426,10 @@ def log_audit_event(
     resource_id=None,
     incident_id=None,
     details=None,
-    user=None
+    user=None,
+    changes=None,
+    organization_id=None,
+    actor_label=None,
 ):
     """Helper function to log audit events manually.
 
@@ -298,27 +441,36 @@ def log_audit_event(
             resource_id=account.id,
             details={'account_name': account.account_name}
         )
+
+    changes: a diff from utils.audit_diff.audit_changes(), stored as
+        details['changes'].
+    organization_id: explicit org for CLI / system events without a user.
+    actor_label: a system actor stored as user_email (e.g. 'system:purge');
+        when given, the current request user is not used.
     """
     try:
-        if user is None:
+        if user is None and actor_label is None:
+            # A system actor (actor_label) never inherits a request user.
             user = getattr(g, 'current_user', None)
 
-        ctx = _collect_request_context() if request else {}
+        ctx = _collect_request_context() if has_request_context() else {}
 
-        log_entry = AuditLog(
-            organization_id=user.organization_id if user else None,
+        details = dict(details or {})
+        if changes:
+            details['changes'] = changes
+
+        log_entry = _write_audit_row(
+            organization_id=organization_id or (user.organization_id if user else None),
             user_id=user.id if user else None,
-            user_email=user.email if user else None,
+            user_email=user.email if user else actor_label,
             event_type=event_type,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
             incident_id=incident_id,
-            details=details or {},
+            details=details,
             **ctx,
         )
-        db.session.add(log_entry)
-        db.session.commit()
         _broadcast_activity(log_entry)
         return log_entry
     except Exception:
@@ -341,13 +493,15 @@ def log_auth_event(action, user=None, success=True, details=None):
     )
 
 
-def log_security_event(action, resource_type=None, resource_id=None, incident_id=None, details=None):
-    """Log security-sensitive events."""
+def log_security_event(action, resource_type=None, resource_id=None, incident_id=None, details=None,
+                       **kwargs):
+    """Log security-sensitive events (kwargs: user, changes, organization_id, actor_label)."""
     return log_audit_event(
         event_type='security_event',
         action=action,
         resource_type=resource_type,
         resource_id=resource_id,
         incident_id=incident_id,
-        details=details
+        details=details,
+        **kwargs,
     )

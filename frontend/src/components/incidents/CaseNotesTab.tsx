@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { useEffect, useRef, useState } from 'react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,9 +24,13 @@ import {
 } from '@/components/ui/select'
 import { TableEmpty } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatDateTime, formatRelativeTime } from '@/lib/utils'
+import { DataTablePager, FilterSelect } from '@/components/ui/data-table'
+import { usePaginatedQuery } from '@/hooks/use-paginated-query'
+import { formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
-import type { CaseNote } from '@/types'
+import { invalidate } from '@/lib/query-cache'
+import { describeError, notifyError } from '@/lib/errors'
+import type { CaseNote, VersionedRow } from '@/types'
 import {
   Plus,
   StickyNote,
@@ -37,21 +41,20 @@ import {
   User,
   Clock,
   Search,
-  Filter,
-  MessageSquare,
   HelpCircle,
   CheckSquare,
   ArrowRightLeft,
   FileSearch,
   Lightbulb,
   Tag,
+  AlertTriangle,
 } from 'lucide-react'
-import { useConfirm } from '@/components/ui/confirm-dialog'
-import { useAuthStore } from '@/lib/store'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
+import { cn } from '@/lib/utils'
+import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
 
-interface CaseNotesTabProps {
-  incidentId: string
-}
+type NoteRow = VersionedRow<CaseNote>
 
 const CATEGORY_OPTIONS = [
   { value: 'general', label: 'General', icon: StickyNote, color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' },
@@ -63,17 +66,25 @@ const CATEGORY_OPTIONS = [
   { value: 'hypothesis', label: 'Hypothesis', icon: Lightbulb, color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
 ]
 
-export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
-  const confirm = useConfirm()
-  const { user } = useAuthStore()
-  const [notes, setNotes] = useState<CaseNote[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [showModal, setShowModal] = useState(false)
-  const [editingNote, setEditingNote] = useState<CaseNote | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+const getCategoryInfo = (category: string) =>
+  CATEGORY_OPTIONS.find(c => c.value === category) || CATEGORY_OPTIONS[0]
 
+export function CaseNotesTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
+  const confirm = useConfirm()
+  const endpoint = `/incidents/${incidentId}/case-notes`
+  // Server default sort: pinned first, then newest.
+  const query = usePaginatedQuery<NoteRow>({
+    endpoint,
+    urlKey: 'notes',
+    focus: focusRowId,
+    live: 'case_note',
+  })
+  const canWrite = usePermission('incidents:update')
+  const canDelete = usePermission('case_notes:delete')
+
+  const [showModal, setShowModal] = useState(false)
+  const [editingNote, setEditingNote] = useState<NoteRow | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [form, setForm] = useState({
     title: '',
     content: '',
@@ -81,21 +92,20 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
     is_pinned: false,
   })
 
-  const loadNotes = async () => {
-    try {
-      setIsLoading(true)
-      const res = await api.get<{ items: CaseNote[] }>(`/incidents/${incidentId}/case-notes`)
-      setNotes(res.items || [])
-    } catch (error) {
-      console.error('Failed to load case notes:', error)
-    } finally {
-      setIsLoading(false)
-    }
+  // Search box: local text, debounced by the query.
+  const [search, setSearch] = useState(query.state.q ?? '')
+  const [syncedQ, setSyncedQ] = useState(query.state.q)
+  if (query.state.q !== syncedQ) {
+    setSyncedQ(query.state.q)
+    setSearch(query.state.q ?? '')
   }
 
+  // Deep link: bring the focused note into view once it is rendered.
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   useEffect(() => {
-    loadNotes()
-  }, [incidentId])
+    if (!focusRowId) return
+    cardRefs.current.get(focusRowId)?.scrollIntoView?.({ block: 'center' })
+  }, [focusRowId, query.items])
 
   const resetForm = () => {
     setForm({ title: '', content: '', category: 'general', is_pinned: false })
@@ -107,7 +117,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
     setShowModal(true)
   }
 
-  const handleOpenEdit = (note: CaseNote) => {
+  const handleOpenEdit = (note: NoteRow) => {
     setEditingNote(note)
     setForm({
       title: note.title,
@@ -123,103 +133,48 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
     setIsSubmitting(true)
     try {
       if (editingNote) {
-        await api.put(`/incidents/${incidentId}/case-notes/${editingNote.id}`, form)
+        await api.put(`${endpoint}/${editingNote.id}`, form, { ifMatch: editingNote.version })
       } else {
-        await api.post(`/incidents/${incidentId}/case-notes`, form)
+        await api.post(endpoint, form)
       }
       setShowModal(false)
       resetForm()
-      await loadNotes()
+      invalidate(endpoint)
     } catch (error) {
-      console.error('Failed to save case note:', error)
+      notifyError(error, editingNote ? 'save the note' : 'add the note')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleDelete = async (note: CaseNote) => {
-    const ok = await confirm({
-      title: 'Delete Case Note',
-      description: `Are you sure you want to delete "${note.title}"? This cannot be undone.`,
-      confirmLabel: 'Delete',
-      variant: 'destructive',
-    })
-    if (!ok) return
+  const handleDelete = async (note: NoteRow) => {
+    if (!(await confirmDelete(confirm, 'case note', note.title))) return
     try {
-      await api.delete(`/incidents/${incidentId}/case-notes/${note.id}`)
-      await loadNotes()
+      await api.delete(`${endpoint}/${note.id}`, undefined, { ifMatch: note.version })
+      invalidate(endpoint)
     } catch (error) {
-      console.error('Failed to delete case note:', error)
+      notifyError(error, 'delete the note')
     }
   }
 
-  const handleTogglePin = async (note: CaseNote) => {
+  const handleTogglePin = async (note: NoteRow) => {
     try {
-      await api.put(`/incidents/${incidentId}/case-notes/${note.id}`, {
-        is_pinned: !note.is_pinned,
-      })
-      await loadNotes()
+      await api.put(`${endpoint}/${note.id}`, { is_pinned: !note.is_pinned }, { ifMatch: note.version })
+      invalidate(endpoint)
     } catch (error) {
-      console.error('Failed to toggle pin:', error)
+      notifyError(error, note.is_pinned ? 'unpin the note' : 'pin the note')
     }
   }
 
-  // Filter and sort
-  const filteredNotes = notes
-    .filter(n => {
-      if (categoryFilter !== 'all' && n.category !== categoryFilter) return false
-      if (search) {
-        const q = search.toLowerCase()
-        return n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q)
-      }
-      return true
-    })
-    .sort((a, b) => {
-      // Pinned first, then by created_at descending
-      if (a.is_pinned && !b.is_pinned) return -1
-      if (!a.is_pinned && b.is_pinned) return 1
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    })
-
-  const getCategoryInfo = (category: string) => {
-    return CATEGORY_OPTIONS.find(c => c.value === category) || CATEGORY_OPTIONS[0]
-  }
-
-  const isAdmin = user?.roles?.includes('Administrator') ?? false
-  const canWrite = user?.permissions?.includes('incidents:update') ?? false
-
-  const canEdit = (note: CaseNote) => {
-    if (!user || !canWrite) return false
-    return note.author?.id === user.id || isAdmin
-  }
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Case Notes</CardTitle>
-          <CardDescription>Loading...</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 p-4 space-y-3">
-              <Skeleton className="h-5 w-1/3" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-2/3" />
-              <div className="flex items-center gap-3">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-3 w-20" />
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    )
-  }
+  const filtersActive = !!query.state.q || Object.keys(query.state.filters).length > 0
+  const errorInfo = query.error ? describeError(query.error) : null
+  const notes = query.items
 
   return (
     <>
       <div className="space-y-4">
+        <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="note" />
+
         {/* Filters & Action */}
         <Card>
           <CardContent className="p-4">
@@ -228,25 +183,26 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
+                    type="search"
+                    aria-label="Search notes"
                     placeholder="Search notes..."
                     value={search}
-                    onChange={e => setSearch(e.target.value)}
+                    onChange={e => {
+                      setSearch(e.target.value)
+                      query.setQuery(e.target.value)
+                    }}
                     className="pl-10"
                     variant="glass"
                   />
                 </div>
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <Filter className="h-4 w-4 mr-2" />
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {CATEGORY_OPTIONS.map(cat => (
-                      <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <FilterSelect
+                  label="Category"
+                  allLabel="All categories"
+                  value={query.state.filters.category}
+                  onChange={(v) => query.setFilter('category', v)}
+                  options={CATEGORY_OPTIONS.map((c) => ({ value: c.value, label: c.label }))}
+                  className="w-[180px]"
+                />
               </div>
               {canWrite && (
                 <Button onClick={handleOpenCreate}>
@@ -257,37 +213,84 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
           </CardContent>
         </Card>
 
+        {errorInfo && notes.length > 0 && (
+          <div role="alert" className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <span>{errorInfo.description}</span>
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => void query.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         {/* Notes List */}
-        {filteredNotes.length === 0 ? (
+        {query.isLoading ? (
+          <div className="space-y-3" aria-busy="true">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
+                <Skeleton className="h-5 w-1/3" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            ))}
+          </div>
+        ) : errorInfo && notes.length === 0 ? (
+          <Card>
+            <CardContent className="py-12">
+              <div role="alert" className="flex flex-col items-center gap-2 text-center">
+                <AlertTriangle className="h-6 w-6 text-destructive" />
+                <p className="text-sm font-medium">{errorInfo.title}</p>
+                <p className="max-w-sm text-xs text-muted-foreground">{errorInfo.description}</p>
+                <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+                  Retry
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : notes.length === 0 ? (
           <Card>
             <CardContent className="p-0">
               <TableEmpty
-                title={search || categoryFilter !== 'all' ? 'No matching notes' : 'No case notes yet'}
-                description={search || categoryFilter !== 'all' ? 'Try adjusting your search or filter criteria.' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
+                title={filtersActive ? 'No matching notes' : 'No case notes yet'}
+                description={filtersActive ? 'No notes match the current search or filters.' : 'Document your investigation findings, observations, and key decisions as you work through this incident.'}
                 icon={<StickyNote className="w-8 h-8" />}
-                action={!(search || categoryFilter !== 'all') && canWrite && (
+                action={filtersActive ? (
+                  <Button size="sm" variant="outline" onClick={query.resetFilters}>
+                    Clear filters
+                  </Button>
+                ) : canWrite ? (
                   <Button size="sm" variant="outline" onClick={handleOpenCreate}>
                     <Plus className="mr-2 h-3.5 w-3.5" /> Add Note
                   </Button>
-                )}
+                ) : undefined}
               />
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-3">
-            {filteredNotes.map(note => {
+          <div className={cn('space-y-3', query.isFetching && 'opacity-60 transition-opacity')} aria-busy={query.isFetching || undefined}>
+            {notes.map(note => {
                 const catInfo = getCategoryInfo(note.category)
                 const CatIcon = catInfo.icon
+                const isFocused = focusRowId === note.id
                 return (
                   <div
                     key={note.id}
-                    className={`rounded-xl bg-black/5 dark:bg-white/5 border p-4 ${note.is_pinned ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-black/10 dark:border-white/10'}`}
+                    ref={(el) => {
+                      if (el) cardRefs.current.set(note.id, el)
+                      else cardRefs.current.delete(note.id)
+                    }}
+                    data-testid="case-note"
+                    className={cn(
+                      'rounded-xl bg-white/5 border p-4',
+                      note.is_pinned ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-white/10',
+                      isFocused && 'ring-1 ring-primary/60 bg-primary/5'
+                    )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           {note.is_pinned && (
-                            <Pin className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0" />
+                            <Pin className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0" aria-label="Pinned" />
                           )}
                           <h4 className="font-medium text-foreground">{note.title}</h4>
                           <Badge className={`${catInfo.color} border text-[10px] px-1.5 py-0`}>
@@ -314,25 +317,33 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                           )}
                         </div>
                       </div>
-                      {(canEdit(note) || isAdmin) && (
+                      {(canWrite || canDelete) && (
                         <div className="flex items-center gap-1 flex-shrink-0">
-                          {canEdit(note) && (
+                          {canWrite && (
                             <>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleTogglePin(note)}
+                                aria-label={note.is_pinned ? 'Unpin note' : 'Pin note'}
                                 title={note.is_pinned ? 'Unpin' : 'Pin'}
                               >
                                 {note.is_pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(note)}>
+                              <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(note)} aria-label="Edit note" title="Edit">
                                 <Edit2 className="h-4 w-4" />
                               </Button>
                             </>
                           )}
-                          {isAdmin && (
-                            <Button variant="ghost" size="sm" onClick={() => handleDelete(note)} className="text-red-400 hover:text-red-300">
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(note)}
+                              aria-label="Delete note"
+                              title="Delete"
+                              className="text-red-400 hover:text-red-300"
+                            >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
@@ -342,9 +353,20 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                   </div>
                 )
               })}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {!query.isLoading && query.total > 0 && (
+          <DataTablePager
+            page={query.state.page}
+            pages={query.pages}
+            perPage={query.state.perPage}
+            total={query.total}
+            onPage={query.setPage}
+            onPerPage={query.setPerPage}
+          />
+        )}
+      </div>
 
       {/* Create/Edit Modal */}
       <Dialog open={showModal} onOpenChange={(open) => { if (!open) { setShowModal(false); resetForm() } }}>
@@ -394,7 +416,7 @@ export function CaseNotesTab({ incidentId }: CaseNotesTabProps) {
                 id="pin-note"
                 checked={form.is_pinned}
                 onChange={e => setForm({ ...form, is_pinned: e.target.checked })}
-                className="rounded border-black/10 dark:border-white/20 bg-black/5 dark:bg-white/5"
+                className="rounded border-white/20 bg-white/5"
               />
               <Label htmlFor="pin-note" className="text-sm cursor-pointer">Pin this note to the top</Label>
             </div>

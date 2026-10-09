@@ -16,6 +16,7 @@ from flask import current_app
 
 from app import db
 from app.models import Role, UserRole
+from app.permissions import with_implied
 
 logger = logging.getLogger(__name__)
 
@@ -86,21 +87,34 @@ def assign_roles_from_list(
     role_names: Sequence[str],
     organization_id,
     granted_by=None,
+    ceiling=None,
+    skipped=None,
 ) -> int:
     """Assign the listed roles to *user*, skipping any already present.
 
+    Names resolve among the roles visible to the user's org (system roles +
+    that org's custom roles). With `ceiling` (the acting admin), a role whose
+    permissions exceed the ceiling's is not assigned; its name is appended to
+    `skipped` when given.
+
     Returns the number of newly assigned roles.
     """
-    existing = {ur.role.name for ur in user.user_roles if ur.role}
+    existing = {ur.role.name.lower() for ur in user.user_roles if ur.role}
     assigned = 0
 
     for name in role_names:
-        if name in existing:
+        if name.lower() in existing:
             continue
-        role = Role.query.filter_by(name=name).first()
+        role = Role.resolve(name, user.organization_id)
         if not role:
             logger.warning("Role %r not found — skipping", name)
             continue
+        if ceiling is not None and not set(role.permissions or []) <= with_implied(ceiling.permissions):
+            logger.warning("Role %r exceeds the acting admin's permissions — skipping", name)
+            if skipped is not None and role.name not in skipped:
+                skipped.append(role.name)
+            continue
+        existing.add(role.name.lower())
         ur = UserRole(
             user_id=user.id,
             role_id=role.id,

@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/store'
+import { handleSessionRevoked, SESSION_REVOKED_EVENT } from '@/components/users/session-revoked'
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
 
@@ -52,8 +53,31 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setStatus('connected')
     })
 
-    s.on('disconnect', () => {
+    // permissions_changed: the user's roles/permissions changed. Refetch
+    // /auth/me so nav, route guards and gates update; the server then drops
+    // this socket so rooms are recomputed, and we reconnect right away (a
+    // server-side disconnect is otherwise final in socket.io).
+    let reconnectAfterServerDisconnect = false
+    s.on('permissions_changed', () => {
+      reconnectAfterServerDisconnect = true
+      void useAuthStore.getState().refreshUser()
+    })
+
+    // session:revoked: every session of this user was revoked server-side
+    // (the sockets are dropped next). Never reconnect; show the per-reason
+    // copy, log out locally and land on /login?reason=session_revoked. The
+    // single handler for this event (W2-RT-FE + W2-LIFE-UI).
+    s.on(SESSION_REVOKED_EVENT, (data?: { reason?: string }) => {
+      reconnectAfterServerDisconnect = false
+      void handleSessionRevoked(data?.reason)
+    })
+
+    s.on('disconnect', (reason: string) => {
       setStatus('disconnected')
+      if (reason === 'io server disconnect' && reconnectAfterServerDisconnect) {
+        reconnectAfterServerDisconnect = false
+        s.connect()
+      }
     })
 
     s.on('connect_error', () => {

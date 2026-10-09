@@ -24,7 +24,7 @@ class Notification(BaseModel):
 
     NOTIFICATION_TYPES = [
         'incident_assigned', 'incident_updated', 'task_assigned', 'task_due',
-        'comment_added', 'artifact_uploaded', 'mention', 'system'
+        'improvement_due', 'comment_added', 'artifact_uploaded', 'mention', 'system'
     ]
 
     def __repr__(self):

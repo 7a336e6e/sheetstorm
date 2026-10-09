@@ -1,13 +1,34 @@
 """Integration configuration endpoints"""
+import hashlib
+from datetime import datetime, timezone
+
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
 from app.services.encryption_service import encryption_service
+from app.utils.audit_diff import record_changes
 from app.utils.url_validator import validate_outbound_url
+
+
+def _audit_view(integration):
+    """Before/after snapshot for the audit diff. Credentials are represented
+    by a fingerprint of the ciphertext only: the key matches the sensitive
+    pattern, so the diff records ``{'changed': True}`` and never a value."""
+    if integration is None:
+        return {}
+    blob = integration.credentials_encrypted
+    return {
+        'type': integration.type,
+        'name': integration.name,
+        'is_enabled': integration.is_enabled,
+        'config': integration.config or {},
+        'credentials': hashlib.sha256(bytes(blob)).hexdigest() if blob else None,
+    }
 
 
 @api_bp.route('/integrations', methods=['GET'])
@@ -42,6 +63,9 @@ def get_integration(integration_id):
     return jsonify(integration.to_dict()), 200
 
 
+_LOGIN_UNSUPPORTED_TYPES = {'oauth_google', 'oauth_azure'}
+
+
 @api_bp.route('/integrations', methods=['POST'])
 @jwt_required()
 @require_permission('integrations:create')
@@ -57,6 +81,11 @@ def create_integration():
     integration_type = data.get('type', '').strip()
     if integration_type not in Integration.INTEGRATION_TYPES:
         return jsonify({'error': 'bad_request', 'message': 'Invalid integration type'}), 400
+    if integration_type in _LOGIN_UNSUPPORTED_TYPES:
+        # No login flow exists for these providers; existing rows can still
+        # be read and deleted.
+        return jsonify({'error': 'not_supported',
+                        'message': 'Sign-in with this provider is not implemented'}), 400
 
     name = data.get('name', '').strip()
     if not name:
@@ -90,6 +119,7 @@ def create_integration():
 
     db.session.add(integration)
     db.session.commit()
+    record_changes({}, _audit_view(integration))
 
     return jsonify(integration.to_dict()), 201
 
@@ -111,6 +141,7 @@ def update_integration(integration_id):
     if not integration:
         return jsonify({'error': 'not_found', 'message': 'Integration not found'}), 404
 
+    before = _audit_view(integration)
     if 'name' in data:
         integration.name = data['name'].strip()
     if 'is_enabled' in data:
@@ -128,6 +159,7 @@ def update_integration(integration_id):
             integration.credentials_encrypted = None
 
     db.session.commit()
+    record_changes(before, _audit_view(integration))
 
     return jsonify(integration.to_dict()), 200
 
@@ -148,8 +180,10 @@ def delete_integration(integration_id):
     if not integration:
         return jsonify({'error': 'not_found', 'message': 'Integration not found'}), 404
 
+    before = _audit_view(integration)
     db.session.delete(integration)
     db.session.commit()
+    record_changes(before, {})
 
     return jsonify({'message': 'Integration deleted'}), 200
 
@@ -188,6 +222,7 @@ def _outbound_test_url(integration_type, config, credentials):
 @api_bp.route('/integrations/<uuid:integration_id>/test', methods=['POST'])
 @jwt_required()
 @require_permission('integrations:update')
+@audit_log('admin_action', 'test', 'integration')
 def test_integration(integration_id):
     """Test an integration connection."""
     user = get_current_user()
@@ -266,14 +301,19 @@ def test_integration(integration_id):
         current_app.logger.exception('Integration test failed')
         message = 'Connection test failed'
 
-    # Update last used/error
-    from datetime import datetime, timezone
-    integration.last_used_at = datetime.now(timezone.utc)
+    # Record the test result (shown in the admin system status).
+    previous_ok = integration.last_test_ok
+    now = datetime.now(timezone.utc)
+    integration.last_used_at = now
+    integration.last_tested_at = now
+    integration.last_test_ok = bool(success)
     if not success:
         integration.last_error = message
     else:
         integration.last_error = None
     db.session.commit()
+    record_changes({'last_test_ok': previous_ok}, {'last_test_ok': bool(success)},
+                   integration_type=integration.type)
 
     return jsonify({
         'success': success,
@@ -384,7 +424,7 @@ def _test_ollama(config):
 @api_bp.route('/integrations/ollama/models', methods=['GET'])
 @jwt_required()
 @require_permission('integrations:read')
-@limiter.limit("10 per minute")
+@limited('integrations_discovery')
 def list_ollama_models():
     """Discover locally available Ollama models."""
     from app.services.ai_service import ai_service
@@ -473,13 +513,13 @@ def list_integration_types():
              'config_fields': ['api_url'], 'credential_fields': ['api_key'],
              'doc_url': ''},
             # Authentication
-            {'id': 'oauth_google', 'name': 'Google OAuth', 'description': 'Allow users to sign in with Google accounts', 'category': 'auth',
+            {'id': 'oauth_google', 'login_supported': False, 'name': 'Google OAuth', 'description': 'Allow users to sign in with Google accounts', 'category': 'auth',
              'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://developers.google.com/identity/protocols/oauth2'},
-            {'id': 'oauth_github', 'name': 'GitHub OAuth', 'description': 'Allow users to sign in with GitHub accounts', 'category': 'auth',
+            {'id': 'oauth_github', 'login_supported': True, 'name': 'GitHub OAuth', 'description': 'Allow users to sign in with GitHub accounts', 'category': 'auth',
              'config_fields': ['client_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://docs.github.com/en/apps/oauth-apps'},
-            {'id': 'oauth_azure', 'name': 'Azure AD / Entra ID', 'description': 'Microsoft Entra ID (Azure AD) for enterprise SSO', 'category': 'auth',
+            {'id': 'oauth_azure', 'login_supported': False, 'name': 'Azure AD / Entra ID', 'description': 'Microsoft Entra ID (Azure AD) for enterprise SSO', 'category': 'auth',
              'config_fields': ['client_id', 'tenant_id'], 'credential_fields': ['client_secret'],
              'doc_url': 'https://learn.microsoft.com/en-us/entra/identity-platform/'},
         ],

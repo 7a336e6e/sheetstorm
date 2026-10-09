@@ -33,6 +33,9 @@ class BaseConfig:
 
     # JWT
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+    # Library defaults only: sign-in tokens get their lifetimes from the org
+    # security policy (session.access_token_minutes 5..60, default 60;
+    # session.refresh_token_days 1..30, default 7; services/session_service.py).
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     # Accept tokens from the Authorization header (API clients, MCP, tests) AND
@@ -66,6 +69,32 @@ class BaseConfig:
     # not invalidate every custody signature.
     CUSTODY_SIGNING_KEY = os.getenv('CUSTODY_SIGNING_KEY', '')
 
+    # Optional RFC 3161 anchoring of the custody ledger head
+    # (services/timestamp_service.py). Empty TSA_URL = disabled (default).
+    # Env-only (no UI, so no stored SSRF) and re-validated against the
+    # outbound URL guard / OUTBOUND_URL_ALLOWLIST on every request.
+    TSA_URL = os.getenv('TSA_URL', '').strip()
+    TSA_TIMEOUT_SECONDS = max(1, min(60, int(os.getenv('TSA_TIMEOUT_SECONDS', '10') or '10')))
+    TSA_MAX_RESPONSE_BYTES = max(4096, min(1048576, int(os.getenv('TSA_MAX_RESPONSE_BYTES', '65536') or '65536')))
+
+    # Audit log governance (services/ledger.py, services/audit_service.py).
+    # AUDIT_CHAIN_KEY keys the audit hash chain (HMAC). It falls back to
+    # SECRET_KEY with a warning when unset; set a dedicated key and keep it
+    # outside the database. AUDIT_CHAIN_PREVIOUS_KEYS (comma list) keeps rows
+    # written under rotated keys verifiable.
+    AUDIT_CHAIN_KEY = os.getenv('AUDIT_CHAIN_KEY', '')
+    AUDIT_CHAIN_PREVIOUS_KEYS = _env_list('AUDIT_CHAIN_PREVIOUS_KEYS')
+    AUDIT_EXPORT_MAX_ROWS = int(os.getenv('AUDIT_EXPORT_MAX_ROWS', '100000'))
+    AUDIT_RETENTION_MIN_DAYS = 365
+    AUDIT_PURGE_BATCH_SIZE = int(os.getenv('AUDIT_PURGE_BATCH_SIZE', '10000'))
+
+    # Build metadata shown in the admin system status (platform admins only).
+    APP_VERSION = os.getenv('APP_VERSION', '')
+    GIT_COMMIT = os.getenv('GIT_COMMIT', '')
+
+    # Local artifact storage directory (used when S3 is not configured).
+    LOCAL_ARTIFACT_DIR = os.getenv('LOCAL_ARTIFACT_DIR', '/app/artifacts')
+
     # Hosts / CIDRs that admin-configured self-hosted integrations (MISP,
     # Velociraptor, TheHive, Cortex, Elastic, Splunk, S3/MinIO, Ollama,
     # openai_compatible) may target even when they resolve to private
@@ -76,6 +105,22 @@ class BaseConfig:
     # Global default for automatic IOC enrichment on creation (off by default;
     # the organization setting `auto_enrich_iocs` overrides it).
     IOC_AUTO_ENRICH = _env_bool('IOC_AUTO_ENRICH', False)
+
+    # API keys (services/api_key_service.py). Secrets are stored only as
+    # HMAC-SHA256(API_KEY_PEPPER, secret). Without a pepper one is derived
+    # from SECRET_KEY (startup warning); set a dedicated random value
+    # (`openssl rand -hex 32`) so rotating SECRET_KEY keeps keys valid.
+    API_KEY_PEPPER = os.getenv('API_KEY_PEPPER', '')
+    # Lifetime of the access token minted by POST /auth/token (1..60 minutes).
+    API_KEY_TOKEN_TTL_MINUTES = int(os.getenv('API_KEY_TOKEN_TTL_MINUTES', '15'))
+    # Caps on active (not revoked, not expired) keys.
+    API_KEY_MAX_PER_USER = int(os.getenv('API_KEY_MAX_PER_USER', '10'))
+    API_KEY_MAX_PER_SERVICE_ACCOUNT = int(os.getenv('API_KEY_MAX_PER_SERVICE_ACCOUNT', '25'))
+    API_KEY_MAX_PER_ORG = int(os.getenv('API_KEY_MAX_PER_ORG', '200'))
+
+    # Slug of the platform organization. Only holders of `system:manage` in
+    # this org are platform admins (instance-wide settings and status).
+    PLATFORM_ORG_SLUG = os.getenv('PLATFORM_ORG_SLUG', 'default')
 
     # Socket.IO runtime
     SOCKETIO_ASYNC_MODE = 'eventlet'
@@ -158,6 +203,8 @@ class TestingConfig(BaseConfig):
     SECRET_KEY = 'test-only-secret-key-not-for-production'
     JWT_SECRET_KEY = 'test-only-jwt-secret-key-not-for-production'
     CUSTODY_SIGNING_KEY = 'test-only-custody-signing-key'
+    AUDIT_CHAIN_KEY = 'test-only-audit-chain-key'
+    API_KEY_PEPPER = 'test-only-api-key-pepper'
     # Valid Fernet key (urlsafe base64 of 32 bytes), test-only.
     FERNET_KEY = 'dGVzdC1vbmx5LWZlcm5ldC1rZXktMzJieXRlcyEhISE='
     SQLALCHEMY_DATABASE_URI = os.getenv(

@@ -4,13 +4,17 @@ from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db
 from app.models import Team, TeamMember, User
-from app.middleware.rbac import require_permission, get_current_user
+from app.middleware.rbac import require_permission, require_all_permissions, get_current_user
 from app.middleware.audit import audit_log
+from app.services import realtime
+from app.utils.audit_diff import record_changes, snapshot
+
+_TEAM_AUDIT_FIELDS = ('name', 'description')
 
 
 @api_bp.route('/teams', methods=['GET'])
 @jwt_required()
-@require_permission('users:read')
+@require_permission('teams:read')
 def list_teams():
     """List all teams in the organization."""
     user = get_current_user()
@@ -25,7 +29,7 @@ def list_teams():
 
 @api_bp.route('/teams', methods=['POST'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('teams:create')
 @audit_log('admin_action', 'create_team', 'team')
 def create_team():
     """Create a new team."""
@@ -48,15 +52,16 @@ def create_team():
     )
     db.session.add(team)
     db.session.commit()
+    record_changes({}, snapshot(team, _TEAM_AUDIT_FIELDS))
 
     return jsonify(team.to_dict()), 201
 
 
 @api_bp.route('/teams/<uuid:team_id>', methods=['GET'])
 @jwt_required()
-@require_permission('users:read')
+@require_all_permissions(['teams:read', 'users:read'])
 def get_team(team_id):
-    """Get a team with members."""
+    """Get a team with members (members are user data: also needs users:read)."""
     user = get_current_user()
     team = Team.query.filter_by(id=team_id, organization_id=user.organization_id).first()
 
@@ -68,7 +73,7 @@ def get_team(team_id):
 
 @api_bp.route('/teams/<uuid:team_id>', methods=['PUT'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('teams:update')
 @audit_log('admin_action', 'update_team', 'team')
 def update_team(team_id):
     """Update a team."""
@@ -79,6 +84,7 @@ def update_team(team_id):
         return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
 
     data = request.get_json()
+    before = snapshot(team, _TEAM_AUDIT_FIELDS)
 
     if 'name' in data:
         name = data['name'].strip()
@@ -94,13 +100,14 @@ def update_team(team_id):
         team.description = data['description'].strip() or None
 
     db.session.commit()
+    record_changes(before, snapshot(team, _TEAM_AUDIT_FIELDS))
 
     return jsonify(team.to_dict()), 200
 
 
 @api_bp.route('/teams/<uuid:team_id>', methods=['DELETE'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('teams:delete')
 @audit_log('admin_action', 'delete_team', 'team')
 def delete_team(team_id):
     """Delete a team."""
@@ -110,15 +117,22 @@ def delete_team(team_id):
     if not team:
         return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
 
+    before = snapshot(team, _TEAM_AUDIT_FIELDS)
+    member_ids = [m.user_id for m in TeamMember.query.filter_by(team_id=team.id)]
+    before['members'] = sorted(str(uid) for uid in member_ids)
     db.session.delete(team)
     db.session.commit()
+    record_changes(before, {})
+    # Team-scoped incident visibility changed: sockets reconnect and rejoin.
+    for uid in member_ids:
+        realtime.disconnect_user_sockets(uid)
 
     return jsonify({'message': 'Team deleted successfully'}), 200
 
 
 @api_bp.route('/teams/<uuid:team_id>/members', methods=['POST'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('teams:update')
 @audit_log('admin_action', 'add_team_member', 'team')
 def add_team_member(team_id):
     """Add a user to a team."""
@@ -144,13 +158,14 @@ def add_team_member(team_id):
     member = TeamMember(team_id=team.id, user_id=user.id)
     db.session.add(member)
     db.session.commit()
+    record_changes({'members': []}, {'members': [str(user.id)]}, member_email=user.email)
 
     return jsonify({'message': 'User added to team'}), 201
 
 
 @api_bp.route('/teams/<uuid:team_id>/members/<uuid:user_id>', methods=['DELETE'])
 @jwt_required()
-@require_permission('users:manage')
+@require_permission('teams:update')
 @audit_log('admin_action', 'remove_team_member', 'team')
 def remove_team_member(team_id, user_id):
     """Remove a user from a team."""
@@ -166,5 +181,7 @@ def remove_team_member(team_id, user_id):
 
     db.session.delete(member)
     db.session.commit()
+    record_changes({'members': [str(user_id)]}, {'members': []})
+    realtime.disconnect_user_sockets(user_id)  # rejoin re-checks team-scoped access
 
     return jsonify({'message': 'User removed from team'}), 200

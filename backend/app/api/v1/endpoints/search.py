@@ -1,20 +1,49 @@
 """Cross-incident search and IOC correlation endpoints.
 
-Provides full-text search across all incident data (timeline events,
-IOCs, hosts, accounts, notes) and cross-incident IOC correlation.
+`/search` is implemented by services/search_service.py (one bounded SQL
+statement, per-type read permissions, pg_trgm-indexed ILIKE); this module
+also holds cross-incident IOC correlation, bulk enrichment and STIX export.
 """
-from flask import jsonify, request, current_app
+from flask import Response, g, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import or_, func, text, cast, String
+from sqlalchemy import func, cast, select, String
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app.middleware.rbac import require_permission
-from app import db, limiter
+from app.middleware.audit import audit_log
+from app.middleware.rbac import require_permission, get_current_user
+from app import db
 from app.models.incident import Incident
-from app.models.timeline import TimelineEvent
-from app.models.compromised import CompromisedHost, CompromisedAccount
+from app.models.compromised import CompromisedHost
 from app.models.ioc import NetworkIndicator, HostBasedIndicator, MalwareTool
-from app.models.case_note import CaseNote
 from app.models.user import User
+from app.utils.audit_diff import record_changes
+
+MAX_IOC_VALUES = 1000        # correlate-iocs: values per request
+MAX_IOC_VALUE_LENGTH = 2048
+CORRELATE_TYPES = ('ip', 'domain', 'hash', 'hostname', 'file')
+MAX_BULK_ENRICH = 100
+
+
+def _bad_request(message, code='bad_request', **extra):
+    return jsonify({'error': code, 'message': message, **extra}), 400
+
+
+def _resolve_incident(user, raw):
+    """(incident, error_response) for an optional ``incident_id`` body field:
+    org-scoped and visible to the caller, else 404 / 403 (never a hint about
+    incidents in other organizations)."""
+    import uuid
+    from app.middleware.rbac import check_incident_access
+    try:
+        incident_id = uuid.UUID(str(raw))
+    except (ValueError, TypeError):
+        return None, _bad_request('incident_id must be a UUID')
+    allowed, incident = check_incident_access(user, incident_id)
+    if not incident or incident.is_archived:
+        return None, (jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404)
+    if not allowed:
+        return None, (jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403)
+    return incident, None
 
 
 def _user_incident_ids(user_id):
@@ -25,7 +54,7 @@ def _user_incident_ids(user_id):
     user = db.session.get(User, user_id)
     if not user:
         return []
-    from app.api.v1.endpoints.incidents import accessible_incidents_query
+    from app.middleware.rbac import accessible_incidents_query
     return [r[0] for r in accessible_incidents_query(user).with_entities(Incident.id).all()]
 
 
@@ -34,216 +63,60 @@ def _user_incident_ids(user_id):
 # ---------------------------------------------------------------------------
 
 @api_bp.route('/search', methods=['GET'])
+@limited('search')
 @jwt_required()
 @require_permission('incidents:read')
 def search_across_incidents():
-    """Full-text search across all incident data.
+    """Search across every incident the caller can access.
 
     Query params:
-        q (str):        Search term (required, min 2 chars)
-        types (str):    Comma-separated entity types to search
-                        (incidents,timeline,hosts,accounts,network_iocs,
-                         host_iocs,malware,notes). Default: all.
-        page (int):     Page number (default 1)
-        per_page (int): Results per page (default 50, max 200)
+        q (str):           2..200 characters (required)
+        types (str):       comma-separated subset of incidents, timeline,
+                           hosts, accounts, network_iocs, host_iocs, malware,
+                           notes (result type names are accepted too). Types
+                           the caller lacks the read permission for are
+                           dropped silently.
+        incident_id (uuid): restrict to one accessible incident (else 404)
+        since, until:      ISO-8601 bounds on the result timestamp
+        sort:              relevance (default) | -timestamp | timestamp
+        page, per_page:    per_page 1..50 (default 50)
+
+    Response: {results, total, page, per_page, pages, facets: {type: n},
+    sort}; each result has id, type, incident_id, incident_title, title,
+    snippet, timestamp and link {incident_id, tab, row}.
     """
-    q = request.args.get('q', '').strip()
-    if len(q) < 2:
-        return jsonify({'error': 'Search term must be at least 2 characters'}), 400
+    from app.services import search_service
+    from app.utils.pagination import ListArgsError, parse_page_args, parse_q, parse_uuid
+    from app.utils.validation import parse_datetime
+    from app.middleware.rbac import accessible_incidents_query
 
-    types_param = request.args.get('types', '')
-    allowed_types = {'incidents', 'timeline', 'hosts', 'accounts',
-                     'network_iocs', 'host_iocs', 'malware', 'notes'}
-    if types_param:
-        search_types = set(types_param.split(',')) & allowed_types
-    else:
-        search_types = allowed_types
+    user = get_current_user()
+    args = request.args
+    q = parse_q(args, min_length=2)
+    page, per_page = parse_page_args(args, default_per_page=50, max_per_page=50)
 
-    page = max(1, request.args.get('page', 1, type=int))
-    per_page = min(200, max(1, request.args.get('per_page', 50, type=int)))
+    sort = (args.get('sort') or 'relevance').strip()
+    if sort not in search_service.SORTS:
+        raise ListArgsError(f"invalid sort {sort!r}; allowed: {', '.join(search_service.SORTS)}",
+                            'invalid_sort')
 
-    user_id = get_jwt_identity()
-    accessible_ids = _user_incident_ids(user_id)
-    if not accessible_ids:
-        return jsonify({'results': [], 'total': 0, 'page': page, 'per_page': per_page}), 200
+    incident_id = None
+    accessible = accessible_incidents_query(user)
+    if args.get('incident_id'):
+        incident_id = parse_uuid('incident_id', args['incident_id'])
+        if accessible.filter(Incident.id == incident_id).first() is None:
+            return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
 
-    search_term = f'%{q}%'
-    results = []
+    requested = [t.strip() for t in (args.get('types') or '').split(',') if t.strip()]
+    types = search_service.allowed_types(user, requested)
 
-    if 'incidents' in search_types:
-        rows = db.session.query(Incident).filter(
-            Incident.id.in_(accessible_ids),
-            or_(
-                Incident.title.ilike(search_term),
-                Incident.description.ilike(search_term),
-                Incident.executive_summary.ilike(search_term),
-                Incident.classification.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'incident',
-                'incident_id': str(r.id),
-                'incident_title': r.title,
-                'title': r.title,
-                'snippet': (r.description or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'timeline' in search_types:
-        rows = db.session.query(TimelineEvent).filter(
-            TimelineEvent.incident_id.in_(accessible_ids),
-            or_(
-                TimelineEvent.activity.ilike(search_term),
-                TimelineEvent.hostname.ilike(search_term),
-                TimelineEvent.mitre_tactic.ilike(search_term),
-                cast(TimelineEvent.mitre_mappings, String).ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'timeline_event',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.activity[:100] if r.activity else '',
-                'snippet': r.activity[:200] if r.activity else '',
-                'hostname': r.hostname,
-                'timestamp': r.timestamp.isoformat() if r.timestamp else None,
-            })
-
-    if 'hosts' in search_types:
-        rows = db.session.query(CompromisedHost).filter(
-            CompromisedHost.incident_id.in_(accessible_ids),
-            or_(
-                CompromisedHost.hostname.ilike(search_term),
-                cast(CompromisedHost.ip_address, String).ilike(search_term),
-                CompromisedHost.system_type.ilike(search_term),
-                CompromisedHost.notes.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'host',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"{r.hostname} ({str(r.ip_address)})" if r.ip_address else r.hostname,
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'accounts' in search_types:
-        rows = db.session.query(CompromisedAccount).filter(
-            CompromisedAccount.incident_id.in_(accessible_ids),
-            or_(
-                CompromisedAccount.account_name.ilike(search_term),
-                CompromisedAccount.domain.ilike(search_term),
-                CompromisedAccount.notes.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'account',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"{r.domain}\\{r.account_name}" if r.domain else r.account_name,
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'network_iocs' in search_types:
-        rows = db.session.query(NetworkIndicator).filter(
-            NetworkIndicator.incident_id.in_(accessible_ids),
-            or_(
-                NetworkIndicator.dns_ip.ilike(search_term),
-                NetworkIndicator.source_host.ilike(search_term),
-                NetworkIndicator.destination_host.ilike(search_term),
-                NetworkIndicator.description.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'network_ioc',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.dns_ip,
-                'snippet': (r.description or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'host_iocs' in search_types:
-        rows = db.session.query(HostBasedIndicator).filter(
-            HostBasedIndicator.incident_id.in_(accessible_ids),
-            or_(
-                HostBasedIndicator.artifact_value.ilike(search_term),
-                HostBasedIndicator.notes.ilike(search_term),
-                HostBasedIndicator.host.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'host_ioc',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"[{r.artifact_type}] {r.artifact_value[:80]}",
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'malware' in search_types:
-        rows = db.session.query(MalwareTool).filter(
-            MalwareTool.incident_id.in_(accessible_ids),
-            or_(
-                MalwareTool.file_name.ilike(search_term),
-                MalwareTool.file_path.ilike(search_term),
-                MalwareTool.md5.ilike(search_term),
-                MalwareTool.sha256.ilike(search_term),
-                MalwareTool.malware_family.ilike(search_term),
-                MalwareTool.description.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'malware',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.file_name,
-                'snippet': f"MD5: {r.md5 or 'N/A'} | SHA256: {r.sha256 or 'N/A'}",
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'notes' in search_types:
-        rows = db.session.query(CaseNote).filter(
-            CaseNote.incident_id.in_(accessible_ids),
-            or_(
-                CaseNote.title.ilike(search_term),
-                CaseNote.content.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'case_note',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.title,
-                'snippet': (r.content or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    # Sort by timestamp descending
-    results.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
-    total = len(results)
-
-    # Paginate
-    start = (page - 1) * per_page
-    end = start + per_page
-    paginated = results[start:end]
-
-    return jsonify({
-        'results': paginated,
-        'total': total,
-        'page': page,
-        'per_page': per_page,
-    }), 200
+    params = search_service.SearchParams(
+        q=q, page=page, per_page=per_page, sort=sort, incident_id=incident_id,
+        since=parse_datetime(args.get('since'), 'since'),
+        until=parse_datetime(args.get('until'), 'until'),
+    )
+    accessible_ids = select(accessible.with_entities(Incident.id).subquery().c.id)
+    return jsonify(search_service.run_search(types, accessible_ids, params)), 200
 
 
 # ---------------------------------------------------------------------------
@@ -253,27 +126,68 @@ def search_across_incidents():
 @api_bp.route('/correlate-iocs', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
+@audit_log('data_access', 'correlate_iocs', 'incident')
 def correlate_iocs():
     """Find IOCs that appear across multiple incidents.
 
     Body:
-        ioc_values (list[str]):  Optional list of specific IOC values to check.
-                                 If empty, finds all IOCs shared across 2+ incidents.
+        incident_id (uuid):      Optional. The caller must be able to access it
+                                 (404 / 403 otherwise). When ``ioc_values`` is
+                                 empty the values are taken from that incident
+                                 (network dns_ip, malware hashes, host IOC
+                                 values, hostnames).
+        ioc_values (list[str]):  Optional list of specific IOC values to check
+                                 (at most 1000, each at most 2048 characters).
+                                 If empty (and no incident_id), finds all IOCs
+                                 shared across 2+ incidents.
         ioc_types (list[str]):   Optional filter by IOC type:
                                  [ip, domain, hash, hostname, file, all]. Default: all.
     Returns:
-        Grouped IOC matches with incident references.
+        Grouped IOC matches with incident references. Only incidents the
+        caller can access are ever listed.
     """
     user_id = get_jwt_identity()
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
+
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return _bad_request('Request body must be a JSON object')
+
+    ioc_values = data.get('ioc_values') or []
+    if not isinstance(ioc_values, list) or len(ioc_values) > MAX_IOC_VALUES:
+        return _bad_request(f'ioc_values must be a list of at most {MAX_IOC_VALUES} strings',
+                            'invalid_ioc_values')
+    if any(not isinstance(v, str) or not v.strip() or len(v) > MAX_IOC_VALUE_LENGTH for v in ioc_values):
+        return _bad_request(f'Each ioc_value must be a non-empty string of at most {MAX_IOC_VALUE_LENGTH} characters',
+                            'invalid_ioc_values')
+    ioc_values = sorted({v.strip() for v in ioc_values})
+
+    ioc_types = data.get('ioc_types') or ['all']
+    if not isinstance(ioc_types, list) or any(t not in CORRELATE_TYPES + ('all',) for t in ioc_types):
+        return _bad_request(f"ioc_types must be a list of: {', '.join(CORRELATE_TYPES + ('all',))}",
+                            'invalid_ioc_types')
+    if 'all' in ioc_types:
+        ioc_types = list(CORRELATE_TYPES)
+
+    incident = None
+    if data.get('incident_id'):
+        incident, error = _resolve_incident(user, data['incident_id'])
+        if error:
+            return error
+        g.incident = incident
+        if not ioc_values:
+            ioc_values = _incident_ioc_values(incident)[:MAX_IOC_VALUES]
+            if not ioc_values:
+                record_changes({}, {}, correlations=0, values=0)
+                return jsonify({'correlations': [], 'total': 0, 'incident_id': str(incident.id)}), 200
+
     accessible_ids = _user_incident_ids(user_id)
     if not accessible_ids:
         return jsonify({'correlations': [], 'total': 0}), 200
-
-    data = request.get_json(silent=True) or {}
-    ioc_values = data.get('ioc_values', [])
-    ioc_types = data.get('ioc_types', ['all'])
-    if 'all' in ioc_types:
-        ioc_types = ['ip', 'domain', 'hash', 'hostname', 'file']
 
     correlations = []
 
@@ -387,89 +301,195 @@ def correlate_iocs():
 
     # Sort by incident_count descending
     correlations.sort(key=lambda x: x['incident_count'], reverse=True)
+    record_changes({}, {}, correlations=len(correlations), values=len(ioc_values),
+                   types=ioc_types)
 
-    return jsonify({
-        'correlations': correlations,
-        'total': len(correlations),
-    }), 200
+    body = {'correlations': correlations, 'total': len(correlations)}
+    if incident is not None:
+        body['incident_id'] = str(incident.id)
+    return jsonify(body), 200
+
+
+def _incident_ioc_values(incident) -> list:
+    """Distinct correlatable values recorded in ``incident``."""
+    values = set()
+    for model, columns in ((NetworkIndicator, (NetworkIndicator.dns_ip,)),
+                           (MalwareTool, (MalwareTool.md5, MalwareTool.sha256)),
+                           (HostBasedIndicator, (HostBasedIndicator.artifact_value,)),
+                           (CompromisedHost, (CompromisedHost.hostname,))):
+        for column in columns:
+            rows = db.session.query(column).filter(model.incident_id == incident.id,
+                                                   column.isnot(None), column != '').distinct().limit(MAX_IOC_VALUES)
+            values.update(r[0].strip() for r in rows if r[0] and len(r[0]) <= MAX_IOC_VALUE_LENGTH)
+    return sorted(v for v in values if v)
 
 
 # ---------------------------------------------------------------------------
 # Bulk Enrichment
 # ---------------------------------------------------------------------------
 
+# user-facing IOC type -> EnrichmentService type
+_ENRICH_TYPE_MAP = {
+    'ip': 'ip-src',
+    'domain': 'domain',
+    'hash': 'sha256',
+    'md5': 'md5',
+    'sha1': 'sha1',
+    'sha256': 'sha256',
+    'email': 'email',
+    'hostname': 'hostname',
+}
+_HEX_LENGTHS = {'md5': 32, 'sha1': 40, 'sha256': 64}
+
+
+def _valid_enrich_value(ioc_type: str, value: str) -> bool:
+    """Shape check per type. The value is interpolated into provider URLs by
+    the enrichment service, so only plain indicator characters may pass."""
+    import ipaddress
+    import re
+    if ioc_type == 'ip':
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
+    if ioc_type in ('domain', 'hostname'):
+        return bool(re.fullmatch(r'[A-Za-z0-9_]([A-Za-z0-9_.-]{0,251}[A-Za-z0-9_])?', value))
+    if ioc_type in _HEX_LENGTHS:
+        return bool(re.fullmatch(r'[0-9A-Fa-f]{%d}' % _HEX_LENGTHS[ioc_type], value))
+    if ioc_type == 'hash':
+        return len(value) in _HEX_LENGTHS.values() and bool(re.fullmatch(r'[0-9A-Fa-f]+', value))
+    if ioc_type == 'email':
+        return bool(re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,253}", value))
+    return False
+
+
+def _enrichment_summary(enrichment: dict) -> str:
+    parts = []
+    for provider, info in sorted((enrichment or {}).items()):
+        if not isinstance(info, dict):
+            continue
+        facts = []
+        for key in ('malicious', 'suspicious', 'abuse_confidence', 'detection_ratio', 'country'):
+            if info.get(key) not in (None, ''):
+                facts.append(f'{key.replace("_", " ")} {info[key]}')
+        parts.append(f"{provider}: {', '.join(facts) if facts else 'no details'}")
+    return '; '.join(parts) if parts else 'no provider returned data'
+
+
 @api_bp.route('/bulk-enrich', methods=['POST'])
-@limiter.limit("10 per minute")
+@limited('bulk_enrich')
 @jwt_required()
 @require_permission('incidents:read')
+@audit_log('data_access', 'bulk_enrich', 'incident')
 def bulk_enrich():
     """Batch IOC enrichment across multiple sources.
 
     Body:
-        ioc_values (list[dict]):  List of IOCs to enrich.
-            Each dict: { "value": "...", "type": "ip|domain|hash|email" }
+        ioc_values (list[dict]):  1..100 IOCs. Each dict:
+            { "value": "...", "type": "ip|domain|hash|md5|sha1|sha256|email|hostname" }
+            ``value`` is a string of at most 2048 characters that must match
+            its type; ``type`` defaults to ``ip``.
+        incident_id (uuid):       Optional. The caller must be able to access it
+                                  (404 / 403). Enrichment of a TLP-restricted
+                                  incident is refused as a whole (403
+                                  ``tlp_restricted``): ``red`` always,
+                                  ``amber_strict`` unless the org allows it.
     Returns:
-        Enrichment results per IOC.
+        Enrichment results per IOC, the provider names that answered
+        (``providers``) and the incident TLP when an incident was given. Values
+        that belong to any restricted incident of the org are returned as
+        ``blocked`` and never sent out.
     """
+    from app.services.egress_policy import EgressBlocked, assert_enrichment_allowed, filter_values_for_enrichment
     from app.services.enrichment_service import EnrichmentService
+    from app.middleware.audit import log_security_event
 
     user_id = get_jwt_identity()
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({'error': 'User not found'}), 404
+        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _bad_request('Request body must be a JSON object')
     ioc_list = data.get('ioc_values', [])
-    if not ioc_list:
-        return jsonify({'error': 'ioc_values list required'}), 400
-    if len(ioc_list) > 100:
-        return jsonify({'error': 'Maximum 100 IOCs per batch'}), 400
+    if not isinstance(ioc_list, list) or not ioc_list:
+        return _bad_request('ioc_values list required')
+    if len(ioc_list) > MAX_BULK_ENRICH:
+        return _bad_request(f'Maximum {MAX_BULK_ENRICH} IOCs per batch')
 
-    enrichment = EnrichmentService
-    results = []
+    items = []
+    for index, ioc in enumerate(ioc_list):
+        if not isinstance(ioc, dict):
+            return _bad_request(f'ioc_values[{index}] must be an object', 'invalid_ioc_values')
+        value = ioc.get('value')
+        ioc_type = ioc.get('type') or 'ip'
+        if not isinstance(value, str) or not value.strip() or len(value) > MAX_IOC_VALUE_LENGTH:
+            return _bad_request(f'ioc_values[{index}].value must be a non-empty string of at most '
+                                f'{MAX_IOC_VALUE_LENGTH} characters', 'invalid_ioc_values')
+        if ioc_type not in _ENRICH_TYPE_MAP:
+            return _bad_request(f"ioc_values[{index}].type must be one of: {', '.join(_ENRICH_TYPE_MAP)}",
+                                'invalid_ioc_values')
+        value = value.strip()
+        if not _valid_enrich_value(ioc_type, value):
+            return _bad_request(f'ioc_values[{index}].value is not a valid {ioc_type}', 'invalid_ioc_values')
+        items.append((value, ioc_type))
 
-    for ioc in ioc_list:
-        value = ioc.get('value', '')
-        ioc_type = ioc.get('type', 'ip')
-        if not value:
-            continue
-
-        # Map user-friendly types to enrichment service types
-        type_map = {
-            'ip': 'ip-src',
-            'domain': 'domain',
-            'hash': 'sha256',
-            'md5': 'md5',
-            'sha1': 'sha1',
-            'sha256': 'sha256',
-            'email': 'email',
-            'hostname': 'hostname',
-        }
-        svc_type = type_map.get(ioc_type, ioc_type)
-
+    incident = None
+    if data.get('incident_id'):
+        incident, error = _resolve_incident(user, data['incident_id'])
+        if error:
+            return error
+        g.incident = incident
         try:
-            enrichment_result = enrichment.auto_enrich_ioc(svc_type, value, str(user.organization_id))
-            results.append({
-                'value': value,
-                'type': ioc_type,
-                'status': 'success',
-                'enrichment': enrichment_result or {},
-            })
+            assert_enrichment_allowed(incident)
+        except EgressBlocked as e:
+            log_security_event('enrichment_blocked_by_tlp', resource_type='bulk_enrich',
+                               resource_id=incident.id, incident_id=incident.id,
+                               details={'tlp': incident.tlp, 'blocked_count': len(items)}, user=user)
+            return e.to_response()
+
+    # TLP egress block: values from TLP:RED (and, unless the org allows it,
+    # AMBER+STRICT) incidents are never sent to third parties.
+    _, blocked_values = filter_values_for_enrichment(user.organization_id, [v for v, _ in items])
+    blocked_values = {str(v).strip().lower() for v in blocked_values}
+    if blocked_values:
+        log_security_event('enrichment_blocked_by_tlp', resource_type='bulk_enrich',
+                           details={'blocked_count': len(blocked_values)}, user=user)
+
+    results = []
+    providers = set()
+    for value, ioc_type in items:
+        if value.lower() in blocked_values:
+            results.append({'value': value, 'type': ioc_type, 'status': 'blocked',
+                            'error': 'tlp_restricted', 'summary': 'blocked: TLP-restricted value'})
+            continue
+        try:
+            enrichment_result = EnrichmentService.auto_enrich_ioc(
+                _ENRICH_TYPE_MAP[ioc_type], value, str(user.organization_id)) or {}
+            providers.update(k for k in enrichment_result if isinstance(k, str))
+            results.append({'value': value, 'type': ioc_type, 'status': 'success',
+                            'enrichment': enrichment_result, 'summary': _enrichment_summary(enrichment_result)})
         except Exception:
             current_app.logger.exception('IOC enrichment failed for a bulk item')
-            results.append({
-                'value': value,
-                'type': ioc_type,
-                'status': 'error',
-                'error': 'enrichment failed',
-            })
+            results.append({'value': value, 'type': ioc_type, 'status': 'error',
+                            'error': 'enrichment failed', 'summary': 'enrichment failed'})
 
-    return jsonify({
+    summary = {
         'results': results,
         'total': len(results),
         'enriched': sum(1 for r in results if r['status'] == 'success'),
         'failed': sum(1 for r in results if r['status'] == 'error'),
-    }), 200
+        'blocked': sum(1 for r in results if r['status'] == 'blocked'),
+        'providers': sorted(providers),
+    }
+    if incident is not None:
+        summary['incident_id'] = str(incident.id)
+        summary['tlp'] = incident.tlp
+    record_changes({}, {}, total=summary['total'], enriched=summary['enriched'], blocked=summary['blocked'],
+                   providers=summary['providers'], tlp=incident.tlp if incident is not None else None)
+    return jsonify(summary), 200
 
 
 # ---------------------------------------------------------------------------
@@ -478,27 +498,28 @@ def bulk_enrich():
 
 @api_bp.route('/incidents/<uuid:incident_id>/export/stix', methods=['GET'])
 @jwt_required()
+@limited('exports')
 @require_permission('incidents:read')
+@audit_log('data_access', 'export_stix', 'incident')
 def export_incident_stix(incident_id):
-    """Export incident data as a STIX 2.1 Bundle.
+    """Export incident data as a STIX 2.1 Bundle (``application/stix+json``).
 
-    Returns a STIX 2.1 JSON bundle containing:
-        - Report (incident)
-        - Indicators (IOCs)
-        - Infrastructure (hosts)
-        - Malware (malware samples)
-        - Attack Patterns (MITRE techniques)
-        - Relationships linking them all
+    Needs ``incidents:read`` and ``incidents:export`` (C24) plus access to the
+    incident itself. The bundle (built by ``services/stix_export.py`` as an
+    object model, patterns escaped) contains the Report, Indicators (network
+    and host IOCs), Infrastructure (hosts), Malware, Attack Patterns (MITRE
+    techniques), a few Relationships, and the incident's TLP marking-definition
+    referenced from every object.
     """
-    import uuid as uuid_mod
-    from datetime import datetime, timezone
+    from app.services import stix_export
+    from app.api.v1.endpoints.exports import EXPORT_PERMISSION, export_filename, forbidden
 
     user_id = get_jwt_identity()
     user = db.session.get(User, user_id)
     if not user:
-        return jsonify({'error': 'User not found'}), 404
+        return jsonify({'error': 'not_found', 'message': 'User not found'}), 404
 
-    # Enforce incident-level access (assignment/team/TLP), not just org scope —
+    # Enforce incident-level access (assignment/team/TLP), not just org scope:
     # otherwise a Viewer could STIX-export any incident in the org.
     from app.middleware.rbac import check_incident_access
     allowed, incident = check_incident_access(user, incident_id)
@@ -506,173 +527,14 @@ def export_incident_stix(incident_id):
         return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
     if not allowed:
         return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
+    if not user.has_permission(EXPORT_PERMISSION):
+        return forbidden(EXPORT_PERMISSION)
+    g.incident = incident
 
-    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    stix_objects = []
-    relationships = []
-
-    # --- Identity (organization) ---
-    identity_id = f"identity--{uuid_mod.uuid5(uuid_mod.NAMESPACE_URL, f'sheetstorm:{user.organization_id}')}"
-    stix_objects.append({
-        'type': 'identity',
-        'spec_version': '2.1',
-        'id': identity_id,
-        'created': now,
-        'modified': now,
-        'name': 'SheetStorm Organization',
-        'identity_class': 'organization',
-    })
-
-    # --- Report (incident) ---
-    report_id = f"report--{incident.id}"
-    stix_objects.append({
-        'type': 'report',
-        'spec_version': '2.1',
-        'id': report_id,
-        'created': now,
-        'modified': now,
-        'name': incident.title,
-        'description': incident.description or '',
-        'report_types': ['incident'],
-        'published': incident.created_at.strftime('%Y-%m-%dT%H:%M:%S.000Z') if incident.created_at else now,
-        'created_by_ref': identity_id,
-        'labels': [incident.severity or 'medium', incident.status or 'open'],
-        'object_refs': [],  # Will be populated
-        'extensions': {
-            'x-sheetstorm-incident': {
-                'phase': incident.phase,
-                'phase_name': incident.phase_name,
-                'classification': incident.classification,
-                'severity': incident.severity,
-                'status': incident.status,
-            }
-        }
-    })
-
-    ref_ids = []
-
-    # --- Indicators (Network IOCs) ---
-    for ioc in incident.network_indicators.all():
-        indicator_id = f"indicator--{ioc.id}"
-        pattern_type = 'ipv4-addr' if _is_ip(ioc.dns_ip) else 'domain-name'
-        pattern_value = f"[{pattern_type}:value = '{ioc.dns_ip}']"
-        stix_objects.append({
-            'type': 'indicator',
-            'spec_version': '2.1',
-            'id': indicator_id,
-            'created': now,
-            'modified': now,
-            'name': ioc.dns_ip,
-            'description': ioc.description or f"Network IOC: {ioc.dns_ip}",
-            'pattern': pattern_value,
-            'pattern_type': 'stix',
-            'valid_from': ioc.timestamp.strftime('%Y-%m-%dT%H:%M:%S.000Z') if ioc.timestamp else now,
-            'indicator_types': ['malicious-activity'] if ioc.is_malicious else ['anomalous-activity'],
-            'labels': [ioc.protocol or 'unknown', ioc.direction or 'unknown'],
-        })
-        ref_ids.append(indicator_id)
-
-    # --- Indicators (Host IOCs) ---
-    for ioc in incident.host_indicators.all():
-        indicator_id = f"indicator--{ioc.id}"
-        pattern_value = f"[file:name = '{ioc.artifact_value}']" if ioc.artifact_type == 'file' else \
-                        f"[process:name = '{ioc.artifact_value}']" if ioc.artifact_type == 'process' else \
-                        f"[windows-registry-key:key = '{ioc.artifact_value}']" if ioc.artifact_type in ('registry', 'asep') else \
-                        f"[artifact:payload_bin = '{ioc.artifact_value}']"
-        stix_objects.append({
-            'type': 'indicator',
-            'spec_version': '2.1',
-            'id': indicator_id,
-            'created': now,
-            'modified': now,
-            'name': f"{ioc.artifact_type}: {ioc.artifact_value[:80]}",
-            'description': ioc.notes or f"Host IOC ({ioc.artifact_type})",
-            'pattern': pattern_value,
-            'pattern_type': 'stix',
-            'valid_from': ioc.datetime.strftime('%Y-%m-%dT%H:%M:%S.000Z') if ioc.datetime else now,
-            'indicator_types': ['malicious-activity'] if ioc.is_malicious else ['anomalous-activity'],
-            'labels': [ioc.artifact_type],
-        })
-        ref_ids.append(indicator_id)
-
-    # --- Malware ---
-    for m in incident.malware_tools.all():
-        malware_id = f"malware--{m.id}"
-        stix_objects.append({
-            'type': 'malware',
-            'spec_version': '2.1',
-            'id': malware_id,
-            'created': now,
-            'modified': now,
-            'name': m.file_name,
-            'description': m.description or f"Malware: {m.file_name}",
-            'malware_types': ['tool'] if m.is_tool else ['trojan'],
-            'is_family': bool(m.malware_family),
-            'hashes': {k: v for k, v in {
-                'MD5': m.md5, 'SHA-256': m.sha256, 'SHA-512': m.sha512
-            }.items() if v},
-        })
-        ref_ids.append(malware_id)
-
-    # --- Infrastructure (Hosts) ---
-    for host in incident.compromised_hosts.all():
-        infra_id = f"infrastructure--{host.id}"
-        stix_objects.append({
-            'type': 'infrastructure',
-            'spec_version': '2.1',
-            'id': infra_id,
-            'created': now,
-            'modified': now,
-            'name': host.hostname,
-            'description': f"IP: {host.ip_address or 'N/A'} | OS: {host.os_version or 'N/A'}",
-            'infrastructure_types': ['workstation'] if host.system_type == 'workstation' else ['server'],
-        })
-        ref_ids.append(infra_id)
-
-    # --- Attack Patterns (MITRE techniques from timeline) ---
-    seen_techniques = set()
-    for event in incident.timeline_events.all():
-        mappings = event.mitre_mappings or []
-        if not mappings and event.mitre_technique:
-            mappings = [{'tactic': event.mitre_tactic or '', 'technique': event.mitre_technique}]
-        for mapping in mappings:
-            tech = mapping.get('technique', '')
-            tactic = mapping.get('tactic', '')
-            if tech and tech not in seen_techniques:
-                seen_techniques.add(tech)
-                ap_id = f"attack-pattern--{uuid_mod.uuid5(uuid_mod.NAMESPACE_URL, tech)}"
-                stix_objects.append({
-                    'type': 'attack-pattern',
-                    'spec_version': '2.1',
-                    'id': ap_id,
-                    'created': now,
-                    'modified': now,
-                    'name': f"{tactic}: {tech}" if tactic else tech,
-                    'external_references': [{
-                        'source_name': 'mitre-attack',
-                        'external_id': tech,
-                        'url': f"https://attack.mitre.org/techniques/{tech.replace('.', '/')}",
-                    }],
-                })
-                ref_ids.append(ap_id)
-
-    # Update report object_refs
-    for obj in stix_objects:
-        if obj['id'] == report_id:
-            obj['object_refs'] = ref_ids
-            break
-
-    # Build bundle
-    bundle = {
-        'type': 'bundle',
-        'id': f"bundle--{uuid_mod.uuid4()}",
-        'objects': stix_objects,
-    }
-
-    return jsonify(bundle), 200
-
-
-def _is_ip(value: str) -> bool:
-    """Quick check if a string looks like an IP address."""
-    import re
-    return bool(re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', value or ''))
+    bundle = stix_export.build_bundle(incident, user.organization_id)
+    record_changes({}, {}, objects=len(bundle['objects']), tlp=incident.tlp)
+    response = Response(stix_export.dumps(bundle), content_type='application/stix+json;version=2.1')
+    response.headers['Content-Disposition'] = f'attachment; filename="{export_filename(incident, "stix", "json")}"'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response

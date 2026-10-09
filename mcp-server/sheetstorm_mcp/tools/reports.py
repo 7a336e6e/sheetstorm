@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
+from sheetstorm_mcp.config import get_config
 from sheetstorm_mcp.server import get_client, mcp
+from sheetstorm_mcp.tools.artifacts import LocalPathError, _safe_local_path, _write_local_file
 
 
 def _format_report(r: dict) -> str:
@@ -14,6 +16,11 @@ def _format_report(r: dict) -> str:
         f"  Type: {r.get('report_type', 'N/A')} | Format: {r.get('format', 'N/A')}",
         f"  Created: {r.get('created_at', 'N/A')}",
     ]
+    if r.get("sha256"):
+        size = f" | Size: {r['size_bytes']} bytes" if r.get("size_bytes") is not None else ""
+        parts.append(f"  Snapshot: yes (immutable) | SHA-256: {r['sha256']}{size}")
+    elif "is_snapshot" in r:
+        parts.append("  Snapshot: no (legacy report, re-rendered on download)")
     if r.get("ai_provider"):
         parts.append(f"  AI Provider: {r['ai_provider']}")
     if r.get("generator"):
@@ -51,22 +58,59 @@ async def sheetstorm_generate_pdf_report(
     incident_id: str,
     report_type: str = "full",
     sections: Optional[str] = None,
+    save_path: Optional[str] = None,
 ) -> str:
-    """Generate a PDF report for an incident.
+    """Generate (issue) a PDF report for an incident.
+
+    The PDF is stored on the server as an immutable snapshot with its SHA-256;
+    later downloads return the same bytes. If the incident's TLP forbids the
+    configured AI providers the report is data-only.
+
+    On the remote MCP server, save_path is relative to your private per-user
+    artifact directory; on a local (stdio) server it is any local path.
 
     Args:
         incident_id: UUID of the incident
         report_type: Report type — one of: executive, full, metrics, ioc, trends
         sections: Optional comma-separated sections to include (defaults to the report type's sections)
+        save_path: Optional file to save the PDF to (otherwise only its id and SHA-256 are returned)
     """
     client = get_client()
     try:
+        target = None
+        if save_path:
+            try:
+                target = _safe_local_path(save_path)
+            except LocalPathError as exc:
+                return f"✗ {exc}"
         payload: dict = {"report_type": report_type}
         if sections:
             payload["sections"] = [s.strip() for s in sections.split(",")]
 
-        result = await client.post(f"/incidents/{incident_id}/reports/generate-pdf", json=payload)
-        return f"✓ PDF report generated:\n{_format_report(result)}"
+        resp = await client._send("POST", f"/incidents/{incident_id}/reports/generate-pdf", json=payload)
+        if "pdf" not in resp.headers.get("content-type", "").lower():
+            # Older servers answered with the report record as JSON.
+            return f"✓ PDF report generated:\n{_format_report(resp.json())}"
+
+        digest = resp.headers.get("X-Report-SHA256", "")
+        lines = [f"✓ PDF report generated ({len(resp.content)} bytes)"]
+        if resp.headers.get("X-Report-Id"):
+            lines.append(f"  Report ID: {resp.headers['X-Report-Id']}")
+        if digest:
+            lines.append(f"  SHA-256: {digest}")
+        if resp.headers.get("X-SheetStorm-AI-Status"):
+            lines.append(f"  AI: not used ({resp.headers['X-SheetStorm-AI-Status']}); data-only report")
+        if target is not None:
+            try:
+                _write_local_file(target, resp.content, private=get_config().transport != "stdio")
+            except LocalPathError as exc:
+                return f"✗ {exc}"
+            except OSError as exc:
+                return f"✗ Cannot write {save_path}: {exc.strerror or exc}"
+            lines.append(f"  Saved to {save_path}")
+        else:
+            lines.append("  Pass save_path to save the PDF; it is stored on the server and listed by sheetstorm_list_reports.")
+        return "\n".join(lines)
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 

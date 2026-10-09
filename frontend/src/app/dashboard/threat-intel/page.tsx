@@ -5,9 +5,10 @@
 
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
+import { organization } from '@/lib/endpoints/rbac'
 import type {
   CVEResult,
   IPReputationResult,
@@ -71,6 +72,19 @@ interface MISPPushResult {
 
 type LookupResult = CVEResult | IPReputationResult | DomainReputationResult | EmailReputationResult | RansomwareVictimResult | VirusTotalResult | DefangResult | RefangResult | MISPPushResult
 
+/**
+ * TLP choices of a MISP push without an incident (the request must carry an
+ * explicit `tlp`; the event is tagged with it). RED is never pushed and
+ * AMBER+STRICT only when the organization allows it (server-enforced too).
+ */
+const MISP_TLP_OPTIONS = [
+  { value: 'white', label: 'TLP:WHITE' },
+  { value: 'green', label: 'TLP:GREEN' },
+  { value: 'amber', label: 'TLP:AMBER' },
+  { value: 'amber_strict', label: 'TLP:AMBER+STRICT' },
+  { value: 'red', label: 'TLP:RED' },
+]
+
 const MISP_IOC_TYPES = [
   { value: 'ip-dst', label: 'IP (Destination)' },
   { value: 'ip-src', label: 'IP (Source)' },
@@ -99,6 +113,19 @@ export default function ThreatIntelPage() {
   const [mispIocs, setMispIocs] = useState<{ type: string; value: string; comment: string }[]>([{ type: 'ip-dst', value: '', comment: '' }])
   const [mispEventInfo, setMispEventInfo] = useState('')
   const [mispPushing, setMispPushing] = useState(false)
+  const [mispTlp, setMispTlp] = useState('amber')
+  const [allowAmberStrict, setAllowAmberStrict] = useState(false)
+
+  // Org setting that lets AMBER+STRICT data leave (public to every user); fails closed.
+  useEffect(() => {
+    if (activeTab !== 'misp') return
+    let cancelled = false
+    organization
+      .get()
+      .then((org) => { if (!cancelled) setAllowAmberStrict(org.settings?.enrichment_allow_amber_strict === true) })
+      .catch(() => { if (!cancelled) setAllowAmberStrict(false) })
+    return () => { cancelled = true }
+  }, [activeTab])
 
   const currentTab = TABS.find(t => t.id === activeTab)!
 
@@ -163,6 +190,7 @@ export default function ThreatIntelPage() {
 
     try {
       const data = await api.post<MISPPushResult>('/threat-intel/misp/push', {
+        tlp: mispTlp,
         iocs: validIocs.map(i => ({ type: i.type, value: i.value.trim(), comment: i.comment.trim() || undefined })),
         event_info: mispEventInfo.trim() || undefined,
       })
@@ -248,6 +276,29 @@ export default function ThreatIntelPage() {
               placeholder="MISP event title, e.g. Incident #123 IOCs"
               className="w-full mt-1 px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
+          </div>
+
+          <div>
+            <label htmlFor="misp-tlp" className="text-sm font-medium text-foreground">TLP (required)</label>
+            <select
+              id="misp-tlp"
+              value={mispTlp}
+              onChange={e => setMispTlp(e.target.value)}
+              className="mt-1 w-full max-w-xs px-3 py-2 rounded-md border border-border bg-background text-sm"
+            >
+              {MISP_TLP_OPTIONS.map(o => {
+                const blocked = o.value === 'red' || (o.value === 'amber_strict' && !allowAmberStrict)
+                return (
+                  <option key={o.value} value={o.value} disabled={blocked}>
+                    {o.label}{blocked ? ' (blocked)' : ''}
+                  </option>
+                )
+              })}
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The MISP event is tagged with this level. TLP:RED is never pushed; TLP:AMBER+STRICT only when your
+              organization allows it. Pushing from an incident uses that incident&apos;s TLP.
+            </p>
           </div>
 
           <div className="space-y-2">

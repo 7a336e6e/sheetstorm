@@ -1,8 +1,13 @@
 """Compromised assets models"""
-from sqlalchemy import Column, String, Text, Boolean, DateTime, ForeignKey, BigInteger, LargeBinary
+from sqlalchemy import Column, String, Text, Boolean, DateTime, ForeignKey, BigInteger, LargeBinary, Integer
 from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
+
+# Placeholder to_dict() emits instead of the real password. Before the W0-PR0
+# fix, editing an account could store this literal as the "password"; a value
+# that decrypts to it is treated as no stored password.
+PASSWORD_MASK = '********'
 
 
 class CompromisedHost(BaseModel):
@@ -26,13 +31,29 @@ class CompromisedHost(BaseModel):
     # logs_collected, forensically_sound, acquired_at}
     acquisition_status = Column(JSONB, default=dict)
     notes = Column(Text)
+    # Clock skew (provenance): host clock minus true UTC in seconds
+    # (+ = host ahead), within +-CLOCK_SKEW_LIMIT_SECONDS. Records snapshot
+    # the skew they used (``clock_skew_applied_seconds``); editing it never
+    # silently changes existing facts. ``timezone`` is the host's configured
+    # zone (IANA key or ``UTC+HH:MM``), the default for its records' naive
+    # raw timestamps.
+    clock_skew_seconds = Column(Integer)
+    clock_skew_basis = Column(Text)
+    clock_skew_measured_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
+    clock_skew_measured_at = Column(DateTime(timezone=True))
+    timezone = Column(String(64))
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='compromised_hosts')
-    creator = relationship('User')
+    creator = relationship('User', foreign_keys=[created_by])
+    clock_skew_measurer = relationship('User', foreign_keys=[clock_skew_measured_by], viewonly=True)
     graph_nodes = relationship('AttackGraphNode', back_populates='compromised_host', lazy='dynamic')
     timeline_events = relationship('TimelineEvent', back_populates='host', lazy='dynamic',
                                    foreign_keys='TimelineEvent.host_id')
@@ -46,6 +67,7 @@ class CompromisedHost(BaseModel):
     SYSTEM_TYPES = ['workstation', 'server', 'domain_controller', 'database', 'web_server',
                     'file_server', 'mail_server', 'laptop', 'virtual_machine', 'container', 'other']
     TRIAGE_STATUSES = ['clean', 'compromised', 'under_analysis', 'suspicious']
+    CLOCK_SKEW_LIMIT_SECONDS = 604800  # +-7 days
 
     def __repr__(self):
         return f'<CompromisedHost {self.hostname}>'
@@ -55,6 +77,9 @@ class CompromisedHost(BaseModel):
         data = super().to_dict()
         data['ip_address'] = str(self.ip_address) if self.ip_address else None
         data['creator'] = {'id': str(self.creator.id), 'name': self.creator.name} if self.creator else None
+        data['clock_skew_measurer'] = (
+            {'id': str(self.clock_skew_measured_by), 'name': self.clock_skew_measurer.name if self.clock_skew_measurer else None}
+            if self.clock_skew_measured_by else None)
         return data
 
 
@@ -80,6 +105,10 @@ class CompromisedAccount(BaseModel):
     extra_data = Column(JSONB, default=dict)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', back_populates='compromised_accounts')
@@ -105,12 +134,14 @@ class CompromisedAccount(BaseModel):
         if not data.get('host_system') and self.host:
             data['host_system'] = self.host.hostname
 
-        # Handle password field
-        if self.password_encrypted:
+        # Handle password field. A revealed value equal to the mask is legacy
+        # data (mask round-tripped by the old edit form): no real password.
+        legacy_mask = reveal_password and decrypted_password == PASSWORD_MASK
+        if self.password_encrypted and not legacy_mask:
             if reveal_password and decrypted_password:
                 data['password'] = decrypted_password
             else:
-                data['password'] = '********'
+                data['password'] = PASSWORD_MASK
             data['has_password'] = True
         else:
             data['password'] = None

@@ -1,6 +1,6 @@
 """Incident model"""
 from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean, Index, UniqueConstraint, CheckConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 
@@ -26,15 +26,27 @@ class Incident(BaseModel):
     lead_responder_id = Column(UUID(as_uuid=True), ForeignKey('users.id'))
     team_id = Column(UUID(as_uuid=True), ForeignKey('teams.id', ondelete='SET NULL'), nullable=True)
     tlp = Column(String(20), nullable=False, default='amber', server_default='amber')
+    # Manual override of the derived first-malicious-activity time (metrics).
+    first_malicious_at = Column(DateTime(timezone=True))
     detected_at = Column(DateTime(timezone=True))
+    # First response: auto-set on the first status change away from `open` or
+    # the first explicit assignment; editable.
+    responded_at = Column(DateTime(timezone=True))
     contained_at = Column(DateTime(timezone=True))
     eradicated_at = Column(DateTime(timezone=True))
     recovered_at = Column(DateTime(timezone=True))
     closed_at = Column(DateTime(timezone=True))
     executive_summary = Column(Text)
     lessons_learned = Column(Text)
+    # Values of the custom fields defined by an applied case template
+    # ({field_key: value}); the definitions live in incident_case_templates.
+    custom_fields = Column(JSONB, nullable=False, default=dict, server_default='{}')
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
     is_archived = Column(Boolean, default=False, server_default='false')
     archived_at = Column(DateTime(timezone=True))
     archived_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
@@ -52,7 +64,18 @@ class Incident(BaseModel):
     network_indicators = relationship('NetworkIndicator', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     host_indicators = relationship('HostBasedIndicator', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     malware_tools = relationship('MalwareTool', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
-    artifacts = relationship('Artifact', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
+    # Evidence and its custody ledger are removed only by the DB-level cascade
+    # of an audited purge (services/incident_purge.py sets the custody purge
+    # GUC first). passive_deletes='all': the ORM never loads, deletes or nulls
+    # these rows itself, so a row-by-row delete cannot hit the append-only
+    # ledger triggers or its NO ACTION foreign keys.
+    artifacts = relationship('Artifact', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    evidence_items = relationship('EvidenceItem', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    # Decision log (W4-DEC): head rows and their append-only revisions are
+    # removed only by the DB cascade of an audited purge (passive_deletes).
+    decisions = relationship('IncidentDecision', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    response_actions = relationship('ResponseAction', back_populates='incident', lazy='dynamic',
+                                    passive_deletes='all')
     tasks = relationship('Task', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_nodes = relationship('AttackGraphNode', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_edges = relationship('AttackGraphEdge', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
@@ -99,7 +122,7 @@ class Incident(BaseModel):
                 'network_indicators': self.network_indicators.count(),
                 'host_indicators': self.host_indicators.count(),
                 'malware_tools': self.malware_tools.count(),
-                'artifacts': self.artifacts.count(),
+                'artifacts': self.artifacts.filter_by(deleted_at=None).count(),  # tombstones excluded
                 'tasks': self.tasks.count(),
             }
 

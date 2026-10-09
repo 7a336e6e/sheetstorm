@@ -1,0 +1,25 @@
+{# Shared print styles for custody documents. No external resources: every
+   URL fetch is refused by services/pdf_render (deny_all_url_fetcher). #}
+<style>
+  @page {
+    size: {{ page_size | default('A4') }};
+    margin: 16mm 14mm 18mm 14mm;
+    @bottom-left { content: "SheetStorm chain of custody · {{ footer_label | default('') }}"; font-size: 8px; color: #555; }
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #555; }
+  }
+  body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5px; color: #111; }
+  h1 { font-size: 16px; margin: 0 0 4px 0; }
+  h2 { font-size: 12px; margin: 14px 0 4px 0; border-bottom: 1px solid #999; padding-bottom: 2px; }
+  .sub { color: #444; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #999; padding: 3px 4px; text-align: left; vertical-align: top; word-break: break-word; }
+  th { background: #eee; font-weight: bold; }
+  table.meta td { border: none; padding: 1px 4px 1px 0; }
+  table.meta td.k { font-weight: bold; width: 26%; white-space: nowrap; }
+  .mono { font-family: "DejaVu Sans Mono", monospace; font-size: 8.5px; }
+  .verdict { font-weight: bold; }
+  .bad { color: #a00; font-weight: bold; }
+  .muted { color: #666; }
+  tr.blank td { height: 22px; }
+  .notice { border: 1px solid #a00; padding: 4px; margin: 6px 0; }
+</style>

@@ -1,5 +1,12 @@
 "use client"
 
+/**
+ * Create a user. Picking roles needs roles:manage; roles whose permissions
+ * exceed yours are disabled (backend 403 privilege_escalation). Without an
+ * explicit role the server assigns the org's default role (security policy,
+ * Viewer unless changed). Password hints follow the org's password policy.
+ */
+
 import { useState, useEffect } from 'react'
 import {
     Dialog,
@@ -22,7 +29,16 @@ import {
 } from '@/components/ui/select'
 import { Loader2, X, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
+import { canGrant, rbac } from '@/lib/endpoints/rbac'
+import { useAuthStore } from '@/lib/store'
+import { usePermission } from '@/components/auth/permission-gate'
+import { GuardErrorAlert } from '@/components/auth/guard-error-alert'
+import { usePermissionCatalog } from '@/hooks/use-permission-catalog'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
+import { PasswordChecklist, PasswordRulesHint } from '@/components/settings/PasswordChecklist'
 import { Role, Team } from '@/types'
+
+const DEFAULT_ROLE = 'Analyst'
 
 interface AddUserModalProps {
     open: boolean
@@ -38,9 +54,15 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
         password: '',
         organizational_role: '',
     })
-    const [selectedRoles, setSelectedRoles] = useState<string[]>(['Analyst'])
+    const granted = useAuthStore((s) => s.user?.permissions) ?? []
+    const canAssignRoles = usePermission('roles:manage')
+    const canEditTeams = usePermission('teams:update')
+    const { labelOf } = usePermissionCatalog()
+    const [selectedRoles, setSelectedRoles] = useState<string[]>([])
     const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
-    const [error, setError] = useState('')
+    const [error, setError] = useState<unknown>(null)
+    // The org's password policy (hints; the server validates the password).
+    const passwordRules = usePasswordPolicy(open)
 
     // Available roles and teams
     const [availableRoles, setAvailableRoles] = useState<Role[]>([])
@@ -50,15 +72,22 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
 
     useEffect(() => {
         if (open) {
+            setError(null)
             loadRoles()
             loadTeams()
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open])
 
     const loadRoles = async () => {
         try {
-            const res = await api.get<{ items: Role[] }>('/roles')
+            const res = await rbac.listRoles()
             setAvailableRoles(res.items)
+            // Preselect the default role only when you may grant it.
+            const fallback = res.items.find(r => r.name === DEFAULT_ROLE)
+            setSelectedRoles(prev =>
+                prev.length === 0 && fallback && canGrant(granted, fallback.permissions) ? [fallback.name] : prev
+            )
         } catch { /* ignore */ }
     }
 
@@ -71,13 +100,14 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        setError('')
+        setError(null)
         setIsLoading(true)
 
         try {
             const res = await api.post<{ id: string }>('/users', {
                 ...formData,
-                roles: selectedRoles,
+                // Without roles:manage the server assigns Viewer; sending roles would be refused.
+                ...(canAssignRoles && selectedRoles.length > 0 ? { roles: selectedRoles } : {}),
                 organizational_role: formData.organizational_role || undefined,
             })
 
@@ -91,18 +121,16 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
             onSuccess()
             onOpenChange(false)
             setFormData({ email: '', name: '', password: '', organizational_role: '' })
-            setSelectedRoles(['Analyst'])
+            setSelectedRoles([])
             setSelectedTeamIds([])
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to create user')
+            setError(err)
         } finally {
             setIsLoading(false)
         }
     }
 
-    const unassignedRoleNames = availableRoles
-        .map(r => r.name)
-        .filter(name => !selectedRoles.includes(name))
+    const unassignedRoles = availableRoles.filter(r => !selectedRoles.includes(r.name))
 
     const unassignedTeams = availableTeams.filter(t => !selectedTeamIds.includes(t.id))
 
@@ -118,11 +146,7 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
                     </DialogHeader>
 
                     <div className="grid gap-4 py-4">
-                        {error && (
-                            <div className="p-3 text-sm text-red-500 bg-red-50 dark:bg-red-900/10 rounded-md border border-red-200 dark:border-red-900/20">
-                                {error}
-                            </div>
-                        )}
+                        <GuardErrorAlert error={error} labelOf={labelOf} />
 
                         <div className="grid gap-2">
                             <Label htmlFor="name">Full Name</Label>
@@ -156,8 +180,13 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 placeholder="••••••••"
                                 required
-                                minLength={8}
+                                minLength={passwordRules.min_length}
                             />
+                            {formData.password.length > 0 ? (
+                                <PasswordChecklist password={formData.password} rules={passwordRules} />
+                            ) : (
+                                <PasswordRulesHint rules={passwordRules} />
+                            )}
                         </div>
 
                         <div className="grid gap-2">
@@ -173,32 +202,45 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
                         {/* Roles */}
                         <div className="grid gap-2 border-t pt-4 mt-1">
                             <Label>Roles</Label>
+                            {!canAssignRoles ? (
+                                <p className="text-xs text-muted-foreground">
+                                    New users get the Viewer role. Assigning other roles requires the Manage roles permission.
+                                </p>
+                            ) : (
+                            <>
                             <div className="flex flex-wrap gap-1.5 min-h-[32px]">
+                                {selectedRoles.length === 0 && (
+                                    <span className="text-xs text-muted-foreground">No role selected: the user gets Viewer</span>
+                                )}
                                 {selectedRoles.map(role => (
                                     <Badge key={role} variant="default" className="gap-1 pr-1">
                                         {role}
-                                        {selectedRoles.length > 1 && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedRoles(prev => prev.filter(r => r !== role))}
-                                                className="ml-0.5 rounded-sm hover:bg-white/20 p-0.5"
-                                            >
-                                                <X className="h-3 w-3" />
-                                            </button>
-                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedRoles(prev => prev.filter(r => r !== role))}
+                                            className="ml-0.5 rounded-sm hover:bg-white/20 p-0.5"
+                                            aria-label={`Remove role ${role}`}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
                                     </Badge>
                                 ))}
                             </div>
-                            {unassignedRoleNames.length > 0 && (
+                            {unassignedRoles.length > 0 && (
                                 <div className="flex gap-2">
                                     <Select value={roleToAdd} onValueChange={setRoleToAdd}>
-                                        <SelectTrigger className="flex-1">
+                                        <SelectTrigger className="flex-1" aria-label="Add role">
                                             <SelectValue placeholder="Add role..." />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {unassignedRoleNames.map(name => (
-                                                <SelectItem key={name} value={name}>{name}</SelectItem>
-                                            ))}
+                                            {unassignedRoles.map(r => {
+                                                const exceeds = !canGrant(granted, r.permissions)
+                                                return (
+                                                    <SelectItem key={r.id} value={r.name} disabled={exceeds}>
+                                                        {r.name}{exceeds ? ' (exceeds your permissions)' : ''}
+                                                    </SelectItem>
+                                                )
+                                            })}
                                         </SelectContent>
                                     </Select>
                                     <Button
@@ -217,10 +259,12 @@ export function AddUserModal({ open, onOpenChange, onSuccess }: AddUserModalProp
                                     </Button>
                                 </div>
                             )}
+                            </>
+                            )}
                         </div>
 
                         {/* Teams */}
-                        {availableTeams.length > 0 && (
+                        {canEditTeams && availableTeams.length > 0 && (
                             <div className="grid gap-2 border-t pt-4 mt-1">
                                 <Label>Teams</Label>
                                 <div className="flex flex-wrap gap-1.5 min-h-[32px]">

@@ -1,3 +1,6 @@
+import type { UserPreferences } from './preferences'
+import type { HostClockSkew, ProvenanceFields } from './provenance'
+
 export interface User {
   id: string
   email: string
@@ -12,6 +15,7 @@ export interface User {
   is_active: boolean
   last_login?: string
   created_at: string
+  preferences?: UserPreferences
 }
 
 export interface Team {
@@ -33,14 +37,6 @@ export interface TeamMemberEntry {
   joined_at: string
 }
 
-export interface Role {
-  id: string
-  name: string
-  description: string
-  permissions: string[]
-  is_system: boolean
-}
-
 export type TLPLevel = 'white' | 'green' | 'amber' | 'amber_strict' | 'red'
 
 export interface Incident {
@@ -56,10 +52,15 @@ export interface Incident {
   tlp: TLPLevel
   team_id?: string
   owning_team?: { id: string; name: string }
+  /** Archived incidents are read-only and only visible with `incidents:archive`. */
+  is_archived?: boolean
+  archived_at?: string | null
   lead_responder?: User
   creator?: { id: string; name: string }
   teams?: { id: string; name: string | null }[]
+  first_malicious_at?: string | null
   detected_at?: string
+  responded_at?: string | null
   contained_at?: string
   eradicated_at?: string
   recovered_at?: string
@@ -87,7 +88,7 @@ export interface MitreMapping {
   score?: number
 }
 
-export interface TimelineEvent {
+export interface TimelineEvent extends ProvenanceFields {
   id: string
   incident_id: string
   timestamp: string
@@ -123,7 +124,7 @@ export interface AcquisitionStatus {
   acquired_at?: string
 }
 
-export interface CompromisedHost {
+export interface CompromisedHost extends HostClockSkew {
   id: string
   incident_id: string
   hostname: string
@@ -134,7 +135,14 @@ export interface CompromisedHost {
   evidence?: string
   first_seen?: string
   last_seen?: string
-  containment_status: 'active' | 'isolated' | 'reimaged' | 'decommissioned'
+  containment_status:
+    | 'active'
+    | 'compromised'
+    | 'isolated'
+    | 'contained'
+    | 'reimaged'
+    | 'cleaned'
+    | 'decommissioned'
   triage_status?: TriageStatus | null
   acquisition_status?: AcquisitionStatus | null
   notes?: string
@@ -165,7 +173,7 @@ export interface CompromisedAccount {
   created_at: string
 }
 
-export interface NetworkIndicator {
+export interface NetworkIndicator extends ProvenanceFields {
   id: string
   incident_id: string
   host_id?: string
@@ -189,7 +197,7 @@ export interface NetworkIndicator {
   created_at: string
 }
 
-export interface HostBasedIndicator {
+export interface HostBasedIndicator extends ProvenanceFields {
   id: string
   incident_id: string
   host_id?: string
@@ -207,7 +215,8 @@ export interface HostBasedIndicator {
   created_at: string
 }
 
-export interface MalwareTool {
+export interface MalwareTool extends ProvenanceFields {
+  access_time?: string
   id: string
   incident_id: string
   host_id?: string
@@ -296,6 +305,7 @@ export interface PlaybookAction {
   type: 'enrich_iocs' | 'generate_summary' | 'suggest_mitre' | 'create_task' | string
   name: string
   auto_run?: boolean
+  config?: Record<string, unknown>
 }
 
 export interface PlaybookPhaseTask {
@@ -322,9 +332,13 @@ export interface Playbook {
   incident_type?: string
   definition: PlaybookDefinition
   is_template?: boolean
+  /** Built-ins are code-resident (`id: "builtin:<key>"`), read-only; clone to edit. */
+  is_builtin?: boolean
+  builtin_key?: string | null
+  cloned_from?: string | null
   creator?: { id: string; name: string } | null
-  created_at: string
-  updated_at?: string
+  created_at: string | null
+  updated_at?: string | null
 }
 
 export interface PlaybookActionRun {
@@ -339,6 +353,7 @@ export interface IncidentPlaybook {
   id: string
   incident_id: string
   playbook_id?: string | null
+  builtin_key?: string | null
   name: string
   definition: PlaybookDefinition
   current_phase: number
@@ -461,6 +476,10 @@ export interface PaginatedResponse<T> {
   page: number
   per_page: number
   pages: number
+  /** Effective sort applied by the server, e.g. `-created_at`. */
+  sort?: string
+  /** Present when the request carried `focus`: whether that row was found. */
+  focus_found?: boolean
 }
 
 export interface CaseNote {
@@ -694,3 +713,20 @@ export interface CustomFieldOption {
   created_at: string
 }
 
+export * from './preferences'
+export * from './search'
+export * from './rbac'
+export * from './incident-tables'
+export * from './dfir'
+export * from './incident-overview'
+export * from './users-admin'
+export * from './audit'
+export * from './security'
+export * from './api-keys'
+export * from './provenance'
+export * from './post-incident'
+export * from './exports'
+export * from './evidence'
+export * from './decisions'
+export * from './questions'
+export * from './rate-limits'

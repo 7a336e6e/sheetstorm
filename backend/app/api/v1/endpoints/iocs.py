@@ -1,52 +1,54 @@
 """Indicator of Compromise (IOC) endpoints"""
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db, socketio
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool, CompromisedHost, TimelineEvent
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
+from app.utils.pagination import list_response
+from app.services import provenance_service as prov
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 
 
 # =============================================================================
 # Network Indicators
 # =============================================================================
 
+NETWORK_IOC_SORTABLE = {
+    'timestamp': NetworkIndicator.timestamp,
+    'dns_ip': NetworkIndicator.dns_ip,
+    'protocol': NetworkIndicator.protocol,
+    'port': NetworkIndicator.port,
+    'direction': NetworkIndicator.direction,
+    'created_at': NetworkIndicator.created_at,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs', methods=['GET'])
 @jwt_required()
 @require_incident_access('network_iocs:read')
 def list_network_iocs(incident_id):
-    """List network indicators for an incident."""
+    """List network indicators (utils/pagination.py contract; q/search over
+    dns_ip, source/destination host, description; filters protocol,
+    direction, host_id, plus the provenance filters provenance_level,
+    source_artifact_id, source_evidence_id, unverified)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = NetworkIndicator.query.filter_by(incident_id=incident.id)
-
-    protocol = request.args.get('protocol')
-    if protocol:
-        query = query.filter(NetworkIndicator.protocol == protocol)
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(NetworkIndicator.host_id == host_id)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(NetworkIndicator.dns_ip.ilike(f'%{search}%'))
-
-    pagination = query.order_by(NetworkIndicator.timestamp.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict() for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=NETWORK_IOC_SORTABLE, default_sort='-timestamp', id_col=NetworkIndicator.id,
+        filters={
+            'protocol': (NetworkIndicator.protocol, 'eq'),
+            'direction': (NetworkIndicator.direction, 'eq'),
+            'host_id': (NetworkIndicator.host_id, 'uuid'),
+            **prov.list_filters(NetworkIndicator),
+        },
+        search_columns=(NetworkIndicator.dns_ip, NetworkIndicator.source_host,
+                        NetworkIndicator.destination_host, NetworkIndicator.description),
+        serialize=lambda i: i.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs', methods=['POST'])
@@ -71,6 +73,7 @@ def create_network_ioc(incident_id):
     source_host = data.get('source_host')
     source_host_id = data.get('source_host_id')
     destination_host_id = data.get('destination_host_id')
+    host = None
     if host_id:
         host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host:
@@ -104,7 +107,7 @@ def create_network_ioc(incident_id):
         source_host_id=source_host_id,
         destination_host_id=destination_host_id,
         timeline_event_id=timeline_event_id,
-        timestamp=parse_date(data['timestamp']) if data.get('timestamp') else None,
+        timestamp=parse_datetime(data.get('timestamp'), 'timestamp'),
         protocol=data.get('protocol'),
         port=data.get('port'),
         dns_ip=dns_ip,
@@ -117,10 +120,12 @@ def create_network_ioc(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(ioc, data, host=host, creating=True)
 
     db.session.add(ioc)
 
     # Auto-create attack graph node for the IOC if requested
+    node = None
     if data.get('add_to_attack_graph', False):
         from app.models import AttackGraphNode
         node = AttackGraphNode(
@@ -133,13 +138,18 @@ def create_network_ioc(incident_id):
         db.session.add(node)
 
     db.session.commit()
+    realtime.emit_change(incident.id, 'network_ioc', 'created', obj=ioc)
+    if node is not None:
+        realtime.emit_change(incident.id, 'graph_node', 'created', obj=node)
 
     # IR-augmenting automation: enrich the indicator on creation. Opt-in (org
     # setting `auto_enrich_iocs`, else the IOC_AUTO_ENRICH global default —
     # off) because it sends indicator values to third-party services; a
     # request may still opt out with auto_enrich=false. Runs in a background
     # task so slow/failing providers never block or fail the request.
-    if dns_ip and data.get('auto_enrich', True) is not False and _auto_enrich_enabled(user):
+    # TLP egress block: never for restricted incidents / values (egress_policy).
+    if (dns_ip and data.get('auto_enrich', True) is not False and _auto_enrich_enabled(user)
+            and _auto_enrich_tlp_allowed(incident, dns_ip.strip())):
         socketio.start_background_task(
             _enrich_network_ioc, current_app._get_current_object(), ioc.id,
             dns_ip.strip(), str(user.organization_id),
@@ -154,6 +164,15 @@ def _auto_enrich_enabled(user):
     if 'auto_enrich_iocs' in settings:
         return bool(settings['auto_enrich_iocs'])
     return bool(current_app.config.get('IOC_AUTO_ENRICH', False))
+
+
+def _auto_enrich_tlp_allowed(incident, value):
+    """Auto-enrichment is skipped for TLP-restricted incidents and values."""
+    from app.services.egress_policy import enrichment_allowed, filter_values_for_enrichment
+    if not enrichment_allowed(incident):
+        return False
+    allowed, _ = filter_values_for_enrichment(incident.organization_id, [value])
+    return bool(allowed)
 
 
 def _enrich_network_ioc(app, ioc_id, value, organization_id):
@@ -171,6 +190,7 @@ def _enrich_network_ioc(app, ioc_id, value, organization_id):
                     ed['enrichment'] = enrichment
                     ioc.extra_data = ed
                     db.session.commit()
+                    realtime.emit_change(ioc.incident_id, 'network_ioc', 'updated', obj=ioc)
         except Exception:
             db.session.rollback()
             app.logger.warning('IOC auto-enrichment failed for %s', ioc_id, exc_info=True)
@@ -190,6 +210,10 @@ def update_network_ioc(incident_id, ioc_id):
     ioc = NetworkIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Network indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    prov_before = prov.snapshot(ioc)
 
     for field in ['protocol', 'port', 'dns_ip', 'source_host', 'destination_host',
                   'direction', 'description', 'is_malicious', 'threat_intel_source', 'extra_data']:
@@ -197,7 +221,7 @@ def update_network_ioc(incident_id, ioc_id):
             setattr(ioc, field, data[field])
 
     if 'timestamp' in data:
-        ioc.timestamp = parse_date(data['timestamp']) if data['timestamp'] else None
+        ioc.timestamp = parse_datetime(data['timestamp'], 'timestamp')
 
     # Handle host_id
     if 'host_id' in data:
@@ -230,9 +254,14 @@ def update_network_ioc(incident_id, ioc_id):
         else:
             ioc.destination_host_id = None
 
-    db.session.commit()
+    prov.apply(ioc, data, before=prov_before, host=prov.host_for(ioc))
 
-    return jsonify(ioc.to_dict()), 200
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'network_ioc', 'updated', obj=ioc)
+
+    return set_etag(jsonify(ioc.to_dict()), ioc), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs/<uuid:ioc_id>', methods=['DELETE'])
@@ -246,9 +275,15 @@ def delete_network_ioc(incident_id, ioc_id):
     ioc = NetworkIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Network indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(ioc)
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'network_ioc', 'deleted', id=ioc_id)
 
     return jsonify({'message': 'Network indicator deleted'}), 200
 
@@ -257,45 +292,36 @@ def delete_network_ioc(incident_id, ioc_id):
 # Host-Based Indicators
 # =============================================================================
 
+HOST_IOC_SORTABLE = {
+    'datetime': HostBasedIndicator.datetime,
+    'artifact_type': HostBasedIndicator.artifact_type,
+    'host': HostBasedIndicator.host,
+    'created_at': HostBasedIndicator.created_at,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs', methods=['GET'])
 @jwt_required()
 @require_incident_access('host_iocs:read')
 def list_host_iocs(incident_id):
-    """List host-based indicators for an incident."""
+    """List host-based indicators (utils/pagination.py contract; q/search
+    over value, host, notes; filters artifact_type, host_id, host,
+    from_timeline)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = HostBasedIndicator.query.filter_by(incident_id=incident.id)
-
-    artifact_type = request.args.get('artifact_type')
-    if artifact_type:
-        query = query.filter(HostBasedIndicator.artifact_type == artifact_type)
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(HostBasedIndicator.host_id == host_id)
-
-    # Filter by those linked to timeline events
-    from_timeline = request.args.get('from_timeline')
-    if from_timeline and from_timeline.lower() == 'true':
-        query = query.filter(HostBasedIndicator.timeline_event_id != None)
-
-    host = request.args.get('host')
-    if host:
-        query = query.filter(HostBasedIndicator.host.ilike(f'%{host}%'))
-
-    pagination = query.order_by(HostBasedIndicator.datetime.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict() for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=HOST_IOC_SORTABLE, default_sort='-datetime', id_col=HostBasedIndicator.id,
+        filters={
+            'artifact_type': (HostBasedIndicator.artifact_type, 'eq'),
+            'host_id': (HostBasedIndicator.host_id, 'uuid'),
+            'host': (HostBasedIndicator.host, 'ilike'),
+            # Only those linked to timeline events
+            'from_timeline': (HostBasedIndicator.timeline_event_id.isnot(None), 'flag'),
+            **prov.list_filters(HostBasedIndicator),
+        },
+        search_columns=(HostBasedIndicator.artifact_value, HostBasedIndicator.host, HostBasedIndicator.notes),
+        serialize=lambda i: i.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs', methods=['POST'])
@@ -322,6 +348,7 @@ def create_host_ioc(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     host = data.get('host')
+    host_obj = None
     if host_id:
         host_obj = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host_obj:
@@ -340,7 +367,7 @@ def create_host_ioc(incident_id):
         host_id=host_id,
         timeline_event_id=timeline_event_id,
         artifact_type=artifact_type,
-        datetime=parse_date(data['datetime']) if data.get('datetime') else None,
+        datetime=parse_datetime(data.get('datetime'), 'datetime'),
         artifact_value=artifact_value,
         host=host,
         notes=data.get('notes'),
@@ -349,9 +376,11 @@ def create_host_ioc(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(ioc, data, host=host_obj, creating=True)
 
     db.session.add(ioc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'host_ioc', 'created', obj=ioc)
 
     return jsonify(ioc.to_dict()), 201
 
@@ -368,6 +397,10 @@ def update_host_ioc(incident_id, ioc_id):
     ioc = HostBasedIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Host indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    prov_before = prov.snapshot(ioc)
 
     for field in ['artifact_type', 'artifact_value', 'host', 'notes',
                   'is_malicious', 'remediated', 'extra_data']:
@@ -375,7 +408,7 @@ def update_host_ioc(incident_id, ioc_id):
             setattr(ioc, field, data[field])
 
     if 'datetime' in data:
-        ioc.datetime = parse_date(data['datetime']) if data['datetime'] else None
+        ioc.datetime = parse_datetime(data['datetime'], 'datetime')
 
     # Handle host_id
     if 'host_id' in data:
@@ -388,9 +421,14 @@ def update_host_ioc(incident_id, ioc_id):
         else:
             ioc.host_id = None
 
-    db.session.commit()
+    prov.apply(ioc, data, before=prov_before, host=prov.host_for(ioc))
 
-    return jsonify(ioc.to_dict()), 200
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host_ioc', 'updated', obj=ioc)
+
+    return set_etag(jsonify(ioc.to_dict()), ioc), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs/<uuid:ioc_id>', methods=['DELETE'])
@@ -404,9 +442,15 @@ def delete_host_ioc(incident_id, ioc_id):
     ioc = HostBasedIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Host indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(ioc)
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host_ioc', 'deleted', id=ioc_id)
 
     return jsonify({'message': 'Host indicator deleted'}), 200
 
@@ -415,46 +459,33 @@ def delete_host_ioc(incident_id, ioc_id):
 # Malware & Tools
 # =============================================================================
 
+MALWARE_SORTABLE = {
+    'created_at': MalwareTool.created_at,
+    'file_name': MalwareTool.file_name,
+    'malware_family': MalwareTool.malware_family,
+    'host': MalwareTool.host,
+}
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/malware', methods=['GET'])
 @jwt_required()
 @require_incident_access('malware:read')
 def list_malware(incident_id):
-    """List malware and tools for an incident."""
+    """List malware and tools (utils/pagination.py contract; q/search over
+    file name/path, hashes, family; filters is_tool, host_id)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = MalwareTool.query.filter_by(incident_id=incident.id)
-
-    is_tool = request.args.get('is_tool')
-    if is_tool is not None:
-        query = query.filter(MalwareTool.is_tool == (is_tool.lower() == 'true'))
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(MalwareTool.host_id == host_id)
-
-    search = request.args.get('search')
-    if search:
-        query = query.filter(
-            db.or_(
-                MalwareTool.file_name.ilike(f'%{search}%'),
-                MalwareTool.sha256.ilike(f'%{search}%'),
-                MalwareTool.md5.ilike(f'%{search}%')
-            )
-        )
-
-    pagination = query.order_by(MalwareTool.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [m.to_dict() for m in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=MALWARE_SORTABLE, default_sort='-created_at', id_col=MalwareTool.id,
+        filters={
+            'is_tool': (MalwareTool.is_tool, 'bool'),
+            'host_id': (MalwareTool.host_id, 'uuid'),
+            **prov.list_filters(MalwareTool),
+        },
+        search_columns=(MalwareTool.file_name, MalwareTool.file_path, MalwareTool.sha256,
+                        MalwareTool.md5, MalwareTool.malware_family),
+        serialize=lambda m: m.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/malware', methods=['POST'])
@@ -477,6 +508,7 @@ def create_malware(incident_id):
     # Validate host_id if provided
     host_id = data.get('host_id')
     host = data.get('host')
+    host_obj = None
     if host_id:
         host_obj = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
         if not host_obj:
@@ -492,9 +524,9 @@ def create_malware(incident_id):
         sha256=data.get('sha256'),
         sha512=data.get('sha512'),
         file_size=data.get('file_size'),
-        creation_time=parse_date(data['creation_time']) if data.get('creation_time') else None,
-        modification_time=parse_date(data['modification_time']) if data.get('modification_time') else None,
-        access_time=parse_date(data['access_time']) if data.get('access_time') else None,
+        creation_time=parse_datetime(data.get('creation_time'), 'creation_time'),
+        modification_time=parse_datetime(data.get('modification_time'), 'modification_time'),
+        access_time=parse_datetime(data.get('access_time'), 'access_time'),
         host=host,
         description=data.get('description'),
         malware_family=data.get('malware_family'),
@@ -504,9 +536,11 @@ def create_malware(incident_id):
         extra_data=data.get('extra_data', {}),
         created_by=user.id
     )
+    prov.apply(malware, data, host=host_obj, creating=True)
 
     db.session.add(malware)
     db.session.commit()
+    realtime.emit_change(incident.id, 'malware', 'created', obj=malware)
 
     return jsonify(malware.to_dict()), 201
 
@@ -523,6 +557,10 @@ def update_malware(incident_id, malware_id):
     malware = MalwareTool.query.filter_by(id=malware_id, incident_id=incident.id).first()
     if not malware:
         return jsonify({'error': 'not_found', 'message': 'Malware entry not found'}), 404
+    conflict = precondition(malware)
+    if conflict:
+        return conflict, conflict.status_code
+    prov_before = prov.snapshot(malware)
 
     for field in ['file_name', 'file_path', 'md5', 'sha256', 'sha512', 'file_size',
                   'host', 'description', 'malware_family', 'threat_actor',
@@ -532,7 +570,7 @@ def update_malware(incident_id, malware_id):
 
     for time_field in ['creation_time', 'modification_time', 'access_time']:
         if time_field in data:
-            setattr(malware, time_field, parse_date(data[time_field]) if data[time_field] else None)
+            setattr(malware, time_field, parse_datetime(data[time_field], time_field))
 
     # Handle host_id
     if 'host_id' in data:
@@ -545,9 +583,14 @@ def update_malware(incident_id, malware_id):
         else:
             malware.host_id = None
 
-    db.session.commit()
+    prov.apply(malware, data, before=prov_before, host=prov.host_for(malware))
 
-    return jsonify(malware.to_dict()), 200
+    conflict = commit_or_conflict(malware)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'malware', 'updated', obj=malware)
+
+    return set_etag(jsonify(malware.to_dict()), malware), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/malware/<uuid:malware_id>', methods=['DELETE'])
@@ -561,8 +604,14 @@ def delete_malware(incident_id, malware_id):
     malware = MalwareTool.query.filter_by(id=malware_id, incident_id=incident.id).first()
     if not malware:
         return jsonify({'error': 'not_found', 'message': 'Malware entry not found'}), 404
+    conflict = precondition(malware)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(malware)
-    db.session.commit()
+    conflict = commit_or_conflict(malware)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'malware', 'deleted', id=malware_id)
 
     return jsonify({'message': 'Malware entry deleted'}), 200

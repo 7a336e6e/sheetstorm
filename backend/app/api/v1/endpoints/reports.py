@@ -7,11 +7,15 @@ from flask import jsonify, request, g, send_file, current_app
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
 from app import db
+from app.services.rate_limit_settings import limited
 from app.models import Report, Incident, TimelineEvent, CompromisedHost, CompromisedAccount
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.middleware.rbac import require_incident_access, get_current_user
-from app.middleware.audit import audit_log
-from app.services.ai_service import ai_service
+from app.middleware.audit import audit_log, log_security_event
+from app.services import report_files
+from app.services.ai_service import ai_service, AIBlockedByTLP
+from app.services.pdf_render import html_to_pdf
+from app.utils.pagination import list_response
 
 
 # ── Report type definitions ─────────────────────────────────────────────
@@ -22,7 +26,7 @@ REPORT_TYPES = {
     },
     'full': {
         'title': 'Full Incident Report',
-        'sections': ['summary', 'timeline', 'iocs', 'recommendations'],
+        'sections': ['summary', 'timeline', 'iocs', 'recommendations', 'decisions'],
     },
     'metrics': {
         'title': 'Incident Metrics',
@@ -43,19 +47,23 @@ REPORT_TYPES = {
 @jwt_required()
 @require_incident_access('reports:read')
 def list_reports(incident_id):
-    """List generated reports for an incident."""
+    """List generated reports (utils/pagination.py contract; filter
+    report_type)."""
     incident = g.incident
-
-    reports = Report.query.filter_by(incident_id=incident.id).order_by(Report.created_at.desc()).all()
-
-    return jsonify({
-        'items': [r.to_dict() for r in reports]
-    }), 200
+    query = Report.query.filter_by(incident_id=incident.id, is_archived=False)
+    return jsonify(list_response(
+        query, sortable={'created_at': Report.created_at, 'report_type': Report.report_type},
+        default_sort='-created_at', id_col=Report.id,
+        filters={'report_type': (Report.report_type, 'eq')},
+        search_columns=(Report.title,),
+        serialize=lambda r: r.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/generate-pdf', methods=['POST'])
 @jwt_required()
 @require_incident_access('reports:generate')
+@limited('reports_generate')
 @audit_log('data_modification', 'generate', 'report')
 def generate_pdf_report(incident_id):
     """Generate an AI-powered PDF report for an incident.
@@ -99,16 +107,24 @@ def generate_pdf_report(incident_id):
     }
 
     # ── Step 1: Generate AI content ──────────────────────────────────
+    # The org's AI TLP policy decides which provider (if any) may see this
+    # incident. An explicitly requested provider that is refused -> 403; the
+    # automatic choice falls back to the deterministic data-only report.
     ai_markdown = None
     ai_provider_used = None
+    ai_blocked = None
 
     org_id = str(incident.organization_id)
-    available = ai_service.get_available_providers(organization_id=org_id)
-    if available:
-        used_provider = provider if provider in available else available[0]
+    try:
+        used_provider = ai_service.select_provider(
+            org_id, provider, incident_tlp=incident.tlp, feature='report_pdf', incident_id=incident.id)
+    except AIBlockedByTLP as e:
+        if e.explicit:
+            return e.to_response()
+        used_provider, ai_blocked = None, e
 
-        if used_provider:
-            ai_provider_used = used_provider
+    if used_provider:
+        try:
             ai_markdown = ai_service.generate_report(
                 report_type=report_type,
                 incident_data=incident_data,
@@ -117,7 +133,13 @@ def generate_pdf_report(incident_id):
                 iocs=iocs_data,
                 provider=used_provider,
                 organization_id=org_id,
+                incident_tlp=incident.tlp,
+                incident_id=incident.id,
+                feature='report_pdf',
             )
+            ai_provider_used = used_provider if ai_markdown else None
+        except AIBlockedByTLP as e:
+            ai_blocked = e
 
     # ── Step 2: Convert to HTML ──────────────────────────────────────
     if ai_markdown:
@@ -138,12 +160,18 @@ def generate_pdf_report(incident_id):
             malware=malware,
             sections=sections,
             report_title=report_title,
+            note=(f'AI-powered analysis was not used: organization policy restricts AI providers '
+                  f'for TLP:{incident.tlp.upper()} incidents. This is a data-only report.'
+                  if ai_blocked else None),
         )
 
-    # ── Step 3: HTML → PDF via WeasyPrint ────────────────────────────
+    # Decision-log appendix (W4-DEC): deterministic, appended BEFORE the PDF
+    # is rendered and its snapshot hashed (C34); never part of the AI input.
+    html_content = _append_decision_log(html_content, incident, user, sections)
+
+    # ── Step 3: HTML → PDF via WeasyPrint (external fetching disabled) ─
     try:
-        from weasyprint import HTML
-        pdf_bytes = HTML(string=html_content).write_pdf()
+        pdf_bytes = html_to_pdf(html_content)
     except Exception as e:
         current_app.logger.exception('PDF generation failed')
         return jsonify({
@@ -151,7 +179,9 @@ def generate_pdf_report(incident_id):
             'message': 'PDF generation failed. Please try again or contact support.'
         }), 500
 
-    # ── Step 4: Save report record ───────────────────────────────────
+    # ── Step 4: Issue the report: a stored, hashed snapshot ──────────
+    # What is returned now is what every later download returns (bytes plus
+    # SHA-256); if the snapshot cannot be stored no report record exists.
     report = Report(
         incident_id=incident.id,
         title=f'{report_title} - #{incident.incident_number}',
@@ -162,21 +192,37 @@ def generate_pdf_report(incident_id):
         sections=sections,
         generated_by=user.id,
     )
-    db.session.add(report)
-    db.session.commit()
+    try:
+        db.session.add(report)
+        db.session.flush()
+        report_files.store_snapshot(report, pdf_bytes)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Report snapshot could not be stored')
+        return jsonify({
+            'error': 'server_error',
+            'message': 'The report could not be stored. Please try again or contact support.'
+        }), 500
 
     # ── Step 5: Return PDF ───────────────────────────────────────────
-    return send_file(
+    response = send_file(
         io.BytesIO(pdf_bytes),
         mimetype='application/pdf',
         as_attachment=True,
         download_name=f'incident_{incident.incident_number}_{report_type}_report.pdf',
     )
+    response.headers['X-Report-SHA256'] = report.sha256
+    response.headers['X-Report-Id'] = str(report.id)
+    if ai_blocked:
+        response.headers['X-SheetStorm-AI-Status'] = AIBlockedByTLP.code
+    return response
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/ai-generate', methods=['POST'])
 @jwt_required()
 @require_incident_access('reports:generate')
+@limited('reports_generate')
 @audit_log('data_modification', 'generate_ai_summary', 'report')
 def generate_ai_summary(incident_id):
     """Generate an AI summary for an incident (returns JSON text, not PDF)."""
@@ -184,13 +230,15 @@ def generate_ai_summary(incident_id):
     data = request.get_json() or {}
     org_id = str(incident.organization_id)
 
-    available = ai_service.get_available_providers(organization_id=org_id)
-    if not available:
+    # Explicit AI feature: a TLP-policy refusal is always a 403.
+    try:
+        provider = ai_service.select_provider(
+            org_id, data.get('provider'), incident_tlp=incident.tlp,
+            feature='ai_summary', incident_id=incident.id)
+    except AIBlockedByTLP as e:
+        return e.to_response()
+    if not provider:
         return jsonify({'error': 'not_configured', 'message': 'AI service not configured'}), 501
-
-    provider = data.get('provider')
-    if provider not in available:
-        provider = available[0]
     summary_type = data.get('summary_type', 'executive')
 
     # Collect data
@@ -201,22 +249,28 @@ def generate_ai_summary(incident_id):
     host_iocs = HostBasedIndicator.query.filter_by(incident_id=incident.id).all()
     malware = MalwareTool.query.filter_by(incident_id=incident.id).all()
 
-    summary = ai_service.generate_summary_sync(
-        incident_data=incident.to_dict(),
-        timeline_events=[e.to_dict() for e in timeline_events],
-        compromised_assets={
-            'hosts': [h.to_dict() for h in hosts],
-            'accounts': [a.to_dict() for a in accounts]
-        },
-        iocs={
-            'network': [i.to_dict() for i in network_iocs],
-            'host': [i.to_dict() for i in host_iocs],
-            'malware': [m.to_dict() for m in malware]
-        },
-        summary_type=summary_type,
-        provider=provider,
-        organization_id=org_id,
-    )
+    try:
+        summary = ai_service.generate_summary_sync(
+            incident_data=incident.to_dict(),
+            timeline_events=[e.to_dict() for e in timeline_events],
+            compromised_assets={
+                'hosts': [h.to_dict() for h in hosts],
+                'accounts': [a.to_dict() for a in accounts]
+            },
+            iocs={
+                'network': [i.to_dict() for i in network_iocs],
+                'host': [i.to_dict() for i in host_iocs],
+                'malware': [m.to_dict() for m in malware]
+            },
+            summary_type=summary_type,
+            provider=provider,
+            organization_id=org_id,
+            incident_tlp=incident.tlp,
+            incident_id=incident.id,
+            feature='ai_summary',
+        )
+    except AIBlockedByTLP as e:
+        return e.to_response()
 
     if not summary:
         return jsonify({'error': 'server_error', 'message': 'AI generation failed'}), 500
@@ -232,9 +286,14 @@ def generate_ai_summary(incident_id):
 @jwt_required()
 @require_incident_access('reports:read')
 def list_report_types(incident_id):
-    """List available report types and AI configuration status."""
-    providers = ai_service.get_available_providers(organization_id=str(g.incident.organization_id))
-    ai_configured = bool(providers)
+    """List available report types and AI availability under the org's TLP policy.
+
+    ``providers`` = [{name, allowed, reason}] for every configured provider;
+    ``ai_providers`` keeps its old meaning of "usable providers" (allowed only).
+    """
+    policy = ai_service.provider_policy(str(g.incident.organization_id), incident_tlp=g.incident.tlp)
+    allowed = [p['name'] for p in policy['providers'] if p['allowed']]
+    ai_configured = bool(policy['providers'])
 
     types = []
     for key, val in REPORT_TYPES.items():
@@ -247,26 +306,55 @@ def list_report_types(incident_id):
     return jsonify({
         'report_types': types,
         'ai_configured': ai_configured,
-        'ai_providers': providers,
+        'ai_allowed': bool(allowed),
+        'ai_providers': allowed,
+        'policy_mode': policy['policy_mode'],
+        'providers': policy['providers'],
+        'tlp': g.incident.tlp,
     }), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/<uuid:report_id>/download', methods=['GET'])
 @jwt_required()
 @require_incident_access('reports:read')
+@audit_log('data_access', 'download', 'report')
 def download_report(incident_id, report_id):
-    """Download (re-generate) a previously generated report as PDF.
+    """Download a previously issued report.
 
-    Re-renders the stored ai_summary Markdown to PDF. If no ai_summary
-    exists, rebuilds a basic data-only report.
+    A snapshot report returns the stored bytes after re-checking their SHA-256
+    (``X-Report-SHA256``); a missing or altered file is a 409
+    ``integrity_error`` and a security event. A legacy report (issued before
+    snapshots existed, no stored file) is re-rendered from the stored
+    ``ai_summary`` / current data and marked ``X-Report-Snapshot: legacy``.
+    Soft-deleted reports are 404.
     """
     incident = g.incident
-    report = Report.query.filter_by(id=report_id, incident_id=incident.id).first()
+    report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_archived=False).first()
     if not report:
         return jsonify({'error': 'not_found', 'message': 'Report not found'}), 404
 
+    download_name = f'incident_{incident.incident_number}_{report.report_type}_report.pdf'
+
+    if report_files.is_snapshot(report):
+        try:
+            pdf_bytes = report_files.load_snapshot(report)
+        except report_files.SnapshotIntegrityError as e:
+            log_security_event('report_integrity_failure', resource_type='report', resource_id=report.id,
+                               incident_id=incident.id,
+                               details={'reason': e.reason, 'expected_sha256': e.expected,
+                                        'actual_sha256': e.actual})
+            return jsonify({
+                'error': 'integrity_error',
+                'message': 'The stored report no longer matches its recorded SHA-256 and was not served.',
+                'expected_sha256': report.sha256,
+            }), 409
+        response = send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True,
+                             download_name=download_name)
+        response.headers['X-Report-SHA256'] = report.sha256
+        response.headers['X-Report-Snapshot'] = 'stored'
+        return response
+
     report_title = report.title
-    report_type = report.report_type
     sections = report.sections or ['summary']
 
     if report.ai_summary:
@@ -294,19 +382,19 @@ def download_report(incident_id, report_id):
             report_title=report_title,
         )
 
-    try:
-        from weasyprint import HTML
-        pdf_bytes = HTML(string=html_content).write_pdf()
-    except Exception as e:
-        current_app.logger.error(f"PDF re-generation failed: {e}")
-        return jsonify({'error': 'server_error', 'message': f'PDF generation failed: {str(e)}'}), 500
+    html_content = _append_decision_log(html_content, incident, get_current_user(), sections)
 
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'incident_{incident.incident_number}_{report_type}_report.pdf',
-    )
+    try:
+        pdf_bytes = html_to_pdf(html_content)
+    except Exception:
+        current_app.logger.exception('Legacy report re-render failed')
+        return jsonify({'error': 'server_error',
+                        'message': 'PDF generation failed. Please try again or contact support.'}), 500
+
+    response = send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True,
+                         download_name=download_name)
+    response.headers['X-Report-Snapshot'] = 'legacy'
+    return response
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/<uuid:report_id>', methods=['DELETE'])
@@ -314,7 +402,8 @@ def download_report(incident_id, report_id):
 @require_incident_access('reports:generate')
 @audit_log('data_modification', 'delete', 'report')
 def delete_report(incident_id, report_id):
-    """Soft-delete a report record."""
+    """Soft-delete a report record. The issued file is retained (C34) and is
+    removed only by the incident purge step."""
     incident = g.incident
     report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_archived=False).first()
     if not report:
@@ -325,6 +414,35 @@ def delete_report(incident_id, report_id):
     db.session.commit()
 
     return jsonify({'message': 'Report deleted'}), 200
+
+
+# ── Decision-log appendix (W4-DEC) ──────────────────────────────────────
+
+_REPORT_FOOTER = '<div class="report-footer">'
+
+
+def _append_decision_log(html_content: str, incident, user, sections) -> str:
+    """Insert the "Decisions & Response Actions" appendix before the footer.
+
+    Only for reports whose sections include ``decisions`` and users who can
+    read decisions or response actions. Built from
+    ``decision_log_service.export_payload(include_privileged=False)`` (a
+    privileged decision never appears in a report) and rendered through the
+    autoescaped Jinja template ``decisions/_appendix.html``. Decision data is
+    never passed to ``ai_service``.
+    """
+    if not isinstance(sections, (list, tuple)) or 'decisions' not in sections or user is None:
+        return html_content
+    if not (user.has_permission('decisions:read') or user.has_permission('response_actions:read')):
+        return html_content
+    from flask import render_template
+    from app.services import decision_log_service
+    payload = decision_log_service.export_payload(incident, user, include_privileged=False)
+    fragment = render_template('decisions/_appendix.html', payload=payload)
+    idx = html_content.rfind(_REPORT_FOOTER)
+    if idx == -1:
+        return html_content + fragment
+    return html_content[:idx] + fragment + '\n' + html_content[idx:]
 
 
 # ── Markdown → HTML conversion ──────────────────────────────────────────
@@ -398,7 +516,7 @@ def _simple_markdown_to_html(md: str) -> str:
                     html_lines.append('</tbody></table>')
                     in_table = False
                     table_header_done = False
-                lang = stripped[3:].strip()
+                lang = re.sub(r'[^A-Za-z0-9_+-]', '', stripped[3:].strip())
                 html_lines.append(f'<pre><code class="language-{lang}">' if lang else '<pre><code>')
                 in_code_block = True
             continue
@@ -505,8 +623,24 @@ def _simple_markdown_to_html(md: str) -> str:
     return '\n'.join(html_lines)
 
 
+_SAFE_LINK = re.compile(r'^(https?://|mailto:|#)', re.IGNORECASE)
+
+
+def _md_link(m) -> str:
+    label, href = m.group(1), m.group(2)
+    # Text is already escaped; only plain web/mail/anchor targets become links.
+    if not _SAFE_LINK.match(html_module.unescape(href).strip()):
+        return label
+    return f'<a href="{href}">{label}</a>'
+
+
 def _inline_md(text: str) -> str:
-    """Convert inline Markdown formatting to HTML (bold, italic, code, links)."""
+    """Convert inline Markdown formatting to HTML (bold, italic, code, links).
+
+    The text (AI or user supplied) is HTML-escaped first, so only the markup
+    produced here reaches the PDF renderer.
+    """
+    text = html_module.escape(text, quote=True)
     # Code spans
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     # Bold + italic
@@ -516,7 +650,7 @@ def _inline_md(text: str) -> str:
     # Italic
     text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
     # Links
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _md_link, text)
     return text
 
 
@@ -563,10 +697,13 @@ def _get_report_css() -> str:
 
 def _build_fallback_report_html(
     incident, timeline_events, hosts, accounts, network_iocs,
-    host_iocs, malware, sections, report_title
+    host_iocs, malware, sections, report_title, note=None
 ):
     """Build a basic data-only HTML report when AI is not available."""
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    note = note or ('Note: AI-powered analysis is not configured. This is a data-only report. '
+                    'Configure an OpenAI or Google AI API key in Settings → Integrations to enable '
+                    'AI-generated reports.')
 
     html = f'''<!DOCTYPE html>
 <html>
@@ -586,7 +723,7 @@ def _build_fallback_report_html(
     </div>
 </div>
 <div class="report-body">
-    <p><em>Note: AI-powered analysis is not configured. This is a data-only report. Configure an OpenAI or Google AI API key in Settings → Integrations to enable AI-generated reports.</em></p>
+    <p><em>{html_module.escape(note)}</em></p>
 '''
 
     if 'summary' in sections:

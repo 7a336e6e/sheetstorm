@@ -1,6 +1,10 @@
 """Item 4: chain-of-custody signatures — valid / unsigned_legacy / invalid /
 key_mismatch (rotation), v1 rows, canonical payload, CSV formula escaping and
-PDF export."""
+PDF export.
+
+W1-EVD-CORE: entries are written through the v3 ledger (CustodyLedger);
+legacy (pre-v3) rows are inserted with raw SQL; tampering runs with the
+append-only triggers disabled (``ledger_tamper``)."""
 import csv
 import io
 
@@ -9,25 +13,24 @@ from sqlalchemy import text
 
 
 @pytest.fixture
-def artifact(app, db, users, make_incident):
-    from app.models import Artifact
+def artifact(app, make_incident, make_artifact):
+    return make_artifact(make_incident())
+
+
+@pytest.fixture
+def bare_artifact(app, make_incident, make_evidence, make_artifact):
+    """An artifact whose item has no ledger entries yet (room for legacy rows)."""
     inc = make_incident()
-    a = Artifact(incident_id=inc.id, filename='f.bin', original_filename='evidence.bin',
-                 storage_path='x', storage_type='local', file_size=3, md5='0' * 32,
-                 sha256='0' * 64, sha512='0' * 128, uploaded_by=users['Administrator'].id)
-    db.session.add(a)
-    db.session.commit()
-    return a
+    item = make_evidence(inc, register=False, evidence_type='digital_file')
+    return make_artifact(inc, item=item, upload_entry=False)
 
 
 def _log(app, artifact, user, purpose=None, ip='10.0.0.5'):
-    from app.models import ChainOfCustody
     from app import db
+    from app.services.custody_ledger import CustodyLedger
     with app.test_request_context(environ_base={'REMOTE_ADDR': ip}, headers={'User-Agent': 'pytest-agent'}):
-        e = ChainOfCustody(artifact_id=artifact.id, action='download', performed_by=user.id,
-                           ip_address=ip, user_agent='pytest-agent', purpose=purpose,
-                           verification_result='match', extra_data={'k': 1})
-        db.session.add(e)
+        e = CustodyLedger.append(artifact.evidence_item, 'download', performed_by=user, artifact=artifact,
+                                 purpose=purpose, verification_result='match', extra={'k': 1})
         db.session.commit()
         return e
 
@@ -51,19 +54,33 @@ def test_export_valid(app, users, auth, artifact):
     body = _export(auth, users, artifact).get_json()
     assert body['chain_integrity'] is True and body['chain_integrity_status'] == 'intact'
     assert {r['signature_status'] for r in body['custody_entries']} == {'valid'}
+    assert [r['action'] for r in body['custody_entries']] == ['upload', 'download']
+    assert body['chain']['item_chain']['length'] == 3  # register + upload + download
+    assert body['chain']['breaks'] == []
 
 
-def test_legacy_unsigned_rows_are_not_tampered(app, db, users, auth, artifact):
-    e = _log(app, artifact, users['Administrator'])
-    db.session.execute(text('UPDATE chain_of_custody SET signature=NULL, signature_key_id=NULL WHERE id=:i'),
-                       {'i': e.id})
-    db.session.commit()
+def test_legacy_unsigned_rows_are_not_tampered(app, db, users, auth, bare_artifact, insert_legacy_custody):
+    artifact = bare_artifact
+    insert_legacy_custody(artifact, action='upload')
+    _log(app, artifact, users['Administrator'])  # first chained entry seals the legacy row
     body = _export(auth, users, artifact).get_json()
-    assert body['custody_entries'][0]['signature_status'] == 'unsigned_legacy'
+    assert [r['signature_status'] for r in body['custody_entries']] == ['unsigned_legacy', 'valid']
     assert body['chain_integrity'] is True
     assert body['chain_integrity_status'] == 'intact_with_unsigned_legacy'
+    assert body['chain']['legacy'] == {'count': 1, 'sealed': True}
+    assert body['chain']['notes']
     html_like = _export(auth, users, artifact, 'csv').get_data(as_text=True)
     assert 'unsigned (pre-dates signing)' in html_like and 'TAMPERED' not in html_like
+
+
+def test_stripping_a_v3_signature_is_tampering(app, db, users, auth, artifact, ledger_tamper):
+    e = _log(app, artifact, users['Administrator'])
+    with ledger_tamper() as s:
+        s.execute(text('UPDATE chain_of_custody SET signature=NULL, signature_key_id=NULL WHERE id=:i'),
+                  {'i': e.id})
+    body = _export(auth, users, artifact).get_json()
+    assert body['custody_entries'][-1]['signature_status'] == 'invalid'
+    assert body['chain_integrity_status'] == 'compromised'
 
 
 @pytest.mark.parametrize('column,value', [
@@ -72,41 +89,58 @@ def test_legacy_unsigned_rows_are_not_tampered(app, db, users, auth, artifact):
     ('user_agent', 'evil'),
     ('created_at', '2001-01-01T00:00:00Z'),
 ])
-def test_tampering_is_detected(app, db, users, auth, artifact, column, value):
+def test_tampering_is_detected(app, db, users, auth, artifact, ledger_tamper, column, value):
     e = _log(app, artifact, users['Administrator'], purpose='original')
-    db.session.execute(text(f'UPDATE chain_of_custody SET {column}=:v WHERE id=:i'), {'v': value, 'i': e.id})
-    db.session.commit()
+    with ledger_tamper() as s:
+        s.execute(text(f'UPDATE chain_of_custody SET {column}=:v WHERE id=:i'), {'v': value, 'i': e.id})
     body = _export(auth, users, artifact).get_json()
-    assert body['custody_entries'][0]['signature_status'] == 'invalid'
+    by_id = {r['id']: r for r in body['custody_entries']}
+    assert by_id[str(e.id)]['signature_status'] == 'invalid'
     assert body['chain_integrity'] is False
+    assert 'entry_hash_mismatch' in {b['reason'] for b in body['chain']['breaks']}
 
 
 def test_rotated_key_is_reported_as_key_mismatch(app, users, auth, artifact, monkeypatch):
     _log(app, artifact, users['Administrator'])
     monkeypatch.setitem(app.config, 'CUSTODY_SIGNING_KEY', 'a-brand-new-key')
     body = _export(auth, users, artifact).get_json()
-    assert body['custody_entries'][0]['signature_status'] == 'key_mismatch'
+    assert {r['signature_status'] for r in body['custody_entries']} == {'key_mismatch'}
     assert body['chain_integrity_status'] == 'unverifiable'
+    assert body['chain']['breaks'] == []  # rotation is not a chain break
 
 
-def test_v1_signed_rows_still_verify(app, db, users, auth, artifact):
+@pytest.mark.parametrize('version', ['v1', 'v2'])
+def test_legacy_signed_rows_still_verify(app, db, users, auth, bare_artifact, insert_legacy_custody, version):
+    from datetime import datetime, timezone
     from app.models import ChainOfCustody
-    e = _log(app, artifact, users['Administrator'])
-    db.session.refresh(e)
-    v1 = ChainOfCustody._hmac(app.config['SECRET_KEY'], e._payload_v1())
-    db.session.execute(text('UPDATE chain_of_custody SET signature=:s, signature_key_id=NULL WHERE id=:i'),
-                       {'s': v1, 'i': e.id})
-    db.session.commit()
+    from app.models.artifact import custody_key_id
+    artifact = bare_artifact
+    admin = users['Administrator']
+    ts = datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=timezone.utc)
+    row = ChainOfCustody(id=__import__('uuid').uuid4(), artifact_id=artifact.id, action='download',
+                         performed_by=admin.id, ip_address='10.0.0.5', user_agent='pytest-agent', purpose='p',
+                         verification_result='match', extra_data={}, created_at=ts)
+    if version == 'v1':
+        sig, kid = ChainOfCustody._hmac(app.config['SECRET_KEY'], row._payload_v1()), None
+    else:
+        key = app.config['CUSTODY_SIGNING_KEY']
+        sig, kid = ChainOfCustody._hmac(key, row._payload_v2()), custody_key_id(key)
+    insert_legacy_custody(artifact, created_at=ts, signature=sig, signature_key_id=kid, purpose='p',
+                          verification_result='match', id=row.id)
     body = _export(auth, users, artifact).get_json()
     assert body['custody_entries'][0]['signature_status'] == 'valid'
+    assert body['chain_integrity_status'] == 'intact'
 
 
-def test_signing_failure_is_logged(app, db, users, artifact, monkeypatch, caplog):
+def test_signing_failure_is_logged(app, db, users, auth, artifact, monkeypatch, caplog):
     import app.models.artifact as art
     monkeypatch.setattr(art.ChainOfCustody, 'sign', lambda self, secret: (_ for _ in ()).throw(ValueError('boom')))
     e = _log(app, artifact, users['Administrator'])
-    assert e.signature is None
+    assert e.signature is None and e.entry_hash  # still chained, never blocks logging
     assert any('signing failed' in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    body = _export(auth, users, artifact).get_json()
+    assert body['custody_entries'][-1]['signature_status'] == 'invalid'
 
 
 def test_csv_export_escapes_formulas(app, users, auth, artifact):
@@ -114,6 +148,7 @@ def test_csv_export_escapes_formulas(app, users, auth, artifact):
     data = _export(auth, users, artifact, 'csv').get_data(as_text=True)
     rows = list(csv.reader(io.StringIO(data)))
     purpose_cells = [r[4] for r in rows[1:]]
+    assert len(rows) == 3  # header + upload + download
     assert any(c.startswith("'=HYPERLINK") for c in purpose_cells)
     assert not any(c.startswith('=') for r in rows for c in r)
 
@@ -129,4 +164,6 @@ def test_custody_chain_endpoint_reports_status(app, users, auth, artifact):
     _log(app, artifact, users['Administrator'])
     resp = auth(users['Administrator']).get(
         f'/api/v1/incidents/{artifact.incident_id}/artifacts/{artifact.id}/custody')
-    assert resp.get_json()['chain_of_custody'][0]['signature_status'] == 'valid'
+    body = resp.get_json()
+    assert [e['signature_status'] for e in body['chain_of_custody']] == ['valid', 'valid']
+    assert body['evidence_number'] == 'EV-0001'

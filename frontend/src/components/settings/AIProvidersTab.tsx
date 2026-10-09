@@ -16,6 +16,7 @@ import { Zap, Loader2, Plus, Trash2, CheckCircle, RefreshCw, AlertTriangle } fro
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -49,6 +50,11 @@ const SECRET_FIELDS = new Set(['api_key'])
 export function AIProvidersTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
+  // Mirrors the backend: POST/PUT(+test)/DELETE /integrations need
+  // integrations:create / :update / :delete; without them the tab is read-only.
+  const canCreate = usePermission('integrations:create')
+  const canUpdate = usePermission('integrations:update')
+  const canDelete = usePermission('integrations:delete')
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [integrationTypes, setIntegrationTypes] = useState<IntegrationType[]>([])
@@ -155,7 +161,7 @@ export function AIProvidersTab() {
           <h3 className="text-lg font-medium">AI Providers</h3>
           <p className="text-sm text-muted-foreground">Configure AI providers for report generation and analysis</p>
         </div>
-        <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add AI Provider</Button>
+        {canCreate && <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add AI Provider</Button>}
       </div>
 
       {integrations.length === 0 ? (
@@ -164,7 +170,7 @@ export function AIProvidersTab() {
             <Zap className="h-8 w-8 mb-3 opacity-50" />
             <p className="font-medium">No AI providers configured</p>
             <p className="text-sm mt-1">Add OpenAI, Google Gemini, or Ollama to enable AI-powered reports</p>
-            <Button variant="link" onClick={() => openModal()}>Add AI Provider</Button>
+            {canCreate && <Button variant="link" onClick={() => openModal()}>Add AI Provider</Button>}
           </CardContent>
         </Card>
       ) : (
@@ -206,11 +212,15 @@ export function AIProvidersTab() {
                         Models
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
-                      {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    {canUpdate && (
+                      <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
+                        {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
+                      </Button>
+                    )}
+                    {canUpdate && <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>}
+                    {canDelete && (
+                      <Button variant="ghost" size="icon" aria-label={`Delete ${int.name}`} className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

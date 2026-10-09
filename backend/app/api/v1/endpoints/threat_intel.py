@@ -3,8 +3,9 @@ import logging
 
 from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
@@ -13,6 +14,20 @@ from app.services.encryption_service import encryption_service
 from app.utils.url_validator import validate_outbound_url
 
 logger = logging.getLogger(__name__)
+
+
+def _tlp_blocked_response(user, value, lookup):
+    """403 ``tlp_restricted`` when ``value`` belongs to a TLP-restricted
+    incident of the user's org (TLP egress block), else None."""
+    from app.services.egress_policy import EgressBlocked, assert_values_allowed
+    from app.middleware.audit import log_security_event
+    try:
+        assert_values_allowed(user.organization_id, [value])
+    except EgressBlocked as e:
+        log_security_event('enrichment_blocked_by_tlp', resource_type='threat_intel_lookup',
+                           details={'lookup': lookup}, user=user)
+        return e.to_response()
+    return None
 
 
 def _extract_threat_labels(classification: dict) -> list[str]:
@@ -46,7 +61,7 @@ def _extract_threat_labels(classification: dict) -> list[str]:
 @api_bp.route('/threat-intel/virustotal/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def virustotal_lookup():
     """Look up a hash, URL, domain, or IP on VirusTotal.
     
@@ -62,6 +77,9 @@ def virustotal_lookup():
 
     if not value:
         return jsonify({'error': 'bad_request', 'message': 'Value is required'}), 400
+    blocked = _tlp_blocked_response(user, value, 'virustotal')
+    if blocked:
+        return blocked
 
     # Get VirusTotal API key from integration config
     integration = Integration.query.filter_by(
@@ -181,28 +199,85 @@ def virustotal_lookup():
 @api_bp.route('/threat-intel/misp/push', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:update')
-@limiter.limit('5/minute')
+@limited('threat_intel_misp_push')
 @audit_log('data_modification', 'push_ioc', 'misp')
 def misp_push_ioc():
     """Push IOCs to MISP as events/attributes.
     
     Body: {
-        "incident_id": "uuid",
+        "incident_id": "uuid",            # optional; the incident's TLP then applies
+        "tlp": "amber",                   # REQUIRED without incident_id
         "iocs": [
             { "type": "ip-dst", "value": "1.2.3.4", "comment": "C2 server" },
             { "type": "md5", "value": "abc123...", "comment": "Malware hash" }
         ],
         "event_info": "Optional MISP event title"
     }
+
+    Without ``incident_id`` the request must state the sharing level in
+    ``tlp`` (400 ``tlp_required`` otherwise; white|green|amber|amber_strict|
+    red). ``red`` is always refused and ``amber_strict`` is refused unless the
+    org allows it (403 ``tlp_restricted``); the event is tagged with that TLP.
+    With ``incident_id`` the incident's own TLP governs (a ``tlp`` in the body
+    is ignored).
+
+    TLP egress: with ``incident_id`` the caller must be able to access that
+    incident (404 otherwise); TLP:RED is always refused and TLP:AMBER+STRICT
+    is refused unless the org allows ``enrichment_allow_amber_strict``
+    (403 ``tlp_restricted``). Values that belong to any such restricted
+    incident of the org are refused as well. The MISP event is tagged with
+    the incident's TLP (``tlp:amber`` when no incident is given).
     """
     import requests as req
+    from app.middleware.audit import log_security_event
+    from app.middleware.rbac import user_can_access_incident
+    from app.models import Incident
+    from app.services.egress_policy import (EgressBlocked, assert_enrichment_allowed, assert_values_allowed,
+                                            blocked_tlps)
+    import uuid
 
     user = get_current_user()
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'bad_request', 'message': 'Request body must be a JSON object'}), 400
 
     iocs = data.get('iocs', [])
-    if not iocs:
+    if not iocs or not isinstance(iocs, list) or not all(isinstance(i, dict) for i in iocs):
         return jsonify({'error': 'bad_request', 'message': 'No IOCs provided'}), 400
+
+    incident = None
+    if data.get('incident_id'):
+        try:
+            incident_id = uuid.UUID(str(data['incident_id']))
+        except ValueError:
+            return jsonify({'error': 'bad_request', 'message': 'incident_id must be a UUID'}), 400
+        incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id).first()
+        if incident is None or not user_can_access_incident(user, incident):
+            return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
+
+    try:
+        assert_enrichment_allowed(incident)
+        assert_values_allowed(user.organization_id, [i.get('value') for i in iocs])
+    except EgressBlocked as e:
+        log_security_event('misp_push_blocked_by_tlp', resource_type='incident' if incident else 'misp',
+                           resource_id=incident.id if incident else None,
+                           incident_id=incident.id if incident else None,
+                           details={'tlp': e.tlp, 'blocked_count': e.blocked_count}, user=user)
+        return e.to_response()
+    if incident is not None:
+        tlp = incident.tlp
+    else:
+        tlp = data.get('tlp')
+        if not isinstance(tlp, str) or tlp.strip().lower() not in _MISP_TLP_TAGS:
+            return jsonify({'error': 'tlp_required',
+                            'message': 'A TLP is required when pushing without an incident: '
+                                       + ', '.join(_MISP_TLP_TAGS)}), 400
+        tlp = tlp.strip().lower()
+        if tlp in blocked_tlps(user.organization_id):
+            log_security_event('misp_push_blocked_by_tlp', resource_type='misp',
+                               details={'tlp': tlp, 'blocked_count': None}, user=user)
+            return EgressBlocked(tlp).to_response()
+    tlp_tag = _MISP_TLP_TAGS[tlp]
 
     # Get MISP integration
     integration = Integration.query.filter_by(
@@ -247,6 +322,7 @@ def misp_push_ioc():
                 'distribution': 0,  # Organization only
                 'threat_level_id': 2,  # Medium
                 'analysis': 1,  # Ongoing
+                'Tag': [{'name': tlp_tag}],
                 'Attribute': [
                     {
                         'type': ioc.get('type', 'text'),
@@ -290,6 +366,16 @@ def misp_push_ioc():
         return jsonify({'error': 'server_error', 'message': 'MISP push failed'}), 500
 
 
+# Incident TLP -> MISP `tlp` taxonomy tag.
+_MISP_TLP_TAGS = {
+    'white': 'tlp:white',
+    'green': 'tlp:green',
+    'amber': 'tlp:amber',
+    'amber_strict': 'tlp:amber+strict',
+    'red': 'tlp:red',
+}
+
+
 def _misp_type_to_category(ioc_type: str) -> str:
     """Map MISP attribute type to category."""
     mapping = {
@@ -319,7 +405,7 @@ def _misp_type_to_category(ioc_type: str) -> str:
 @api_bp.route('/threat-intel/cve/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('15/minute')
+@limited('threat_intel_cve')
 def cve_lookup():
     """Look up a CVE by ID using public APIs (NVD + CISA KEV).
 
@@ -438,7 +524,7 @@ def cve_lookup():
 @api_bp.route('/threat-intel/ip/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def ip_reputation_lookup():
     """Look up IP reputation.  Tries AbuseIPDB first (if configured),
     then VirusTotal, then free ip-api.com for geo only.
@@ -453,6 +539,9 @@ def ip_reputation_lookup():
 
     if not ip:
         return jsonify({'error': 'bad_request', 'message': 'IP address required'}), 400
+    blocked = _tlp_blocked_response(user, ip, 'ip')
+    if blocked:
+        return blocked
 
     result = {'ip': ip, 'sources': {}}
 
@@ -544,7 +633,7 @@ def ip_reputation_lookup():
 @api_bp.route('/threat-intel/domain/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def domain_reputation_lookup():
     """Look up domain reputation via VirusTotal (if configured).
 
@@ -558,6 +647,9 @@ def domain_reputation_lookup():
 
     if not domain:
         return jsonify({'error': 'bad_request', 'message': 'Domain required'}), 400
+    blocked = _tlp_blocked_response(user, domain, 'domain')
+    if blocked:
+        return blocked
 
     result = {'domain': domain, 'sources': {}, 'vt_configured': False}
 
@@ -654,7 +746,7 @@ def domain_reputation_lookup():
 @api_bp.route('/threat-intel/email/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def email_reputation_lookup():
     """Look up email address in breach databases.
     Uses Have I Been Pwned API if configured, otherwise returns
@@ -670,6 +762,9 @@ def email_reputation_lookup():
 
     if not email or '@' not in email:
         return jsonify({'error': 'bad_request', 'message': 'Valid email required'}), 400
+    blocked = _tlp_blocked_response(user, email, 'email')
+    if blocked:
+        return blocked
 
     result = {'email': email, 'sources': {}}
 
@@ -753,7 +848,7 @@ def _load_ransomware_data() -> list:
 @api_bp.route('/threat-intel/ransomware/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def ransomware_victim_lookup():
     """Search ransomware.live for victim postings.
 

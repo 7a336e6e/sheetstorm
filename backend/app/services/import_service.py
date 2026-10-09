@@ -1,9 +1,13 @@
 
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime, timezone
+
+from werkzeug.exceptions import BadRequest
+
 from app import db
 from app.models import TimelineEvent, CompromisedHost, CompromisedAccount, NetworkIndicator, MalwareTool, HostBasedIndicator
 from app.services.encryption_service import encryption_service
+from app.utils.validation import as_utc, parse_datetime
 
 class ImportService:
     @staticmethod
@@ -130,25 +134,41 @@ class ImportService:
 
     @staticmethod
     def _parse_date(date_val):
-        """Parse date string or object."""
-        if not date_val:
-            return datetime.now()
-        
+        """Parse a date cell / field into an aware datetime.
+
+        Empty -> now (UTC). Strings: the legacy spreadsheet formats first
+        (incl. US ``%m/%d/%Y``), then ISO-8601 incl. ``Z`` / offsets via the
+        shared ``parse_datetime``. Naive values are UTC. Anything that cannot
+        be parsed raises ValueError (reported as a 400 by the import
+        endpoints) instead of silently becoming "now".
+        """
+        if date_val is None or date_val == '':
+            return datetime.now(timezone.utc)
+
         if isinstance(date_val, str):
+            text = date_val.strip()
+            if not text:
+                return datetime.now(timezone.utc)
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y %H:%M', '%m/%d/%Y']:
+                try:
+                    return as_utc(datetime.strptime(text, fmt))
+                except ValueError:
+                    continue
             try:
-                # Try common formats
-                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y %H:%M', '%m/%d/%Y']:
-                    try:
-                        return datetime.strptime(date_val, fmt)
-                    except ValueError:
-                        continue
-            except:
-                pass
-        
+                return parse_datetime(text, 'date')
+            except BadRequest:
+                raise ValueError(f'Unrecognized date value {date_val!r}') from None
+
         if hasattr(date_val, 'to_pydatetime'):
-            return date_val.to_pydatetime()
-            
-        return date_val if isinstance(date_val, datetime) else datetime.now()
+            value = date_val.to_pydatetime()
+            if isinstance(value, datetime):
+                return as_utc(value)
+        elif isinstance(date_val, datetime):
+            return as_utc(date_val)
+        elif isinstance(date_val, date):
+            return datetime(date_val.year, date_val.month, date_val.day, tzinfo=timezone.utc)
+
+        raise ValueError(f'Unrecognized date value {date_val!r}')
 
     @staticmethod
     def _import_timeline(incident_id, df, user_id):

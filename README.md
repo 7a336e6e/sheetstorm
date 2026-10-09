@@ -104,7 +104,7 @@ Preparation → Identification → Containment → Eradication → Recovery → 
 <td colspan="2">
 
 ### 🤖 MCP Server — AI Assistant Integration
-- **70+ tools** across 17 modules for full platform control via natural language
+- **143 tools** across 22 modules for full platform control via natural language
 - Claude, Cursor, and custom AI agents can query incidents, enrich IOCs, build attack graphs, and generate reports
 - SSE transport with OAuth 2.1 authentication and Redis-backed client persistence
 - 5 IR-focused prompt templates (incident analysis, timeline summary, MITRE mapping, lateral movement, executive summary)
@@ -134,7 +134,7 @@ That's it. The script generates secrets, builds 6 Docker containers, runs migrat
 | API        | http://127.0.0.1:5000/api/v1     |
 | MCP Server | http://127.0.0.1:8811/sse        |
 
-> **Default login:** `admin@sheetstorm.local` · password in `ADMIN_PASSWORD` from `.env`
+> **First login:** `admin@sheetstorm.local` (`ADMIN_EMAIL`). Leave `ADMIN_PASSWORD` empty in `.env` and the seed step prints a random password **once** in the `start.sh` output (it is not stored anywhere); otherwise it is the `ADMIN_PASSWORD` you set. You must choose a new password at first sign-in. Registration is closed by default: add further users from **Admin → Users** (invite links or accounts).
 
 ### Requirements
 
@@ -218,7 +218,7 @@ The full list (AI providers, storage, SSO, MCP) is in [assets/docs/configuration
 | Database | PostgreSQL 16, Redis |
 | AI | OpenAI GPT-4o, Google Gemini (configurable) |
 | Infra | Docker Compose, Nginx reverse proxy |
-| MCP | Model Context Protocol server (70+ tools) |
+| MCP | Model Context Protocol server (143 tools) |
 
 ---
 

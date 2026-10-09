@@ -1,5 +1,5 @@
 """Case notes model for incident documentation."""
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Boolean, Index
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Boolean, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -21,6 +21,10 @@ class CaseNote(BaseModel):
     is_archived = Column(Boolean, default=False, server_default='false')
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
 
     # Relationships
     incident = relationship('Incident', backref='case_notes')
@@ -55,4 +59,5 @@ class CaseNote(BaseModel):
             } if self.author else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'version': self.version,
         }

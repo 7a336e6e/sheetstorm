@@ -29,47 +29,60 @@ The MCP server acts as a bridge between AI assistants and the SheetStorm REST AP
 
 ## Current Implementation Status
 
-### Implemented Tools (70+)
+### Implemented Tools (143)
 
-The MCP server is fully operational with the following tool modules:
+143 tools in 22 modules (`@mcp.tool` in `sheetstorm_mcp/tools/*.py`; tool names carry the `sheetstorm_` prefix, omitted below). `mcp-bridge` exposes the same set.
 
-| Module | Tools | Status |
-|--------|-------|--------|
-| **auth** | `login`, `logout`, `whoami` | ✅ Complete |
-| **incidents** | `list`, `get`, `create`, `update`, `update_status`, `delete`, `search` | ✅ Complete |
-| **timeline** | `list`, `create`, `update`, `delete`, `list_mitre_tactics`, `list_mitre_techniques` | ✅ Complete |
-| **tasks** | `list`, `get`, `create`, `update`, `delete`, `add_comment`, `list_comments` | ✅ Complete |
-| **assets** | `list_hosts`, `get_host`, `create_host`, `update_host`, `delete_host`, `list_accounts`, `create_account`, `delete_account` | ✅ Complete |
-| **iocs** | `list_network`, `create_network`, `delete_network`, `list_host`, `create_host`, `delete_host`, `list_malware`, `create_malware`, `delete_malware` | ✅ Complete |
-| **artifacts** | `list`, `upload`, `download`, `verify_integrity`, `chain_of_custody` | ✅ Complete |
-| **attack_graph** | `get_graph`, `create_node`, `update_node`, `delete_node`, `create_edge`, `delete_edge`, `auto_generate`, `list_node_types`, `list_edge_types` | ✅ Complete |
-| **reports** | `list`, `generate_pdf`, `generate_ai_summary` | ✅ Complete |
-| **admin** | `list_users`, `list_notifications`, `mark_notification_read`, `get_audit_logs`, `health_check` | ✅ Complete |
-| **resources** | `ir_phases`, `severity_levels`, `incident_statuses`, `mitre_tactics_resource`, `mitre_techniques_resource` | ✅ Complete |
-| **case_notes** | `list`, `get`, `create`, `update`, `delete` | ✅ Complete |
-| **threat_intel** | `virustotal_lookup`, `misp_push_iocs`, `cve_lookup`, `ip_reputation`, `domain_reputation`, `email_reputation`, `ransomware_lookup` | ✅ Complete |
-| **knowledge_base** | `kb_lolbas`, `kb_event_ids`, `kb_d3fend`, `kb_d3fend_suggest` | ✅ Complete |
-| **defang** | `defang_iocs`, `refang_iocs` | ✅ Complete |
+| Module | Tools | Scope |
+|--------|-------|-------|
+| **auth** (2) | `get_current_user`, `logout` | Session |
+| **incidents** (10) | `list_incidents`, `get_incident`, `create_incident`, `update_incident`, `update_incident_status`, `archive_incident`, `list_archived_incidents`, `unarchive_incident`, `permanently_delete_incident`, `get_dashboard_stats` | Incidents, archive/purge, dashboard |
+| **assignments** (3) | `list_assignments`, `assign_user`, `remove_assignment` | Incident assignments |
+| **timeline** (7) | `list_timeline_events`, `create_timeline_event`, `update_timeline_event`, `delete_timeline_event`, `mark_timeline_event_as_ioc`, `list_timeline_mitre_tactics`, `list_timeline_mitre_techniques` | Timeline events (+ provenance) |
+| **tasks** (7) | `list_tasks`, `list_leads`, `create_task`, `update_task`, `delete_task`, `add_task_comment`, `list_task_comments` | Tasks and leads |
+| **assets** (10) | `list_hosts`, `add_host`, `update_host`, `bulk_update_hosts`, `delete_host`, `list_accounts`, `add_account`, `update_account`, `delete_account`, `reveal_account_password` | Hosts and accounts |
+| **iocs** (12) | `list_network_iocs`, `add_network_ioc`, `update_network_ioc`, `delete_network_ioc`, `list_host_iocs`, `add_host_ioc`, `update_host_ioc`, `delete_host_ioc`, `list_malware`, `add_malware`, `update_malware`, `delete_malware` | Network/host IOCs and malware (+ provenance) |
+| **artifacts** (7) | `list_artifacts`, `upload_artifact`, `verify_artifact`, `get_chain_of_custody`, `set_legal_hold`, `export_custody`, `download_artifact` | Artifacts, custody, legal hold |
+| **evidence** (5) | `list_evidence`, `get_evidence`, `register_evidence`, `transfer_evidence`, `verify_evidence_chain` | Evidence register and custody chain |
+| **attack_graph** (10) | `get_attack_graph`, `auto_generate_graph`, `add_graph_node`, `update_graph_node`, `delete_graph_node`, `add_graph_edge`, `update_graph_edge`, `delete_graph_edge`, `get_node_types`, `get_edge_types` | Attack graph (merge/replace auto-generate) |
+| **case_notes** (5) | `list_case_notes`, `get_case_note`, `create_case_note`, `update_case_note`, `delete_case_note` | Case notes |
+| **playbooks** (7) | `list_playbook_templates`, `get_playbook_template`, `activate_playbook`, `get_incident_playbook`, `advance_playbook_phase`, `execute_playbook_action`, `toggle_playbook_task` | Playbooks (org + built-in) |
+| **questions** (4) | `list_open_questions`, `answer_question`, `add_question`, `get_question_report` | Investigative questions |
+| **case_templates** (2) | `list_case_templates`, `apply_case_template` | Case templates |
+| **metrics** (3) | `get_incident_metrics`, `list_improvement_actions`, `add_improvement_action` | Response metrics and improvement actions |
+| **decisions** (5) | `log_decision`, `list_decisions`, `log_response_action`, `list_response_actions`, `update_action_verification` | Decision & response-action log (no approve/authorize, no privileged) |
+| **reports** (3) | `list_reports`, `generate_pdf_report`, `generate_ai_report` | Reports and snapshots |
+| **admin** (21) | `list_users`, `create_user`, `list_roles`, `list_permissions`, `update_user`, `delete_user`, `invite_user`, `list_invites`, `revoke_invite`, `disable_user`, `enable_user`, `force_logout_user`, `unlock_user`, `get_user_activity`, `list_notifications`, `mark_notification_read`, `mark_all_notifications_read`, `get_audit_logs`, `get_system_status`, `get_security_policy`, `health_check` | Users, invites, notifications, audit, system status, security policy |
+| **threat_intel** (7) | `virustotal_lookup`, `misp_push_iocs`, `cve_lookup`, `ip_reputation`, `domain_reputation`, `email_reputation`, `ransomware_lookup` | Threat intel lookups, MISP |
+| **knowledge_base** (6) | `kb_lolbas`, `kb_event_ids`, `kb_d3fend`, `kb_d3fend_suggest`, `get_mitre_tactics`, `get_mitre_techniques` | LOLBAS, Event IDs, D3FEND, MITRE |
+| **advanced_analysis** (5) | `search`, `correlate_iocs`, `export_stix`, `export_csv`, `bulk_enrich` | Search, correlation, STIX/CSV export, bulk enrich |
+| **defang** (2) | `defang_iocs`, `refang_iocs` | IOC defang/refang |
 
-### Implemented Prompts
+### Implemented Prompts (9)
 
-| Prompt | Description | Status |
-|--------|-------------|--------|
-| `analyze_incident` | Comprehensive incident analysis with timeline, IOCs, assets, recommendations | ✅ Complete |
-| `generate_timeline_summary` | Narrative timeline summary with MITRE ATT&CK mapping | ✅ Complete |
-| `suggest_mitre_mapping` | Suggest ATT&CK technique mappings for incident events | ✅ Complete |
-| `identify_lateral_movement` | Analyze incident for lateral movement evidence | ✅ Complete |
-| `draft_executive_summary` | Executive summary for management/stakeholders | ✅ Complete |
+| Prompt | Status |
+|--------|--------|
+| `analyze_incident` | ✅ Complete |
+| `generate_timeline_summary` | ✅ Complete |
+| `suggest_mitre_mapping` | ✅ Complete |
+| `identify_lateral_movement` | ✅ Complete |
+| `draft_executive_summary` | ✅ Complete |
+| `full_ir_report` | ✅ Complete |
+| `lessons_learned` | ✅ Complete |
+| `containment_checklist` | ✅ Complete |
+| `ioc_summary` | ✅ Complete |
 
-### Implemented Resources
+### Implemented Resources (7)
 
-| Resource | Description | Status |
-|----------|-------------|--------|
-| IR Phases | Incident response phases (1-6) with descriptions | ✅ Complete |
-| Severity Levels | Severity level definitions | ✅ Complete |
-| Incident Statuses | Valid incident status values | ✅ Complete |
-| MITRE Tactics | ATT&CK tactic reference data | ✅ Complete |
-| MITRE Techniques | ATT&CK technique reference data | ✅ Complete |
+| Resource function | Status |
+|-------------------|--------|
+| `get_ir_phases` | ✅ Complete |
+| `get_severity_levels` | ✅ Complete |
+| `get_incident_statuses` | ✅ Complete |
+| `get_mitre_tactics_resource` | ✅ Complete |
+| `get_mitre_techniques_resource` | ✅ Complete |
+| `get_graph_node_types_resource` | ✅ Complete |
+| `get_graph_edge_types_resource` | ✅ Complete |
 
 ### Authentication
 
@@ -89,22 +102,30 @@ mcp-server/
 │   ├── client.py           # SheetStorm API client (httpx)
 │   ├── config.py           # Configuration from env
 │   └── tools/
-│       ├── auth.py         # Authentication tools
-│       ├── incidents.py    # Incident CRUD + search
-│       ├── timeline.py     # Timeline event management
-│       ├── tasks.py        # Task management
-│       ├── assets.py       # Hosts + accounts
-│       ├── iocs.py         # Network/host/malware IOCs
-│       ├── artifacts.py    # Evidence artifacts + CoC
-│       ├── attack_graph.py # Attack graph nodes + edges
-│       ├── reports.py      # Report generation
-│       ├── admin.py        # User/notification/audit admin
-│       ├── resources.py    # Reference data resources
-│       ├── case_notes.py   # Case notes CRUD
-│       ├── threat_intel.py # VT, MISP, CVE, IP/domain/email
-│       ├── knowledge_base.py # LOLBAS, Event IDs, D3FEND
-│       ├── defang.py       # IOC defang/refang utilities
-│       └── prompts.py      # IR analysis prompt templates
+│       ├── _provenance.py
+│       ├── admin.py
+│       ├── advanced_analysis.py
+│       ├── artifacts.py
+│       ├── assets.py
+│       ├── assignments.py
+│       ├── attack_graph.py
+│       ├── auth.py
+│       ├── case_notes.py
+│       ├── case_templates.py
+│       ├── defang.py
+│       ├── evidence.py
+│       ├── incidents.py
+│       ├── iocs.py
+│       ├── knowledge_base.py
+│       ├── metrics.py
+│       ├── playbooks.py
+│       ├── prompts.py
+│       ├── questions.py
+│       ├── reports.py
+│       ├── resources.py
+│       ├── tasks.py
+│       ├── threat_intel.py
+│       └── timeline.py
 ├── Dockerfile
 ├── pyproject.toml
 └── README.md
@@ -131,9 +152,9 @@ mcp-server/
 - API key with appropriate Velociraptor ACLs
 - Network connectivity from MCP server → Velociraptor API
 
-## Phase 4 — Advanced Analysis (Future)
+## Phase 4 — Advanced Analysis
 
-**Status:** Not started  
+**Status:** Delivered (`advanced_analysis` module and the prompts above): `sheetstorm_search`, `sheetstorm_correlate_iocs`, `sheetstorm_export_stix`, `sheetstorm_export_csv`, `sheetstorm_bulk_enrich`. The tables below are the original plan.  
 **Goal:** Cross-incident correlation and advanced export capabilities
 
 ### Planned Tools
@@ -181,4 +202,4 @@ mcp-server/
 | Phase 1 — Core Read Tools | Incident, timeline, IOC, task, artifact, attack graph queries | ✅ Complete |
 | Phase 2 — Write + Enrichment | Full CRUD, threat intel, knowledge base, defang, prompts | ✅ Complete |
 | Phase 3 — Velociraptor | Direct endpoint forensics via Velociraptor API | 🔲 Not Started |
-| Phase 4 — Advanced Analysis | Cross-incident correlation, bulk enrichment, advanced export | 🔲 Not Started |
+| Phase 4 — Advanced Analysis | Cross-incident correlation, bulk enrichment, advanced export | ✅ Complete |

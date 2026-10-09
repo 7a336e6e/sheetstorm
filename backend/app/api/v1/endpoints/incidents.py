@@ -1,128 +1,245 @@
 """Incident management endpoints"""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db, socketio
-from app.models import Incident, IncidentAssignment, IncidentTeam, User, TeamMember
-from app.middleware.rbac import require_permission, require_incident_access, get_current_user
+from app import db
+from app.models import Incident, IncidentAssignment, IncidentTeam, User
+from app.middleware.rbac import (  # noqa: F401  (accessible_incidents_query re-exported for callers)
+    require_permission, require_incident_access, get_current_user,
+    accessible_incidents_query, user_can_access_incident,
+)
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
+from app.services import realtime
+from app.services.incident_purge import register_purge_step
+from app.utils.audit_diff import record_changes, snapshot
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
+from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
 logger = logging.getLogger(__name__)
 
 
-def accessible_incidents_query(user):
-    """Base query of incidents the user may access (org + role/team/assignment
-    scoped). Shared by list_incidents and cross-incident search/correlation so
-    the access rules cannot diverge between them.
-    """
-    from app.middleware.rbac import incident_access_tier
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=False)
-    tier = incident_access_tier(user)
-    if tier == 'full':
-        return query
+INCIDENT_SEVERITIES = ('critical', 'high', 'medium', 'low')
+INCIDENT_STATUSES = ('open', 'investigating', 'contained', 'eradicated', 'recovered', 'closed')
+INCIDENT_SORTABLE = {
+    'created_at': Incident.created_at,
+    'updated_at': Incident.updated_at,
+    'incident_number': Incident.incident_number,
+    'title': Incident.title,
+    'severity': severity_rank(Incident.severity),
+    'status': Incident.status,
+    'phase': Incident.phase,
+    'detected_at': Incident.detected_at,
+}
+ARCHIVED_SORTABLE = {**INCIDENT_SORTABLE, 'archived_at': Incident.archived_at}
+INCIDENT_FILTERS = {
+    'status': (Incident.status, in_list(INCIDENT_STATUSES)),
+    'severity': (Incident.severity, in_list(INCIDENT_SEVERITIES)),
+    'phase': (Incident.phase, 'int'),
+    'classification': (Incident.classification, 'eq'),
+}
+INCIDENT_SEARCH = (Incident.title, Incident.description, Incident.incident_number)
 
-    has_assignment = db.session.query(IncidentAssignment.incident_id).filter(
-        IncidentAssignment.user_id == user.id,
-        IncidentAssignment.removed_at.is_(None)
-    )
-    # Operators: only directly assigned incidents.
-    if tier == 'operator':
-        query = query.filter(Incident.id.in_(has_assignment))
-    # Viewers: directly assigned + all TLP:WHITE incidents in their org.
-    elif tier == 'viewer':
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(has_assignment),
-                Incident.tlp == 'white'
-            )
-        )
-    # Responders/Analysts: team-scoped + directly assigned + org-wide (no team).
-    else:
-        user_team_ids = db.session.query(TeamMember.team_id).filter(
-            TeamMember.user_id == user.id
-        )
-        has_team = db.session.query(IncidentTeam.incident_id).filter(
-            IncidentTeam.team_id.in_(user_team_ids)
-        )
-        no_teams = ~db.session.query(IncidentTeam).filter(
-            IncidentTeam.incident_id == Incident.id
-        ).exists()
-        query = query.filter(
-            db.or_(
-                Incident.id.in_(has_assignment),
-                Incident.id.in_(has_team),
-                no_teams
-            )
-        )
-    return query
+
+# --- IR milestones and lifecycle stamping (W2-DFIR-B, C20) ---
+
+# Milestones in the order they must occur.
+MILESTONE_ORDER = ('first_malicious_at', 'detected_at', 'contained_at',
+                   'eradicated_at', 'recovered_at', 'closed_at')
+# Every editable lifecycle timestamp. `responded_at` (W3-RT-POST) sits outside
+# the strict chain: it is future-checked and must not precede `detected_at`.
+EDITABLE_MILESTONES = ('first_malicious_at', 'detected_at', 'responded_at', 'contained_at',
+                       'eradicated_at', 'recovered_at', 'closed_at')
+# Clock-skew allowance for "not in the future".
+MILESTONE_FUTURE_TOLERANCE = timedelta(minutes=5)
+
+STATUS_PHASE_MAP = {
+    'open': 1,
+    'investigating': 2,
+    'contained': 3,
+    'eradicated': 4,
+    'recovered': 5,
+    'closed': 6,
+}
+PHASE_STATUS_MAP = {v: k for k, v in STATUS_PHASE_MAP.items()}
+# Milestone stamped (if still empty) when the incident enters a status.
+STATUS_MILESTONE = {
+    'contained': 'contained_at',
+    'eradicated': 'eradicated_at',
+    'recovered': 'recovered_at',
+    'closed': 'closed_at',
+}
+# Fields whose before/after goes into the audit row of PUT / PATCH status.
+AUDITED_INCIDENT_FIELDS = (
+    'title', 'description', 'severity', 'classification', 'status', 'phase', 'tlp',
+    'team_id', 'lead_responder_id', 'executive_summary', 'lessons_learned',
+) + EDITABLE_MILESTONES
+
+
+def milestone_fields():
+    """Editable milestone fields (those the Incident model has)."""
+    return [f for f in EDITABLE_MILESTONES if hasattr(Incident, f)]
+
+
+def _milestone_error(code, message, **details):
+    return {'error': 'invalid_milestones', 'code': code, 'message': message, **details}
+
+
+def validate_milestones(incident, changes, now=None):
+    """Check milestone values about to be written. Returns an error body for a
+    400, or None.
+
+    ``changes`` maps milestone field -> aware datetime or None (cleared).
+    - A value more than 5 minutes in the future is rejected.
+    - Order first_malicious <= detected <= contained <= eradicated <=
+      recovered <= closed: every *changed* value is compared with every other
+      set value (stored or changed). Pairs where neither side changes are
+      legacy data and are left alone (metrics report them as anomalies).
+    - `responded_at` must not precede `detected_at` (same rule, same scope).
+    """
+    now = now or datetime.now(timezone.utc)
+    for field, value in changes.items():
+        if value is not None and value > now + MILESTONE_FUTURE_TOLERANCE:
+            return _milestone_error('milestone_in_future',
+                                    f'{field} cannot be more than 5 minutes in the future', field=field)
+
+    order = [f for f in MILESTONE_ORDER if hasattr(Incident, f)]
+    merged = {f: (changes[f] if f in changes else getattr(incident, f, None))
+              for f in (*order, 'responded_at')}
+    if ('responded_at' in changes or 'detected_at' in changes) \
+            and merged['responded_at'] is not None and merged['detected_at'] is not None \
+            and merged['detected_at'] > merged['responded_at']:
+        return _milestone_error(
+            'milestone_order', 'detected_at must not be after responded_at',
+            field='responded_at' if 'responded_at' in changes else 'detected_at',
+            conflicts_with='detected_at' if 'responded_at' in changes else 'responded_at',
+            pair=['detected_at', 'responded_at'])
+    for field in order:
+        if field not in changes or merged[field] is None:
+            continue
+        pos = order.index(field)
+        for other in order:
+            other_value = merged[other]
+            if other == field or other_value is None:
+                continue
+            earlier, later = (other, field) if order.index(other) < pos else (field, other)
+            if merged[earlier] > merged[later]:
+                return _milestone_error(
+                    'milestone_order',
+                    f'{earlier} must not be after {later}',
+                    field=field, conflicts_with=other, pair=[earlier, later])
+    return None
+
+
+def apply_status_change(incident, status=None, phase=None, now=None):
+    """Set status and/or phase on ``incident`` (each implies the other) and
+    stamp lifecycle milestones. Shared by every status/phase write.
+
+    - Entering contained / eradicated / recovered / closed stamps the matching
+      ``*_at`` milestone if it is still empty (an edited value is kept).
+    - Reopening (closed -> any other status) clears ``closed_at``.
+    """
+    now = now or datetime.now(timezone.utc)
+    if status is not None:
+        phase = STATUS_PHASE_MAP.get(status, phase)
+    elif phase is not None:
+        status = PHASE_STATUS_MAP.get(phase)
+    if status is None and phase is None:
+        return
+    was_closed = incident.status == 'closed'
+    if status is not None:
+        incident.status = status
+    if phase is not None:
+        incident.phase = phase
+    # First response (W3-RT-POST): the first move away from `open`.
+    if incident.status != 'open' and incident.responded_at is None:
+        incident.responded_at = now
+
+    milestone = STATUS_MILESTONE.get(incident.status)
+    if milestone and getattr(incident, milestone) is None:
+        setattr(incident, milestone, now)
+    if was_closed and incident.status != 'closed':
+        incident.closed_at = None
+
+
+def incident_summary(incident_id, permissions):
+    """Overview aggregates for one incident (single GET only), computed with
+    grouped queries so they are never limited by list pagination. Each part
+    is null unless the caller may read the underlying entity."""
+    from sqlalchemy import func
+    from app.models import CompromisedHost, Task, TimelineEvent
+
+    iso = lambda v: v.isoformat() if v else None  # noqa: E731
+    summary = {'first_event_at': None, 'last_event_at': None, 'earliest_detection_at': None,
+               'leads': None, 'hosts_by_triage': None, 'acquisition': None}
+
+    if 'timeline:read' in permissions:
+        first_event, last_event, earliest_detection = db.session.query(
+            func.min(TimelineEvent.timestamp), func.max(TimelineEvent.timestamp),
+            func.min(TimelineEvent.detection_time),
+        ).filter(TimelineEvent.incident_id == incident_id).one()
+        summary.update(first_event_at=iso(first_event), last_event_at=iso(last_event),
+                       earliest_detection_at=iso(earliest_detection))
+
+    if 'tasks:read' in permissions:
+        by_outcome = {}
+        for outcome, count in db.session.query(Task.lead_outcome, func.count(Task.id)).filter(
+                Task.incident_id == incident_id, Task.task_type == 'investigative_lead',
+        ).group_by(Task.lead_outcome):
+            by_outcome[outcome or 'open'] = by_outcome.get(outcome or 'open', 0) + count
+        summary['leads'] = {
+            'total': sum(by_outcome.values()),
+            'open': by_outcome.get('open', 0),
+            'by_outcome': by_outcome,
+        }
+
+    if 'hosts:read' in permissions:
+        acq_keys = ('disk_imaged', 'memory_captured', 'logs_collected', 'forensically_sound')
+        acq_cols = [func.count(CompromisedHost.id).filter(
+            CompromisedHost.acquisition_status[k].astext == 'true') for k in acq_keys]
+        hosts_by_triage = {}
+        acquisition = dict.fromkeys(acq_keys, 0)
+        for row in db.session.query(CompromisedHost.triage_status, func.count(CompromisedHost.id),
+                                    *acq_cols).filter(
+                CompromisedHost.incident_id == incident_id).group_by(CompromisedHost.triage_status):
+            triage = row[0] or 'under_analysis'
+            hosts_by_triage[triage] = hosts_by_triage.get(triage, 0) + row[1]
+            for key, n in zip(acq_keys, row[2:]):
+                acquisition[key] += n
+        summary.update(hosts_by_triage=hosts_by_triage, acquisition=acquisition)
+
+    return summary
 
 
 @api_bp.route('/incidents', methods=['GET'])
 @jwt_required()
 @require_permission('incidents:read')
 def list_incidents():
-    """List incidents with filtering and pagination.
-    
-    Access rules:
-    - Administrators/Managers: see all org incidents
-    - Incident Responders/Analysts: see incidents assigned to their teams OR directly to them
-    - Operators/Viewers: see only directly assigned incidents
+    """List incidents (utils/pagination.py contract: page, per_page, sort,
+    q/search, focus; filters status (comma list), severity (comma list),
+    phase, classification, team_id).
+
+    Visibility: accessible_incidents_query (assigned + the user's
+    incidents:read_all / read_team / read_tlp_white scopes).
     """
     user = get_current_user()
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)
-
     query = accessible_incidents_query(user)
 
-    # Filter by team_id if provided
+    # Team filter is a subquery, so it stays outside the declarative FILTERS.
     team_id = request.args.get('team_id')
     if team_id:
-        query = query.join(IncidentTeam).filter(IncidentTeam.team_id == team_id)
+        query = query.filter(Incident.id.in_(
+            db.session.query(IncidentTeam.incident_id).filter(
+                IncidentTeam.team_id == parse_uuid('team_id', team_id))))
 
-    # Filters
-    status = request.args.get('status')
-    if status:
-        query = query.filter(Incident.status == status)
-
-    severity = request.args.get('severity')
-    if severity:
-        query = query.filter(Incident.severity == severity)
-
-    phase = request.args.get('phase', type=int)
-    if phase:
-        query = query.filter(Incident.phase == phase)
-
-    classification = request.args.get('classification')
-    if classification:
-        query = query.filter(Incident.classification == classification)
-
-    # Search
-    search = request.args.get('search')
-    if search:
-        # Escape LIKE wildcards to prevent LIKE injection
-        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
-        query = query.filter(
-            db.or_(
-                Incident.title.ilike(f'%{search_escaped}%'),
-                Incident.description.ilike(f'%{search_escaped}%')
-            )
-        )
-
-    pagination = query.order_by(Incident.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict(include_counts=True) for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=INCIDENT_SORTABLE, default_sort='-created_at', id_col=Incident.id,
+        filters=INCIDENT_FILTERS, search_columns=INCIDENT_SEARCH,
+        serialize=lambda i: i.to_dict(include_counts=True),
+    )), 200
 
 
 @api_bp.route('/incidents', methods=['POST'])
@@ -130,13 +247,68 @@ def list_incidents():
 @require_permission('incidents:create')
 @audit_log('data_modification', 'create', 'incident')
 def create_incident():
-    """Create a new incident."""
+    """Create a new incident.
+
+    The owning team (`team_id`), access teams (`team_ids`) and the lead
+    responder must belong to the caller's organization (400 otherwise; they
+    were silently dropped before). `detected_at` defaults to now and may not
+    be more than 5 minutes in the future. A lead gets the "Lead Responder"
+    assignment, exactly like a lead change through PUT. One transaction.
+
+    ``case_template`` ("builtin:<key>" or an org template id) seeds the new
+    incident with the template's questions, leads, playbook, custom-field
+    definitions and defaults (only for severity / tlp / classification the
+    request did not set), in the same transaction; the response adds
+    ``case_template_result``. An unknown or inactive template is a 400 and no
+    incident is created.
+    """
+    from app.models import Team
+    from app.services import case_template_service
     user = get_current_user()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
         from app.schemas.incident import IncidentCreate
-        data = IncidentCreate(**request.get_json())
+        data = IncidentCreate(**payload)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+
+    now = datetime.now(timezone.utc)
+    if data.detected_at and data.detected_at > now + MILESTONE_FUTURE_TOLERANCE:
+        return jsonify(_milestone_error('milestone_in_future',
+                                        'detected_at cannot be more than 5 minutes in the future',
+                                        field='detected_at')), 400
+
+    def org_team(team_id):
+        return Team.query.filter_by(id=team_id, organization_id=user.organization_id).first()
+
+    if data.team_id and not org_team(data.team_id):
+        return jsonify({'error': 'invalid_team', 'message': 'team_id is not a team of your organization'}), 400
+    access_teams = []
+    for tid in dict.fromkeys(data.team_ids or []):
+        team = org_team(tid)
+        if not team:
+            return jsonify({'error': 'invalid_team', 'message': 'team_ids contains a team outside your organization',
+                            'team_id': str(tid)}), 400
+        access_teams.append(team)
+
+    lead = None
+    if data.lead_responder_id:
+        lead = User.query.filter_by(id=data.lead_responder_id, organization_id=user.organization_id,
+                                    is_active=True).first()
+        if not lead:
+            return jsonify({'error': 'invalid_lead_responder',
+                            'message': 'lead_responder_id is not an active user of your organization'}), 400
+
+    template = None
+    if data.case_template:
+        try:
+            template = case_template_service.resolve(user.organization_id, data.case_template)
+        except case_template_service.TemplateError as exc:
+            return jsonify({'error': 'invalid_case_template', 'message': exc.message}), 400
+        if template is None:
+            return jsonify({'error': 'invalid_case_template', 'message': 'case_template was not found'}), 400
 
     incident = Incident(
         organization_id=user.organization_id,
@@ -147,54 +319,61 @@ def create_incident():
         phase=1,  # Start in Preparation phase
         status='open',
         tlp=data.tlp or 'amber',
-        team_id=str(data.team_id) if data.team_id else None,
-        detected_at=data.detected_at or datetime.now(timezone.utc),
+        team_id=data.team_id,
+        lead_responder_id=lead.id if lead else None,
+        detected_at=data.detected_at or now,
         created_by=user.id
     )
-
-    # Assign lead responder if provided
-    if data.lead_responder_id:
-        lead = User.query.filter_by(id=data.lead_responder_id, organization_id=user.organization_id).first()
-        if lead:
-            incident.lead_responder_id = lead.id
-
     db.session.add(incident)
-    db.session.commit()
+    db.session.flush()  # incident.id for the rows below
 
-    # Associate teams with incident
-    team_ids = request.get_json().get('team_ids', [])
-    if team_ids:
-        from app.models import Team
-        for tid in team_ids:
-            team = Team.query.filter_by(id=tid, organization_id=user.organization_id).first()
-            if team:
-                it = IncidentTeam(incident_id=incident.id, team_id=team.id)
-                db.session.add(it)
+    for team in access_teams:
+        db.session.add(IncidentTeam(incident_id=incident.id, team_id=team.id))
 
-    # Assign creator to incident
-    assignment = IncidentAssignment(
-        incident_id=incident.id,
-        user_id=user.id,
-        role='Creator',
-        assigned_by=user.id,
-        assigned_at=datetime.now(timezone.utc)
-    )
-    db.session.add(assignment)
+    # Creator assignment; a creator who is also the lead gets the lead role.
+    db.session.add(IncidentAssignment(
+        incident_id=incident.id, user_id=user.id,
+        role='Lead Responder' if lead and lead.id == user.id else 'Creator',
+        assigned_by=user.id, assigned_at=now,
+    ))
+    if lead and lead.id != user.id:
+        db.session.add(IncidentAssignment(
+            incident_id=incident.id, user_id=lead.id, role='Lead Responder',
+            assigned_by=user.id, assigned_at=now,
+        ))
+    template_result = None
+    if template is not None:
+        explicit = {f for f in ('severity', 'tlp', 'classification') if payload.get(f) is not None}
+        template_result = case_template_service.apply(incident, template, user, creating=True,
+                                                      explicit_fields=explicit)
     db.session.commit()
 
     # Send notifications
     notify_incident_created(incident)
+    if lead and lead.id != user.id:
+        notify_user_assigned(str(lead.id), incident)
+    realtime.emit_change(incident.id, 'incident', 'created', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
-    return jsonify(incident.to_dict(include_counts=True)), 201
+    body = incident.to_dict(include_counts=True)
+    if template_result is not None:
+        if template_result['playbook_instance'] is not None:
+            realtime.emit_change(incident.id, 'playbook', 'created', obj=template_result['playbook_instance'])
+        realtime.emit_resync(incident.id, ['questions', 'tasks', 'playbook'], 'case_template_applied')
+        body['case_template_result'] = case_template_service.public_result(template_result)
+    return jsonify(body), 201
 
 
 @api_bp.route('/incidents/<uuid:incident_id>', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:read')
 def get_incident(incident_id):
-    """Get incident details."""
+    """Get incident details, plus the Overview `summary` block (timeline
+    span, lead and host triage counts; single GET only, never in lists)."""
     incident = g.incident  # Set by require_incident_access
-    return jsonify(incident.to_dict(include_counts=True)), 200
+    data = incident.to_dict(include_counts=True)
+    data['summary'] = incident_summary(incident.id, set(get_current_user().permissions))
+    return set_etag(jsonify(data), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>', methods=['PUT'])
@@ -202,15 +381,55 @@ def get_incident(incident_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'update', 'incident')
 def update_incident(incident_id):
-    """Update an incident."""
+    """Update an incident.
+
+    IR milestones (`detected_at` … `closed_at`; null clears one) are rejected
+    with 400 `invalid_milestones` when more than 5 minutes in the future or
+    out of order (see validate_milestones). A new lead responder must be an
+    active user of the organization and is notified after commit.
+    """
+    from app.models import Team
+    from app.schemas.incident import IncidentUpdate
     incident = g.incident
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
-        from app.schemas.incident import IncidentUpdate
         # Exclude unset fields (None) to treat them as "not updated"
-        data = IncidentUpdate(**request.get_json())
+        data = IncidentUpdate(**payload)
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    conflict = precondition(incident)
+    if conflict:
+        return conflict, conflict.status_code
+
+    milestone_changes = {f: update_data[f] for f in milestone_fields() if f in update_data}
+    if milestone_changes:
+        error = validate_milestones(incident, milestone_changes)
+        if error:
+            return jsonify(error), 400
+    if update_data.get('team_id') and not Team.query.filter_by(
+            id=update_data['team_id'], organization_id=incident.organization_id).first():
+        return jsonify({'error': 'invalid_team', 'message': 'team_id is not a team of your organization'}), 400
+
+    previous_lead_id = incident.lead_responder_id
+    new_lead = None
+    if update_data.get('lead_responder_id'):
+        new_lead = User.query.filter_by(id=update_data['lead_responder_id'],
+                                        organization_id=incident.organization_id).first()
+        if new_lead is None or (not new_lead.is_active and new_lead.id != previous_lead_id):
+            return jsonify({'error': 'invalid_lead_responder',
+                            'message': 'lead_responder_id is not an active user of your organization'}), 400
+
+    # Validation is complete: nothing below returns before the commit.
+    before = snapshot(incident, AUDITED_INCIDENT_FIELDS)
+    access_before = (incident.tlp, incident.team_id)
+    notify_lead = None
+    # Lead changes rewrite assignments: (op, assignment) to emit after commit,
+    # and users whose access must be re-checked then.
+    assignment_changes = []
+    access_recheck = []
 
     # Update fields
     if 'title' in update_data and update_data['title']:
@@ -228,7 +447,11 @@ def update_incident(incident_id):
     if 'lead_responder_id' in update_data:
         user = get_current_user()
         new_lead_id = update_data['lead_responder_id']
-        lead = User.query.filter_by(id=new_lead_id, organization_id=user.organization_id).first() if new_lead_id else None
+        lead = new_lead
+        if lead and lead.id != previous_lead_id:
+            notify_lead = lead
+        if lead or new_lead_id is None:
+            access_recheck.append(incident.lead_responder_id)
         if lead:
             incident.lead_responder_id = lead.id
             # Sync assignments: demote old Lead Responder(s)
@@ -240,6 +463,8 @@ def update_incident(incident_id):
             ).all()
             for old_lead in old_leads:
                 old_lead.role = None
+                assignment_changes.append(('updated', old_lead))
+                access_recheck.append(old_lead.user_id)
             # Ensure new lead has an assignment with Lead Responder role
             new_assignment = IncidentAssignment.query.filter_by(
                 incident_id=incident.id,
@@ -251,6 +476,7 @@ def update_incident(incident_id):
                 new_assignment.role = 'Lead Responder'
                 new_assignment.assigned_by = user.id
                 new_assignment.assigned_at = datetime.now(timezone.utc)
+                assignment_changes.append(('updated', new_assignment))
             else:
                 new_assignment = IncidentAssignment(
                     incident_id=incident.id,
@@ -260,6 +486,7 @@ def update_incident(incident_id):
                     assigned_at=datetime.now(timezone.utc)
                 )
                 db.session.add(new_assignment)
+                assignment_changes.append(('created', new_assignment))
         elif new_lead_id is None:
             # Clearing lead responder — demote any Lead Responder assignments
             old_leads = IncidentAssignment.query.filter(
@@ -269,18 +496,35 @@ def update_incident(incident_id):
             ).all()
             for old_lead in old_leads:
                 old_lead.role = None
+                assignment_changes.append(('updated', old_lead))
+                access_recheck.append(old_lead.user_id)
             incident.lead_responder_id = None
     if 'tlp' in update_data:
         incident.tlp = update_data['tlp']
     if 'team_id' in update_data:
-        incident.team_id = str(update_data['team_id']) if update_data['team_id'] else None
+        incident.team_id = update_data['team_id']
+    for field, value in milestone_changes.items():
+        setattr(incident, field, value)
+    record_changes(before, snapshot(incident, AUDITED_INCIDENT_FIELDS))
 
-    db.session.commit()
+    conflict = commit_or_conflict(incident)
+    if conflict:
+        return conflict, conflict.status_code
+    if notify_lead is not None:
+        # Same "you were assigned" notification as POST /assignments.
+        notify_user_assigned(str(notify_lead.id), incident)
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    for op, assignment in assignment_changes:
+        realtime.emit_change(incident.id, 'assignment', op, obj=assignment)
+    if (incident.tlp, incident.team_id) != access_before:
+        # TLP / team drive read_tlp_white / read_team visibility: evict
+        # anyone present in the incident who lost access.
+        access_recheck += [p['user_id'] for p in realtime.presence_list(incident.id)]
+    if access_recheck:
+        _evict_lost_access(incident, access_recheck)
 
-    # Broadcast update via WebSocket
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(incident.to_dict(include_counts=True)), 200
+    return set_etag(jsonify(incident.to_dict(include_counts=True)), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/status', methods=['PATCH'])
@@ -288,174 +532,129 @@ def update_incident(incident_id):
 @require_incident_access('incidents:update')
 @audit_log('data_modification', 'update_status', 'incident')
 def update_incident_status(incident_id):
-    """Update incident status and/or phase."""
+    """Update incident status and/or phase (each implies the other).
+
+    Entering contained / eradicated / recovered / closed stamps that
+    milestone if it is empty; reopening a closed incident clears `closed_at`
+    (apply_status_change).
+    """
     incident = g.incident
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'bad_request', 'message': 'A JSON object body is required'}), 400
     try:
         from app.schemas.incident import IncidentStatusUpdate
-        data = IncidentStatusUpdate(**request.get_json())
+        data = IncidentStatusUpdate(**payload)
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    conflict = precondition(incident)
+    if conflict:
+        return conflict, conflict.status_code
 
-    STATUS_PHASE_MAP = {
-        'open': 1,
-        'investigating': 2,
-        'contained': 3,
-        'eradicated': 4,
-        'recovered': 5,
-        'closed': 6,
-    }
+    before = snapshot(incident, AUDITED_INCIDENT_FIELDS)
+    if update_data.get('status') is not None:
+        apply_status_change(incident, status=update_data['status'])
+    elif update_data.get('phase') is not None:
+        apply_status_change(incident, phase=update_data['phase'])
+    record_changes(before, snapshot(incident, AUDITED_INCIDENT_FIELDS))
 
-    now = datetime.now(timezone.utc)
+    conflict = commit_or_conflict(incident)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
-    # Update status and sync phase
-    if 'status' in update_data:
-        new_status = update_data['status']
-        incident.status = new_status
-
-        # Auto-sync phase from status
-        if new_status in STATUS_PHASE_MAP:
-            incident.phase = STATUS_PHASE_MAP[new_status]
-
-        # Set timestamp for status change
-        if new_status == 'contained' and not incident.contained_at:
-            incident.contained_at = now
-        elif new_status == 'eradicated' and not incident.eradicated_at:
-            incident.eradicated_at = now
-        elif new_status == 'recovered' and not incident.recovered_at:
-            incident.recovered_at = now
-        elif new_status == 'closed' and not incident.closed_at:
-            incident.closed_at = now
-
-    # Update phase (and sync status from phase)
-    elif 'phase' in update_data:
-        incident.phase = update_data['phase']
-        # Reverse-map phase to status
-        phase_status_map = {v: k for k, v in STATUS_PHASE_MAP.items()}
-        if update_data['phase'] in phase_status_map:
-            incident.status = phase_status_map[update_data['phase']]
-
-    db.session.commit()
-
-    # Broadcast update
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(incident.to_dict()), 200
+    return set_etag(jsonify(incident.to_dict()), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/archive', methods=['POST'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:archive')
 @audit_log('data_modification', 'archive', 'incident')
 def archive_incident(incident_id):
-    """Archive an incident (soft-delete). Admin/Manager only."""
+    """Archive an incident (soft-delete) you can see."""
     user = get_current_user()
-    if not user.has_role('Administrator') and not user.has_role('Manager'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators and managers can archive incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=False).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     incident.is_archived = True
     incident.archived_at = datetime.now(timezone.utc)
     incident.archived_by = user.id
     incident.updated_at = datetime.now(timezone.utc)
     db.session.commit()
+    revoke_incident_rooms(incident.id, 'archived')
 
     return jsonify({'message': 'Incident archived successfully'}), 200
 
 
 @api_bp.route('/incidents/archived', methods=['GET'])
 @jwt_required()
-@require_permission('incidents:read')
+@require_permission('incidents:archive')
 def list_archived_incidents():
-    """List archived incidents. Admin only."""
+    """List archived incidents the user can see."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can view archived incidents'}), 403
-
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)
-
-    query = Incident.query.filter_by(organization_id=user.organization_id, is_archived=True)
-
-    search = request.args.get('search')
-    if search:
-        search_escaped = search.replace('%', '\\%').replace('_', '\\_')
-        query = query.filter(
-            db.or_(
-                Incident.title.ilike(f'%{search_escaped}%'),
-                Incident.description.ilike(f'%{search_escaped}%')
-            )
-        )
-
-    pagination = query.order_by(Incident.archived_at.desc().nullslast(), Incident.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [i.to_dict(include_counts=True) for i in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    query = accessible_incidents_query(user, archived=True)
+    return jsonify(list_response(
+        query, sortable=ARCHIVED_SORTABLE, default_sort='-archived_at', id_col=Incident.id,
+        filters=INCIDENT_FILTERS, search_columns=INCIDENT_SEARCH,
+        serialize=lambda i: i.to_dict(include_counts=True),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/unarchive', methods=['POST'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:archive')
 @audit_log('data_modification', 'unarchive', 'incident')
 def unarchive_incident(incident_id):
-    """Restore an archived incident. Admin only."""
+    """Restore an archived incident you can see."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can restore archived incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
     incident.is_archived = False
     incident.archived_at = None
     incident.archived_by = None
     incident.updated_at = datetime.now(timezone.utc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
     return jsonify({'message': 'Incident restored successfully', 'incident': incident.to_dict()}), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/permanent', methods=['DELETE'])
 @jwt_required()
-@require_permission('incidents:delete')
+@require_permission('incidents:purge')
 @audit_log('data_modification', 'permanent_delete', 'incident')
 def permanent_delete_incident(incident_id):
-    """Permanently delete an archived incident. Admin only. This action is irreversible."""
+    """Permanently delete an archived incident you can see. Irreversible."""
     user = get_current_user()
-    if not user.has_role('Administrator'):
-        return jsonify({'error': 'forbidden', 'message': 'Only administrators can permanently delete incidents'}), 403
-
     incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id, is_archived=True).first()
 
     if not incident:
         return jsonify({'error': 'not_found', 'message': 'Archived incident not found'}), 404
+    if not user_can_access_incident(user, incident):
+        return jsonify({'error': 'forbidden', 'message': 'You do not have access to this incident'}), 403
 
-    # Forensic preservation: never purge evidence that is under legal hold
-    # (the artifacts would cascade-delete with the incident).
-    from app.models import Artifact
-    held = [a for a in Artifact.query.filter_by(incident_id=incident.id).all() if a.under_legal_hold]
-    if held:
-        return jsonify({
-            'error': 'conflict',
-            'message': f'{len(held)} artifact(s) are under legal hold; release the hold(s) before permanently deleting this incident',
-            'held_artifact_ids': [str(a.id) for a in held],
-        }), 409
-
-    db.session.delete(incident)
-    db.session.commit()
+    # Audited purge (services/incident_purge.py): legal-hold check on
+    # artifacts and evidence items, ledger heads logged before deletion,
+    # registered purge steps, custody purge GUC, DB cascade.
+    from app.services.incident_purge import PurgeBlocked, PurgeError, purge_incident
+    try:
+        purge_incident(incident, user)
+    except PurgeBlocked as exc:
+        return jsonify(exc.to_dict()), 409
+    except PurgeError as exc:
+        return jsonify(exc.to_dict()), exc.status
 
     return jsonify({'message': 'Incident permanently deleted'}), 200
 
@@ -512,7 +711,7 @@ def assign_user(incident_id):
             existing.assigned_at = datetime.now(timezone.utc)
             assignment = existing
         elif existing.role == new_role:
-            return jsonify({'error': 'conflict', 'message': 'User already assigned with this role'}), 409
+            return jsonify({'error': 'already_assigned', 'message': 'User already assigned with this role'}), 409
         else:
             # User is already assigned with a different role — update the role
             existing.role = new_role
@@ -539,13 +738,32 @@ def assign_user(incident_id):
         ).all()
         for old_lead in old_leads:
             old_lead.role = None
+        lead_changed = incident.lead_responder_id != target_user.id
         incident.lead_responder_id = target_user.id
+    else:
+        old_leads = []
+        # Re-assigning the current lead with another role ends their lead
+        # role: keep incident.lead_responder_id consistent with assignments.
+        lead_changed = incident.lead_responder_id == target_user.id
+        if lead_changed:
+            incident.lead_responder_id = None
+
+    # First response (W3-RT-POST): the first explicit assignment. The
+    # creator's automatic assignment at create time does not count.
+    responded_stamped = incident.responded_at is None
+    if responded_stamped:
+        incident.responded_at = datetime.now(timezone.utc)
 
     db.session.commit()
 
     # Notify assigned user
     notify_user_assigned(str(target_user.id), incident)
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'assignment', 'updated' if existing else 'created', obj=assignment)
+    for old_lead in old_leads:
+        realtime.emit_change(incident.id, 'assignment', 'updated', obj=old_lead)
+    if new_role == 'Lead Responder' or lead_changed or responded_stamped:
+        realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                             data=incident.to_dict(include_counts=True))
 
     return jsonify(assignment.to_dict()), 201
 
@@ -574,8 +792,8 @@ def remove_assignment(incident_id, assignment_id):
         incident.lead_responder_id = None
 
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'assignment', 'deleted', id=assignment.id)
+    _evict_lost_access(incident, [assignment.user_id])
 
     return jsonify({'message': 'Assignment removed'}), 200
 
@@ -600,6 +818,7 @@ def import_incident_data(incident_id):
         
     try:
         results = ImportService.process_excel_import(incident_id, file, user.id)
+        realtime.emit_resync(incident_id, None, 'import')
         return jsonify({
             'message': 'Import completed successfully',
             'results': results
@@ -648,6 +867,7 @@ def submit_import_data(incident_id):
         
     try:
         results = ImportService.bulk_create_entities(incident_id, data, user.id)
+        realtime.emit_resync(incident_id, None, 'import')
         return jsonify({
             'message': 'Import completed successfully',
             'results': results
@@ -698,8 +918,10 @@ def add_incident_team(incident_id):
     it = IncidentTeam(incident_id=incident.id, team_id=team.id)
     db.session.add(it)
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    # The first linked team turns an org-wide (team scope) incident team-only.
+    _evict_lost_access(incident, [p['user_id'] for p in realtime.presence_list(incident.id)])
 
     return jsonify(it.to_dict()), 201
 
@@ -716,9 +938,46 @@ def remove_incident_team(incident_id, team_id):
     if not it:
         return jsonify({'error': 'not_found', 'message': 'Team association not found'}), 404
 
+    member_ids = [m.user_id for m in it.team.members] if it.team else []
     db.session.delete(it)
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    _evict_lost_access(incident, member_ids)
 
     return jsonify({'message': 'Team removed from incident'}), 200
+
+
+# --- Realtime revocation (W1-RT-EMIT) ---
+
+def _evict_lost_access(incident, user_ids):
+    """After commit: drop users who can no longer see the incident from its
+    socket rooms (assignment/team removal, TLP or team change)."""
+    for uid in dict.fromkeys(str(u) for u in user_ids if u):
+        try:
+            target = db.session.get(User, uid)
+            if target is None or not user_can_access_incident(target, incident):
+                realtime.evict_user_from_incident(uid, incident.id, reason='access_removed')
+        except Exception:
+            logger.exception('realtime: access re-check failed for user %s', uid)
+
+
+def revoke_incident_rooms(incident_id, reason):
+    """After commit: tell everyone in the incident's rooms that access is gone
+    (archive / purge), then close the base and scope rooms."""
+    try:
+        iid = realtime.canonical_incident_id(incident_id)
+        realtime.get_emitter().emit('incident:access_revoked', {'incident_id': iid, 'reason': reason},
+                                    to=realtime.base_room(iid))
+    except Exception:
+        logger.exception('realtime: access_revoked broadcast failed')
+    realtime.close_incident_rooms(incident_id)
+
+
+def _purge_access_revoked(ctx):
+    """incident_purge post-commit step `access_revoked` (ctx: PurgeContext).
+    The row is gone by then, so only ``ctx.incident_id`` is used."""
+    revoke_incident_rooms(ctx.incident_id, 'purged')
+
+
+register_purge_step('access_revoked', _purge_access_revoked, phase='post_commit')

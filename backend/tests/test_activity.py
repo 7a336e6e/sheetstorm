@@ -12,20 +12,21 @@ def emitted(monkeypatch):
     return calls
 
 
-def _log(app, user, event_type, action, incident_id=None, details=None):
+def _log(app, user, event_type, action, incident_id=None, details=None, resource_type='artifact'):
     from app.middleware.audit import log_audit_event
     with app.test_request_context():
-        return log_audit_event(event_type, action, resource_type='artifact', incident_id=incident_id,
+        return log_audit_event(event_type, action, resource_type=resource_type, incident_id=incident_id,
                                details=details or {}, user=user)
 
 
-def test_incident_event_goes_to_incident_room_without_hashes(app, users, make_incident, emitted):
+def test_incident_event_goes_to_scope_room_without_hashes(app, users, make_incident, emitted):
     inc = make_incident()
     _log(app, users['Analyst'], 'security_event', 'artifact_delete', incident_id=inc.id,
          details={'filename': 'a.bin', 'hashes': {'sha256': 'ab'}, 'reason': 'secret case'})
     assert len(emitted) == 1
     event, payload, room = emitted[0]
-    assert room == f'incident_{inc.id}'
+    # Artifact activity only reaches members holding artifacts:read.
+    assert room == f'incident_{inc.id}:artifacts'
     assert payload['details'] == {'filename': 'a.bin'}
 
 
@@ -35,27 +36,33 @@ def test_org_event_goes_to_org_room(app, users, emitted):
     assert room == f'org_{users["Analyst"].organization_id}' and payload['details'] == {'k': 1}
 
 
-def test_admin_action_only_to_admins(app, users, emitted):
+def test_admin_action_only_to_audit_log_readers(app, users, emitted):
+    # Recipients are chosen by the audit_logs:read permission, not a role name:
+    # Administrator and Manager hold it in org A; nobody else does.
     _log(app, users['Administrator'], 'admin_action', 'update_integration')
     rooms = {room for _, _, room in emitted}
-    assert rooms == {f'user_{users["Administrator"].id}'}
+    assert rooms == {f'user_{users["Administrator"].id}', f'user_{users["Manager"].id}'}
 
 
 def test_activity_feed_scoped(app, users, auth, make_incident):
     hidden = make_incident(tlp='amber')
     visible = make_incident(tlp='white')
-    _log(app, users['Administrator'], 'data_modification', 'feed_hidden', incident_id=hidden.id)
+    _log(app, users['Administrator'], 'data_modification', 'feed_hidden', incident_id=hidden.id,
+         resource_type='incident')
     _log(app, users['Administrator'], 'data_modification', 'feed_visible', incident_id=visible.id,
-         details={'hashes': {'md5': 'x'}, 'note': 'ok'})
+         details={'hashes': {'md5': 'x'}, 'note': 'ok'}, resource_type='incident')
+    # Same incident, but a resource the Viewer cannot read (no artifacts:read).
+    _log(app, users['Administrator'], 'data_modification', 'feed_artifact', incident_id=visible.id)
     _log(app, users['Administrator'], 'admin_action', 'feed_admin_only')
 
     items = auth(users['Viewer']).get('/api/v1/activity-feed?limit=100').get_json()['items']
     actions = {i['action'] for i in items}
     assert 'feed_visible' in actions
     assert 'feed_hidden' not in actions and 'feed_admin_only' not in actions
+    assert 'feed_artifact' not in actions
     vis = next(i for i in items if i['action'] == 'feed_visible')
     assert 'hashes' not in vis['details']
 
     admin_actions = {i['action'] for i in auth(users['Administrator']).get('/api/v1/activity-feed?limit=100')
                      .get_json()['items']}
-    assert {'feed_hidden', 'feed_visible', 'feed_admin_only'} <= admin_actions
+    assert {'feed_hidden', 'feed_visible', 'feed_artifact', 'feed_admin_only'} <= admin_actions

@@ -11,6 +11,14 @@ resolves the OAuth grant of the *current* MCP request and stores it in the
 uses that grant's SheetStorm JWT, refreshing it (and storing the rotated
 refresh token) when the backend answers 401. Static credentials from the
 environment are only ever used on the stdio transport.
+
+API keys
+--------
+With ``SHEETSTORM_API_KEY`` the client exchanges the key at
+``POST /auth/token`` for a short-lived access token, re-exchanges shortly
+before it expires and once after a 401. A rejected key (revoked, expired,
+disabled) raises ``AuthenticationError`` without retrying. The key is never
+logged; messages show its public prefix only.
 """
 
 from __future__ import annotations
@@ -120,6 +128,17 @@ class ServerError(SheetStormAPIError):
     """5xx — backend server error."""
 
 
+# Re-exchange an API key this many seconds before its token expires.
+API_KEY_REFRESH_MARGIN = 60
+
+
+def api_key_prefix(key: str | None) -> str:
+    """The public part of an API key (`ssk_<lookup>`), safe to log."""
+    if key and key.startswith("ssk_") and len(key) > 16:
+        return key[:16]
+    return "ssk_…"
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -131,14 +150,22 @@ class SheetStormClient:
         self._config = config
         self._base_url = config.api_url.rstrip("/")
         # Static credentials are a stdio-only convenience. On the remote OAuth
-        # transport every request must carry the calling user's own grant.
-        self._access_token: str | None = (config.api_token or None) if self.is_stdio else None
+        # transport every request must carry the calling user's own grant
+        # (SHEETSTORM_API_KEY is ignored there too).
+        self._api_key: str | None = (config.api_key or None) if self.is_stdio else None
+        self._access_token: str | None = (
+            (config.api_token or None) if self.is_stdio and not self._api_key else None
+        )
         self._refresh_token: str | None = None
+        self._token_expires_at: float | None = None  # monotonic; API-key tokens only
+        self._exchange_lock = asyncio.Lock()
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(config.http_timeout),
             follow_redirects=True,
             cookies=no_cookie_jar(),
+            # Informational: the backend snapshots it into custody ledger entries.
+            headers={"X-SheetStorm-Client": "mcp-server"},
         )
 
     @property
@@ -191,6 +218,57 @@ class SheetStormClient:
         logger.info("Authenticated to SheetStorm backend")
         return data
 
+    @property
+    def uses_api_key(self) -> bool:
+        return self._api_key is not None
+
+    def _api_key_token_fresh(self) -> bool:
+        return (
+            self._access_token is not None
+            and self._token_expires_at is not None
+            and time.monotonic() < self._token_expires_at - API_KEY_REFRESH_MARGIN
+        )
+
+    async def exchange_api_key(self) -> dict:
+        """``POST /auth/token`` with the configured key; stores the access token.
+
+        Raises AuthenticationError when the backend rejects the key (no retry)."""
+        if not self._api_key:
+            raise AuthenticationError("No API key configured", status_code=401)
+        prefix = api_key_prefix(self._api_key)
+        try:
+            resp = await self._http.post("/auth/token", json={"api_key": self._api_key})
+        except httpx.TransportError as exc:
+            raise SheetStormAPIError(f"Network error during API key exchange: {exc}") from exc
+        if resp.status_code in (401, 403):
+            self._access_token = None
+            self._token_expires_at = None
+            raise AuthenticationError(
+                f"API key {prefix} rejected (revoked, expired or disabled)",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 400:
+            self._raise_for_status(resp)
+        data = resp.json()
+        token = data.get("access_token")
+        if not token:
+            raise AuthenticationError("API key exchange returned no access token", status_code=resp.status_code)
+        self._access_token = token
+        self._token_expires_at = time.monotonic() + float(data.get("expires_in") or 900)
+        logger.info("Authenticated to SheetStorm backend with API key %s", prefix)
+        return data
+
+    async def _ensure_api_key_token(self, failed_token: str | None = None) -> None:
+        """Exchange when the token is missing or about to expire, or after a
+        401 on `failed_token`; one exchange at a time."""
+        async with self._exchange_lock:
+            if failed_token is not None:
+                if self._access_token != failed_token and self._api_key_token_fresh():
+                    return  # another request already re-exchanged
+            elif self._api_key_token_fresh():
+                return
+            await self.exchange_api_key()
+
     async def refresh(self) -> None:
         """Refresh the stdio session's access token, storing the rotated refresh token."""
         if not self._refresh_token:
@@ -223,7 +301,10 @@ class SheetStormClient:
             logger.debug("Refreshed backend tokens for grant %s…", grant.grant_id[:8])
 
     async def logout(self) -> dict:
-        """Log out of the backend, revoking the access AND refresh token."""
+        """Log out of the backend, revoking the access AND refresh token.
+
+        With an API key this only revokes the current short-lived token (the
+        next call exchanges the key again); revoke the key itself in the UI."""
         grant = _request_grant.get()
         refresh = grant.sheetstorm_refresh_token if grant else self._refresh_token
         body = {"refresh_token": refresh} if refresh else None
@@ -233,6 +314,7 @@ class SheetStormClient:
             if grant is None:
                 self._access_token = None
                 self._refresh_token = None
+                self._token_expires_at = None
 
     async def ensure_authenticated(self) -> None:
         """Ensure a usable token exists.
@@ -247,6 +329,9 @@ class SheetStormClient:
                 "Not authenticated. Please authenticate via the browser OAuth flow.",
                 status_code=401,
             )
+        if self._api_key:
+            await self._ensure_api_key_token()
+            return
         if self.is_authenticated:
             return
         cfg = self._config
@@ -254,8 +339,8 @@ class SheetStormClient:
             await self.login(cfg.username, cfg.password)
         else:
             raise AuthenticationError(
-                "Not authenticated. Set SHEETSTORM_USERNAME/SHEETSTORM_PASSWORD or "
-                "SHEETSTORM_API_TOKEN.",
+                "Not authenticated. Set SHEETSTORM_API_KEY (recommended), "
+                "SHEETSTORM_API_TOKEN or SHEETSTORM_USERNAME/SHEETSTORM_PASSWORD.",
                 status_code=401,
             )
 
@@ -347,6 +432,10 @@ class SheetStormClient:
         # auto-refresh on 401 (once)
         if resp.status_code == 401 and _retry == 0:
             grant = _request_grant.get()
+            if grant is None and self._api_key:
+                # Re-exchange once; a rejected key raises (no retry loop).
+                await self._ensure_api_key_token(failed_token=token)
+                return await self._send(method, path, **again, _retry=1)
             try:
                 if grant is not None and token:
                     await self._refresh_grant(grant, token)

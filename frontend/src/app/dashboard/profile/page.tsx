@@ -1,8 +1,18 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+/**
+ * Profile: account details, password change (org password policy hints),
+ * MFA (enrollment forced by the org security policy after its grace period:
+ * `?enroll_mfa=1` opens the setup), and the user's own sign-in sessions.
+ */
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuthStore } from '@/lib/store'
 import api from '@/lib/api'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
+import { meetsPasswordRules } from '@/lib/endpoints/security'
+import { PasswordChecklist, PasswordRulesHint } from '@/components/settings/PasswordChecklist'
+import { SessionsCard } from '@/components/settings/SessionsCard'
+import { Timestamp } from '@/components/ui/timestamp'
 import QRCode from 'qrcode'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -19,6 +29,7 @@ import {
   DialogBody,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
+import { TimeModeToggle } from '@/components/ui/time-mode-toggle'
 import {
   User as UserIcon,
   Mail,
@@ -35,8 +46,19 @@ import {
   UsersRound,
   Copy,
   Loader2,
+  Globe,
+  AlertTriangle,
 } from 'lucide-react'
-import type { User } from '@/types'
+import type { SecurityStatus, User } from '@/types'
+import { MyApiKeysCard } from '@/components/api-keys/MyApiKeysCard'
+
+type ProfileUser = User & { mfa_enabled?: boolean; security?: SecurityStatus }
+
+/** Whether the page was opened to enroll MFA (`?enroll_mfa=1`). */
+function enrollRequested(): boolean {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('enroll_mfa') === '1'
+}
 
 interface MFASetupData {
   secret: string
@@ -47,8 +69,9 @@ interface MFASetupData {
 export default function ProfilePage() {
   const { user: authUser, refreshUser } = useAuthStore()
   const { toast } = useToast()
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<ProfileUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const passwordRules = usePasswordPolicy()
 
   // Change password state
   const [currentPassword, setCurrentPassword] = useState('')
@@ -73,13 +96,14 @@ export default function ProfilePage() {
   const [disablePassword, setDisablePassword] = useState('')
   const [mfaLoading, setMfaLoading] = useState(false)
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const autoSetupStarted = useRef(false)
 
   const fetchProfile = useCallback(async () => {
     try {
-      const data = await api.get<User>('/auth/me')
+      const data = await api.get<ProfileUser>('/auth/me')
       setUser(data)
     } catch {
-      if (authUser) setUser(authUser as User)
+      if (authUser) setUser(authUser as ProfileUser)
     } finally {
       setLoading(false)
     }
@@ -91,9 +115,14 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user) {
-      setMfaEnabled((user as any).mfa_enabled || false)
+      setMfaEnabled(user.mfa_enabled || false)
     }
   }, [user])
+
+  const security = user?.security
+  const mfaRequired = !!security?.mfa_required
+  const enrollmentRequired = !!security?.mfa_enrollment_required && !mfaEnabled
+  const graceEndsAt = !mfaEnabled ? security?.mfa_grace_ends_at ?? null : null
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -105,8 +134,8 @@ export default function ProfilePage() {
       return
     }
 
-    if (newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters')
+    if (!meetsPasswordRules(newPassword, passwordRules)) {
+      setPasswordError('The new password does not meet the password policy')
       return
     }
 
@@ -161,7 +190,10 @@ export default function ProfilePage() {
       setMfaEnabled(true)
       setShowSetupDialog(false)
       setShowBackupCodes(true)
-      if (refreshUser) refreshUser()
+      if (enrollRequested()) window.history.replaceState(null, '', window.location.pathname)
+      // The store's user.security lifts the forced-enrollment redirect.
+      if (refreshUser) await refreshUser()
+      void fetchProfile()
       toast({
         title: 'MFA Enabled',
         description: 'Two-factor authentication is now active on your account',
@@ -210,6 +242,23 @@ export default function ProfilePage() {
     }
   }
 
+  // Forced or requested enrollment opens the setup dialog once.
+  useEffect(() => {
+    if (loading || mfaEnabled || autoSetupStarted.current) return
+    if (enrollmentRequired || enrollRequested()) {
+      autoSetupStarted.current = true
+      void handleMfaSetup()
+    }
+    // handleMfaSetup is stable enough for a one-shot start.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, mfaEnabled, enrollmentRequired])
+
+  // The store may predate the policy (persisted user): refresh it so the
+  // app-wide enrollment redirect sees the current status.
+  useEffect(() => {
+    if (enrollRequested() && refreshUser) void refreshUser()
+  }, [refreshUser])
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
     setCopiedCode(text)
@@ -253,6 +302,37 @@ export default function ProfilePage() {
           Manage your account details, security settings, and password
         </p>
       </div>
+
+      {enrollmentRequired && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-red-400" aria-hidden />
+          <div>
+            <p className="font-medium">Set up two-factor authentication to continue</p>
+            <p className="text-muted-foreground">
+              Your organization requires multi-factor authentication. Until you enroll, the rest of SheetStorm is
+              unavailable.
+            </p>
+          </div>
+        </div>
+      )}
+      {!enrollmentRequired && mfaRequired && graceEndsAt && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" aria-hidden />
+          <div>
+            <p className="font-medium">Two-factor authentication is required</p>
+            <p className="text-muted-foreground">
+              Set it up before <Timestamp value={graceEndsAt} seconds={false} />; after that you can only enroll
+              until you do.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Account Information */}
@@ -339,6 +419,11 @@ export default function ProfilePage() {
                   {formatDate(user?.created_at)}
                 </span>
               </div>
+              <div className="flex items-center gap-3 text-sm">
+                <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground w-24">Timestamps</span>
+                <TimeModeToggle />
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -390,7 +475,8 @@ export default function ProfilePage() {
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Enter new password"
                     required
-                    minLength={8}
+                    minLength={passwordRules.min_length}
+                    autoComplete="new-password"
                   />
                   <Button
                     type="button"
@@ -406,6 +492,11 @@ export default function ProfilePage() {
                     )}
                   </Button>
                 </div>
+                {newPassword.length > 0 ? (
+                  <PasswordChecklist password={newPassword} rules={passwordRules} />
+                ) : (
+                  <PasswordRulesHint rules={passwordRules} />
+                )}
               </div>
 
               <div className="space-y-2">
@@ -417,7 +508,8 @@ export default function ProfilePage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm new password"
                   required
-                  minLength={8}
+                  minLength={passwordRules.min_length}
+                  autoComplete="new-password"
                 />
               </div>
 
@@ -474,7 +566,11 @@ export default function ProfilePage() {
                   : 'MFA is not configured. Enable it to add an extra security layer.'}
               </p>
             </div>
-            {mfaEnabled ? (
+            {mfaEnabled && mfaRequired ? (
+              <p className="text-xs text-muted-foreground">
+                Your organization requires two-factor authentication, so it cannot be turned off.
+              </p>
+            ) : mfaEnabled ? (
               <Button
                 variant="destructive"
                 className="w-full"
@@ -496,6 +592,10 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      {user && !enrollmentRequired && <SessionsCard userId={user.id} self />}
+
+      {!enrollmentRequired && <MyApiKeysCard />}
 
       {/* MFA Setup Dialog */}
       <Dialog open={showSetupDialog} onOpenChange={setShowSetupDialog}>

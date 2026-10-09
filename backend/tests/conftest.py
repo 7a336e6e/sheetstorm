@@ -13,10 +13,18 @@ Safety: the database is only wiped when its name contains "test".
 """
 import glob
 import os
+import pkgutil
 import uuid
 from urllib.parse import urlparse
 
 import pytest
+
+# Feature fixtures live in tests/fixtures/<feature>.py and are loaded
+# automatically (no conftest edit needed): add a module, define fixtures.
+_FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
+pytest_plugins = sorted(
+    f'fixtures.{m.name}' for m in pkgutil.iter_modules([_FIXTURES_DIR]) if not m.name.startswith('_')
+)
 
 # Test-only secrets must be in the environment before `app` is imported
 # (EncryptionService reads FERNET_KEY at construction time).
@@ -77,8 +85,28 @@ def app():
         if app_pkg.redis_client is not None:
             app_pkg.redis_client.flushdb()
         _seed(db)
+        _fresh_g_per_request(application)
         yield application
         db.session.remove()
+
+
+def _fresh_g_per_request(application):
+    """Give every test request a clean ``g``, as production does.
+
+    In production each request pushes its own app context, so ``g`` starts
+    empty. Here the session-wide app context above stays pushed, Flask reuses
+    it for every test-client request, and ``g`` (e.g. ``g.incident`` read by
+    ``@audit_log``) would carry over from earlier requests and tests. The hook
+    runs first and drops everything set after the session context was built.
+    """
+    from flask import g
+    baseline = set(vars(g))
+
+    def reset_g():
+        for key in [k for k in vars(g) if k not in baseline]:
+            delattr(g, key)
+
+    application.before_request_funcs.setdefault(None, []).insert(0, reset_g)
 
 
 def _seed(db):
@@ -226,3 +254,85 @@ def make_incident(app, db, org_a, users):
 def redis_client(app):
     import app as app_pkg
     return app_pkg.redis_client
+
+
+# ---------------------------------------------------------------------------
+# Shared user/org helpers (W0-TH). Use these instead of mutating the seeded
+# `users`: anything a test changes (roles, password, active flag) must be on
+# a user it created.
+# ---------------------------------------------------------------------------
+
+def _create_user(db, org, *, perms=None, roles=None, email=None, name=None,
+                 password=TEST_PASSWORD, **fields):
+    from app.models import Role, User, UserRole
+
+    tag = uuid.uuid4().hex[:10]
+    user = User(email=email or f'user-{tag}@{org.slug}.test', name=name or f'user-{tag}',
+                organization_id=org.id, auth_provider='local',
+                is_active=fields.pop('is_active', True), is_verified=fields.pop('is_verified', True),
+                **fields)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.flush()
+
+    granted = [Role.query.filter_by(name=role_name, is_system=True).one() for role_name in roles or ()]
+    if perms is not None:
+        role_fields = dict(name=f'test-custom-{tag}', description='test custom role',
+                           permissions=sorted(set(perms)), is_system=False)
+        if hasattr(Role, 'organization_id'):  # org-scoped custom roles (W0-RBAC)
+            role_fields['organization_id'] = org.id
+        custom = Role(**role_fields)
+        db.session.add(custom)
+        db.session.flush()
+        granted.append(custom)
+    for role in granted:
+        db.session.add(UserRole(user_id=user.id, role_id=role.id, organization_id=org.id))
+    db.session.commit()
+    return user
+
+
+@pytest.fixture
+def make_user(app, db):
+    """make_user(org, perms=None, roles=None, *, email=None, name=None,
+    password=TEST_PASSWORD, is_active=True, **user_fields) -> User
+
+    roles: system role names, e.g. ['Analyst'].
+    perms: permission keys; creates a fresh custom role (org-scoped once roles
+           carry organization_id) holding exactly these.
+    Neither: a user with no roles. Emails are unique per call.
+    """
+    def make(org, perms=None, roles=None, **kwargs):
+        return _create_user(db, org, perms=perms, roles=roles, **kwargs)
+    return make
+
+
+@pytest.fixture
+def fresh_user(app, db, org_a):
+    """fresh_user(role='Analyst', org=None, **make_user_kwargs) -> a new User (org A by default)."""
+    def make(role='Analyst', org=None, **kwargs):
+        return _create_user(db, org or org_a, roles=[role], **kwargs)
+    return make
+
+
+@pytest.fixture
+def platform_org(app, db):
+    """The platform organization (slug = config PLATFORM_ORG_SLUG, default 'default')."""
+    from app.models import Organization
+    slug = app.config.get('PLATFORM_ORG_SLUG', 'default')
+    org = Organization.query.filter_by(slug=slug).first()
+    if org is None:
+        org = Organization(name='Platform', slug=slug, settings={})
+        db.session.add(org)
+        db.session.commit()
+    return org
+
+
+@pytest.fixture
+def platform_admin(app, db, platform_org):
+    """An Administrator of the platform org (a platform admin once system:manage exists)."""
+    from app.models import User
+    email = 'platform_admin@platform.test'
+    user = User.query.filter_by(email=email).first()
+    if user is None:
+        user = _create_user(db, platform_org, roles=['Administrator'], email=email, name='platform_admin')
+    return user

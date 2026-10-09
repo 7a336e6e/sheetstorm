@@ -13,10 +13,16 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_SECRET_KEY` | Yes | - | JWT signing key |
 | `FERNET_KEY` | Yes | - | Fernet key encrypting integration credentials at rest |
 | `CUSTODY_SIGNING_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key for chain-of-custody signatures. See [Custody signing key](#custody-signing-key-and-rotation) |
+| `TSA_URL` | No | empty (disabled) | RFC 3161 timestamp authority for anchoring the custody ledger. See [External timestamps](#external-timestamps-rfc-3161) |
+| `TSA_TIMEOUT_SECONDS` / `TSA_MAX_RESPONSE_BYTES` | No | `10` / `65536` | Timeout (1..60 s) and response size cap for TSA requests |
+| `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
+| `API_KEY_PEPPER` | Recommended | derived from `SECRET_KEY` (startup warning) | Pepper of the API key hashes (HMAC-SHA256). Generate with `openssl rand -hex 32` and keep it outside the database; changing it (or `SECRET_KEY` while unset) invalidates every API key |
+| `API_KEY_TOKEN_TTL_MINUTES` | No | `15` | Lifetime (1..60) of the access token `POST /auth/token` mints for an API key |
+| `API_KEY_MAX_PER_USER` / `API_KEY_MAX_PER_SERVICE_ACCOUNT` / `API_KEY_MAX_PER_ORG` | No | `10` / `25` / `200` | Caps on active API keys |
 | `DATABASE_URL` | Yes | built by compose | PostgreSQL connection (compose builds it from `POSTGRES_*`) |
 | `REDIS_URL` | Yes | `redis://redis:6379/0` | Redis connection (rate limiting, MCP OAuth state) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | No | `sheetstorm` / `changeme` / `sheetstorm` | PostgreSQL credentials - change the password for any shared deployment |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | No | `admin@sheetstorm.local` / `changeme` | Seeded admin account. Change the password after first login |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | No | `admin@sheetstorm.local` / empty | Seeded first admin (`python -m app.seed`, run by `start.sh` on a fresh database). Empty (or below the password policy) `ADMIN_PASSWORD`: a random password is generated and printed **once** by the seed step; it is not stored anywhere. The admin must change the password at first sign-in either way |
 
 ### Network, cookies and CORS
 
@@ -27,7 +33,11 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_COOKIE_SECURE` | `true` in production | Marks auth cookies `Secure` (HTTPS only). See [HTTPS and cookies](#https-and-cookies) |
 | `JWT_REFRESH_GRACE_SECONDS` | `30` | How long a just-rotated refresh token is still accepted once (multi-tab refresh races) |
 | `TRUSTED_PROXY_CIDRS` / `REAL_IP_HEADER` | empty / `X-Forwarded-For` | Upstream proxies trusted for the client IP; see [Running behind a reverse proxy / CDN](#running-behind-a-reverse-proxy--cdn) |
-| `RATE_LIMIT_DEFAULT` | `600 per minute` | Default Flask-Limiter limit for API routes |
+| `RATE_LIMIT_DEFAULT` | `600 per minute` | Global safety-net limit (group `api_default`) for API routes |
+| `RATE_LIMIT_<GROUP>` | built-in per group | Default for one group, e.g. `RATE_LIMIT_AUTH_LOGIN=5 per minute`. See [Rate limiting](#rate-limiting) |
+| `RATE_LIMIT_SETTINGS_LOCKED` | `false` | `true` ignores admin overrides and makes the Rate limiting settings read-only |
+| `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` | `10` / `15` | Default lockout for organizations that have not set one in their security policy (Settings → Security): lock an account after this many consecutive bad passwords or MFA codes (bounded 3..20), for this many minutes (1..1440). Locked, disabled, unknown and wrong-password logins all get the same generic 401; an admin can unlock early (Users → Unlock) |
+| `PASSWORD_RESET_TTL_HOURS` | `24` | Lifetime of admin-issued one-time password reset links (1..72) |
 | `NEXT_PUBLIC_API_URL` | `/api/v1` | Backend API URL for the frontend (build-time). Relative paths work through the proxy on any host |
 | `NEXT_PUBLIC_WS_URL` | empty | WebSocket URL for the frontend (build-time); empty means same origin |
 
@@ -36,7 +46,10 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OUTBOUND_URL_ALLOWLIST` | empty | Comma-separated hosts/CIDRs that admin-configured self-hosted integrations (MISP, Velociraptor, TheHive, Ollama, MinIO, ...) may target even though they resolve to private addresses, e.g. `ollama,misp.internal,10.0.0.0/8`. Private, loopback and metadata addresses are blocked otherwise (SSRF protection); link-local/cloud-metadata addresses are always blocked. |
+| `PLATFORM_ORG_SLUG` | `default` | Slug of the platform organization. Only holders of `system:manage` in this organization are platform administrators (instance-wide settings). Self-registration and first SSO sign-ins join this organization. Registration is closed by default; an organization manager of the platform organization enables it in Settings → Security (its security policy, `provisioning.registration_enabled`; installs upgraded from before `admin_guardrails_rbac` keep it open). |
 | `IOC_AUTO_ENRICH` | `false` | Automatically send newly added IOCs to configured threat-intel integrations. Off by default because it discloses indicators to third parties. An organization-level setting overrides this default. |
+
+**TLP enrichment block (server-side).** A value that appears in any TLP:RED incident of the organization is never sent to an enrichment service: auto-enrichment skips it, playbook `enrich_iocs` skips the incident, `POST /bulk-enrich` returns it with `status: "blocked"`, and `/threat-intel/*/lookup` returns 403 `tlp_restricted`. No setting unblocks RED. TLP:AMBER+STRICT is blocked the same way unless the organization setting `enrichment_allow_amber_strict` is `true`. Each refusal is recorded as `security_event / enrichment_blocked_by_tlp`.
 
 ### AI providers
 
@@ -51,6 +64,22 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `LOCAL_LLM_TIMEOUT` | `120` | Seconds before local LLM requests time out |
 
 An optional local LLM container is available: `docker compose --profile local-llm up -d`. Its port is not published to the host; the backend reaches it at `http://ollama:11434` over the compose network.
+
+**Case templates, questions and playbooks.** Built-in questions (`backend/app/data/question_library`), case templates (`case_templates`) and playbooks (`playbooks`) ship with the application as YAML files read with `yaml.safe_load` at first use; there is no runtime download and no setting to change. Organizations add their own templates and playbooks in the API (permission `templates:manage`, granted to Administrators and Incident Responders by default; custom roles holding `incidents:create` received it in the `admin_guardrails_rbac` migration). Applying a template never runs playbook actions (and so never sends incident data to an AI provider) unless the request sets `run_auto_actions`; built-in playbooks have no `auto_run` actions.
+
+**AI TLP policy.** The organization setting `ai_tlp_policy` maps each TLP level to `allow`, `local_only` or `block`. Defaults: `red` and `amber_strict` are `local_only`; `amber`, `green` and `white` are `allow`. `local_only` accepts only an `ollama` or `openai_compatible` provider whose host resolves to a private address **and** is listed in `OUTBOUND_URL_ALLOWLIST`; OpenAI and Google are refused. An explicit request (a chosen provider, or "AI summary") that the policy refuses gets 403 `ai_blocked_by_tlp`. Automatic paths fall back instead: PDF reports are generated data-only (header `X-SheetStorm-AI-Status: ai_blocked_by_tlp`) and the playbook `generate_summary` action is skipped. Every refusal is recorded as `security_event / ai_blocked_by_tlp`. `GET /incidents/<id>/reports/types` returns `policy_mode` and `providers: [{name, allowed, reason}]`.
+
+### Periodic jobs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOBS_INTERVAL_SECONDS` | `300` | How often the `jobs` compose service runs `flask sheetstorm run-jobs`. Each registered job keeps its own schedule (Redis `jobs:last:<name>`) and runs under a Redis lock (`jobs:lock:<name>`), so several runners never execute a job twice. |
+
+Without the `jobs` service, run `docker compose exec -T backend flask sheetstorm run-jobs` from host cron. `flask sheetstorm list-jobs` shows the registered jobs and their last successful run, and `run-jobs --only <name> [--force]` runs a single job.
+
+Registered jobs: `purge-audit-logs` and `verify-audit-chain` (daily; see [Audit log governance](#audit-log-governance)) and `send-due-reminders` (every 15 minutes).
+
+**Due-date reminders.** `send-due-reminders` notifies (in-app, `task_due` / `improvement_due`) the assignee of every open task and the owner of every open improvement action that is due within 24 hours (`due_soon`) or past due (`overdue`), skipping archived incidents and inactive or foreign-organization users. Each (item, stage, due date) is reminded once: the `reminder_log` table dedupes concurrent and repeated runs, and changing a due date re-arms both stages. An overdue improvement action also notifies its creator. Run it by hand with `flask sheetstorm send-due-reminders [--window-hours 24] [--dry-run] [--org <slug>]`; `--dry-run` sends and records nothing.
 
 ### Storage, integrations and SSO (all optional; most are also configurable in the UI)
 
@@ -74,7 +103,7 @@ Without S3 or Google Drive, evidence is stored on the local `artifacts_data` Doc
 | `MCP_ALLOWED_REDIRECT_HOSTS` | empty | Extra hostnames MCP OAuth clients may redirect to after login (comma-separated). Loopback redirects are always allowed. |
 | `MCP_LOG_LEVEL` | `INFO` | MCP server log level |
 
-MCP authentication is OAuth 2.1 (users sign in with their SheetStorm account); there is no static transport token. See `mcp-server/.env.example` for stdio-bridge settings.
+MCP authentication is OAuth 2.1 (users sign in with their SheetStorm account); there is no static transport token. See `mcp-server/.env.example` for stdio-bridge settings. On stdio (local server or bridge) the recommended credential is a scoped API key in `SHEETSTORM_API_KEY`; the organization settings `api_keys_enabled` (kill switch) and `api_key_max_lifetime_days` (1..365) control keys per organization.
 
 ## HTTPS and cookies
 
@@ -133,7 +162,30 @@ The proxy publishes port `8080` on all interfaces by default. Bind it to a speci
 
 ## Database migrations
 
+### Upgrading a database with orphaned rows
+
+If records were ever deleted with foreign-key checks bypassed (manual SQL, `session_replication_role = replica`), rows can point at parents that no longer exist, and an upgrade migration that rebuilds those keys stops with a message naming `repair-orphans`. Back up the database, then, with the new image and **before** starting the backend:
+
+```bash
+docker compose run --rm --no-deps --entrypoint flask backend sheetstorm repair-orphans            # report only
+docker compose run --rm --no-deps --entrypoint flask backend sheetstorm repair-orphans --apply --report /tmp/repair.json
+```
+
+Nullable references are cleared; rows the schema deletes with their parent (`ON DELETE CASCADE`: role assignments, team members, notifications, custody rows of deleted artifacts) are deleted and written to the report; required authorship (`created_by`) is left as is unless `--reassign-to <email>` names a user to take it over; the audit log is never changed.
+
 The backend entrypoint runs `flask db upgrade` on every container start, so a fresh `docker compose up` creates the full schema. If the database is not reachable yet it retries up to 5 times with exponential backoff (`MIGRATION_MAX_ATTEMPTS` overrides) and then **exits with an error** - the container will restart and `docker compose logs backend` shows the failure. The API never starts against a half-migrated schema. The admin user is seeded by `start.sh` (or manually: `docker compose exec backend python -c "from app.seed import seed_all; seed_all()"`).
+
+## Rate limiting
+
+Every rate-limited route belongs to a named group (sign-in, MFA, registration, exports, threat-intel lookups, …). Limits count per signed-in user, per API key, or per client IP before sign-in; behind a proxy, the client IP comes from the trusted-proxy settings above.
+
+Platform administrators (an Administrator of the platform organization) change limits in **Settings → Security → Rate limiting**: edit a group's limit (`5 per minute`, or several separated by `;`), disable a group (its routes then use the global `api_default` limit), or turn rate limiting off entirely. Organization administrators can view the settings. Changes apply to every worker within about 5 seconds, without a restart.
+
+- Resolution order: `RATELIMIT_ENABLED=False` (Flask config, tests) → `RATE_LIMIT_SETTINGS_LOCKED=true` (environment only) → admin override → `RATE_LIMIT_<GROUP>` → built-in default.
+- Changes that weaken protection (rate limiting off, an authentication group disabled or raised above 10× its default, `api_default` disabled) need an explicit confirmation and are logged as a `rate_limits_weakened` security event. Every change is audited with a before/after diff.
+- `api_default` cannot go below 30 requests per minute, so the web UI stays usable.
+- If the stored settings cannot be read, the environment and built-in defaults apply with rate limiting **on**.
+- The settings routes themselves have a fixed limit that no setting changes, so a bad configuration cannot lock you out.
 
 ## Custody signing key and rotation
 
@@ -147,10 +199,78 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 - Rotating `CUSTODY_SIGNING_KEY` itself makes signatures created with the old key fail verification. Avoid rotating during active cases. If you must rotate (suspected key exposure), first verify and export the custody records of open cases, archive the old key securely together with that export, then record the rotation date in the affected cases.
 - Never reuse the custody key for anything else and never commit it.
 
+## External timestamps (RFC 3161)
+
+Optionally, the incident custody ledger head can be anchored with a trusted timestamp authority (TSA). The anchor proves the ledger existed in that state at that time, independently of the server clock. It is off by default.
+
+- Set `TSA_URL` to your TSA endpoint, for example a commercial or internal RFC 3161 service. The URL is checked against the outbound URL policy on every request; an internal TSA must be on `OUTBOUND_URL_ALLOWLIST`. Basic-auth credentials may be embedded in the URL; they are stripped from everything that is stored, returned or exported.
+- Users with `artifacts:upload` anchor the current head with `POST /api/v1/incidents/<id>/evidence/custody/anchor`. Re-anchoring an already anchored head returns the existing anchor without contacting the TSA. A TSA failure is recorded as a `failed` anchor and answered with 502 `tsa_failed`.
+- Anchors are append-only, like the ledger. Verification results include `anchor_status` (granted/failed counts, whether the current head is anchored).
+- SheetStorm checks the reply's status, digest and nonce, and stores the token as received. It does **not** verify the TSA's signature or certificate chain. Do that offline: the incident custody bundle's README includes the extraction script and the `openssl ts -verify -in anchor.tst -token_in -digest <head_hash> -CAfile tsa-ca.pem` command. Keep the TSA's CA certificate with your case records.
+
+## Audit log governance
+
+The audit log (`audit_logs`) is **append-only** and **tamper-evident**:
+
+- A database trigger (`audit_logs_append_only()`) rejects every `UPDATE`, `DELETE` and `TRUNCATE` on the table (SQLSTATE `42501`). The only exception is the retention purge, which deletes inside a transaction that sets `sheetstorm.audit_purge = 'on'` (`SET LOCAL`).
+- The table has no foreign keys. Deleting a user, incident or organization never rewrites an audit row, and the original ids stay in the log.
+- Every row is linked into its organization's hash chain: `chain_seq` (gap-free per organization), `prev_hash` and `row_hash` = HMAC-SHA256(`AUDIT_CHAIN_KEY`, previous hash + the row's canonical content). The chain head of each organization is kept in `ledger_heads`. Rows written before this release have no chain fields ("legacy, unchained"); they are not backfilled.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUDIT_CHAIN_KEY` | falls back to `SECRET_KEY` | Chain HMAC key. Generate it like the custody key (`python3 -c "import secrets; print(secrets.token_hex(32))"`), keep it **outside** the database and back it up. When moving an existing install off the fallback, set it to the current `SECRET_KEY` value. |
+| `AUDIT_CHAIN_PREVIOUS_KEYS` | empty | Comma-separated retired chain keys. Rows signed with a key that is neither current nor listed here verify as `unverifiable_rotated_key` (not as tampering). |
+| `AUDIT_EXPORT_MAX_ROWS` | `100000` | Exports matching more rows fail with 422 `export_too_large` (no partial dumps). |
+| `AUDIT_PURGE_BATCH_SIZE` | `10000` | Rows deleted per purge transaction. |
+| `APP_VERSION` / `GIT_COMMIT` | empty | Shown in the admin system status (platform admins only). |
+| `LOCAL_ARTIFACT_DIR` | `/app/artifacts` | Local artifact storage directory (also used for the disk-usage status). |
+
+**Retention and legal hold** are per organization (`GET/PUT /api/v1/admin/audit-settings`, `organizations:manage`). Retention is "keep forever" by default; otherwise at least 365 days. Shortening retention needs `confirm: true` (the API answers 409 with `would_purge` first). Placing a legal hold requires a reason; holds and releases are recorded as `security_event`. These keys cannot be written through `PUT /organization`.
+
+**Purge and verification** run daily as jobs (`purge-audit-logs`, `verify-audit-chain`) and on demand:
+
+```bash
+docker compose exec -T backend flask sheetstorm purge-audit-logs [--org SLUG] [--dry-run] [--batch-size N]
+docker compose exec -T backend flask sheetstorm verify-audit-chain [--org SLUG]   # exit 1 on any failure
+```
+
+The purge skips an organization under legal hold (and logs `audit_purge_skipped`), keeps every row of an incident with an artifact under legal hold, and deletes only the contiguous oldest part of the chain, moving the chain anchor (`ledger_heads.purged_through_seq` / `anchor_hash`) so the rest still verifies. Each purge is logged as `system_event / audit_purge` by `system:purge`. Export what you must keep before it ages out (`GET /api/v1/audit-logs/export?format=csv|jsonl`, `audit_logs:export`, 10/hour; CSV cells are protected against spreadsheet formula injection). The export response header `X-Audit-Chain-Head: <seq>:<hash>` and the system status show the chain head: keeping copies of it off the server pins the history.
+
+**Limitation:** the application's database role owns `audit_logs` and could disable the trigger. The keyed chain detects such edits as long as `AUDIT_CHAIN_KEY` is not stored in the database. For stronger guarantees run the application with a database role that does not own the table (not configured by default).
+
 ## Database Schema
 
 23 tables with UUID primary keys, automatic `updated_at` triggers, and auto-incrementing incident numbers per organization.
 
-**Key Tables**: `users`, `roles`, `user_roles`, `organizations`, `incidents`, `incident_assignments`, `timeline_events`, `compromised_hosts`, `compromised_accounts`, `network_indicators`, `host_based_indicators`, `malware_tools`, `attack_graph_nodes`, `attack_graph_edges`, `artifacts`, `chain_of_custody`, `tasks`, `task_comments`, `reports`, `notifications`, `audit_logs`, `integrations`, `teams`, `team_members`.
+**Key Tables**: `users`, `roles`, `user_roles`, `organizations`, `incidents`, `incident_assignments`, `timeline_events`, `compromised_hosts`, `compromised_accounts`, `network_indicators`, `host_based_indicators`, `malware_tools`, `attack_graph_nodes`, `attack_graph_edges`, `artifacts`, `chain_of_custody`, `tasks`, `task_comments`, `reports`, `notifications`, `audit_logs`, `integrations`, `teams`, `team_members`, `ledger_heads`.
 
 **Extensions**: `uuid-ossp` (UUID generation), `pgcrypto` (cryptographic functions).
+
+### Security policy (per organization)
+
+Settings → **Security** (`organizations:manage`, `GET/PUT /organization/security-policy`) holds each
+organization's security policy. Without a saved policy the defaults below apply, which match the
+behaviour before the policy existed.
+
+| Section | Setting | Default | Bounds |
+|---------|---------|---------|--------|
+| Password | minimum length | 12 | 12..72 (passwords are capped at 72 bytes, the bcrypt limit) |
+| Password | require upper / lower / digit / symbol | all on | a symbol is any non-alphanumeric character |
+| Password | history (last N passwords blocked) | 0 (off) | 0..24 |
+| Password | maximum age (days) | 0 (off) | 0, or 30..730; an expired password must be changed at the next sign-in |
+| Lockout | failed attempts / minutes | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` (10 / 15) | 3..20 / 1..1440 |
+| MFA | required for | not required | not required / admins (any privileged permission) / everyone |
+| MFA | grace period (days) | 7 | 0..90, counted from when the requirement started or the account was created, whichever is later |
+| Sessions | access token lifetime (minutes) | 60 | 5..60 (applies to newly issued tokens) |
+| Sessions | session lifetime (days) | 7 | 1..30 (refresh token) |
+| Provisioning | allowed email domains | any | up to 50 exact domains; applies to admin-created users, invites, self-registration and first SSO sign-ins, never to existing accounts |
+| Provisioning | default role | Viewer | any non-privileged role |
+| Provisioning | self-registration | off | platform organization only |
+
+After the MFA grace period, a user who must use MFA and has not enrolled can only enroll (every
+other API call answers `403 mfa_enrollment_required`; the web UI opens the profile enrollment).
+API keys are not affected. Every change is audited with before/after values.
+
+Sign-in sessions are listed on the profile ("Your sessions", with *Sign out other devices*) and,
+for `users:manage` holders, in Settings → Security → User sessions. Sessions that ended more than
+30 days ago are deleted by the `prune-sessions` job (`flask sheetstorm run-jobs`).

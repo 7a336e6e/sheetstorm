@@ -19,6 +19,22 @@ def _parse_evidence_refs(raw: Optional[str]) -> list | None:
     return refs
 
 
+def _render_evidence(evidence: list) -> str:
+    """Server-resolved evidence: ``type "label" (id)``; flags missing/restricted."""
+    out = []
+    for e in evidence:
+        if not isinstance(e, dict):
+            continue
+        etype, eid = e.get("evidence_type", "?"), e.get("evidence_id", "?")
+        if e.get("missing"):
+            out.append(f"{etype}:{eid} (deleted)")
+        elif e.get("restricted") or not e.get("label"):
+            out.append(f"{etype}:{eid}")
+        else:
+            out.append(f'{etype} "{e["label"]}" ({eid})')
+    return ", ".join(out)
+
+
 def _format_task(t: dict) -> str:
     """Format a task."""
     parts = [
@@ -30,13 +46,17 @@ def _format_task(t: dict) -> str:
         parts.append(f"  Lead outcome: {t['lead_outcome']}")
     if t.get("investigation_direction"):
         parts.append(f"  Investigation direction: {t['investigation_direction']}")
-    refs = t.get("evidence_refs") or []
-    if refs:
-        rendered = ", ".join(
-            f"{r.get('evidence_type', '?')}:{r.get('evidence_id', '?')}" if isinstance(r, dict) else str(r)
-            for r in refs
-        )
-        parts.append(f"  Evidence: {rendered}")
+    evidence = t.get("evidence")
+    if isinstance(evidence, list) and evidence:
+        parts.append(f"  Evidence: {_render_evidence(evidence)}")
+    else:
+        refs = t.get("evidence_refs") or []
+        if refs:
+            rendered = ", ".join(
+                f"{r.get('evidence_type', '?')}:{r.get('evidence_id', '?')}" if isinstance(r, dict) else str(r)
+                for r in refs
+            )
+            parts.append(f"  Evidence: {rendered}")
     assignee = t.get("assignee")
     if isinstance(assignee, dict):
         parts.append(f"  Assignee: {assignee.get('name', assignee.get('email', 'Unknown'))}")
@@ -63,9 +83,10 @@ async def sheetstorm_list_tasks(
     priority: Optional[str] = None,
     phase: Optional[int] = None,
     task_type: Optional[str] = None,
+    lead_outcome: Optional[str] = None,
 ) -> str:
     """List tasks for an incident, including DFIR fields (task type, lead outcome,
-    investigation direction, evidence references).
+    investigation direction, evidence with server-resolved labels).
 
     Args:
         incident_id: UUID of the incident
@@ -73,29 +94,61 @@ async def sheetstorm_list_tasks(
         assignee_id: Filter by assignee UUID
         priority: Filter by priority (low, medium, high, critical)
         phase: Filter by IR phase (1-6)
-        task_type: Only show this task type (action_item, investigative_lead, verification, documentation, reporting)
+        task_type: Only these task types, comma-separated (action_item, investigative_lead, verification, documentation, reporting)
+        lead_outcome: Only these lead outcomes, comma-separated (open = no outcome yet, false_positive, confirmed_malicious, inconclusive, resolved)
     """
     client = get_client()
     try:
         params: dict = {"per_page": 200}
-        if status:
-            params["status"] = status
-        if assignee_id:
-            params["assignee_id"] = assignee_id
-        if priority:
-            params["priority"] = priority
+        for key, value in (("status", status), ("assignee_id", assignee_id), ("priority", priority),
+                           ("task_type", task_type), ("lead_outcome", lead_outcome)):
+            if value:
+                params[key] = value
         if phase is not None:
             params["phase"] = phase
 
         data = await client.get(f"/incidents/{incident_id}/tasks", params=params)
         items = data if isinstance(data, list) else data.get("items", data.get("tasks", []))
-        if task_type:
-            items = [t for t in items if (t.get("task_type") or "action_item") == task_type]
+        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
 
         if not items:
             return "No tasks found."
 
-        lines = [f"**Tasks** ({len(items)} total)\n"]
+        lines = [f"**Tasks** ({total} total{', showing ' + str(len(items)) if total > len(items) else ''})\n"]
+        for t in items:
+            lines.append(_format_task(t))
+            lines.append("")
+        return "\n".join(lines)
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_list_leads(incident_id: str, outcome: Optional[str] = "open") -> str:
+    """List the investigative leads of an incident (the lead queue), with counts by outcome.
+
+    Args:
+        incident_id: UUID of the incident
+        outcome: Outcome filter, comma-separated: open (default; no outcome yet), false_positive,
+            confirmed_malicious, inconclusive, resolved. Empty string or "all" lists every lead.
+    """
+    client = get_client()
+    try:
+        params: dict = {"task_type": "investigative_lead", "include_comments": "false",
+                        "lead_counts": "true", "sort": "-updated_at", "per_page": 200}
+        if outcome and outcome.strip().lower() != "all":
+            params["lead_outcome"] = outcome
+        data = await client.get(f"/incidents/{incident_id}/tasks", params=params)
+        items = data.get("items", []) if isinstance(data, dict) else data
+        counts = data.get("lead_counts") if isinstance(data, dict) else None
+
+        lines = ["**Investigative leads**"]
+        if isinstance(counts, dict) and counts:
+            lines.append("Counts: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+        lines.append("")
+        if not items:
+            lines.append("No leads match.")
+            return "\n".join(lines)
         for t in items:
             lines.append(_format_task(t))
             lines.append("")

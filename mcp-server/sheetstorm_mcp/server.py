@@ -156,12 +156,17 @@ def _register_all_tools() -> None:
         attack_graph,  # noqa: F401
         auth,  # noqa: F401
         case_notes,  # noqa: F401
+        case_templates,  # noqa: F401
+        decisions,  # noqa: F401
         defang,  # noqa: F401
+        evidence,  # noqa: F401
         incidents,  # noqa: F401
         iocs,  # noqa: F401
         knowledge_base,  # noqa: F401
+        metrics,  # noqa: F401
         playbooks,  # noqa: F401
         prompts,  # noqa: F401
+        questions,  # noqa: F401
         reports,  # noqa: F401
         resources,  # noqa: F401
         tasks,  # noqa: F401

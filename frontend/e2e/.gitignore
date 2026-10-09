@@ -1,0 +1,2 @@
+# Playwright storage states hold live session cookies: never commit them.
+.auth/

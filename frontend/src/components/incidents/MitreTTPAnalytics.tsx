@@ -4,7 +4,9 @@ import { useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Shield, Target, Crosshair, ChevronDown, Clock, Server } from 'lucide-react'
-import type { TimelineEvent } from '@/types'
+import { Timestamp } from '@/components/ui/timestamp'
+import { parseTs } from '@/lib/time'
+import type { DashboardMitreStats, TimelineEvent } from '@/types'
 
 // Tactic ordering per MITRE ATT&CK kill chain
 const TACTIC_ORDER = [
@@ -61,20 +63,54 @@ function normalizeTacticLabel(tactic: string): string {
 }
 
 interface MitreTTPAnalyticsProps {
-  events: TimelineEvent[]
+  /** Timeline events to aggregate client-side (one incident). */
+  events?: TimelineEvent[]
+  /**
+   * Server-side aggregate (`GET /dashboard/stats` `mitre`). When given it
+   * replaces `events`: no per-event drilldown, a tactic expands to its
+   * techniques only.
+   */
+  aggregate?: DashboardMitreStats | null
   compact?: boolean
   title?: string
   description?: string
 }
 
-export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&CK Coverage', description }: MitreTTPAnalyticsProps) {
+interface TacticData {
+  count: number
+  techniques: Record<string, number>
+  events: TimelineEvent[]
+}
+
+const NO_EVENTS: TimelineEvent[] = []
+
+export function MitreTTPAnalytics({
+  events = NO_EVENTS,
+  aggregate,
+  compact = false,
+  title = 'MITRE ATT&CK Coverage',
+  description,
+}: MitreTTPAnalyticsProps) {
   const [expandedTactic, setExpandedTactic] = useState<string | null>(null)
+  const isAggregate = !!aggregate
 
   const analytics = useMemo(() => {
-    const tacticsMap: Record<string, { count: number; techniques: Record<string, number>; events: TimelineEvent[] }> = {}
+    const tacticsMap: Record<string, TacticData> = {}
     let totalMapped = 0
+    let totalEvents = events.length
 
-    for (const event of events) {
+    if (aggregate) {
+      totalMapped = aggregate.events_mapped
+      totalEvents = aggregate.events_total
+      for (const t of aggregate.tactics) {
+        const key = t.tactic.toLowerCase()
+        const entry = (tacticsMap[key] ??= { count: 0, techniques: {}, events: [] })
+        entry.count += t.count
+        for (const [tech, n] of Object.entries(t.techniques)) {
+          entry.techniques[tech.toUpperCase()] = (entry.techniques[tech.toUpperCase()] || 0) + n
+        }
+      }
+    } else for (const event of events) {
       // Collect mappings: prefer mitre_mappings array, fall back to legacy fields
       const mappings = event.mitre_mappings?.length
         ? event.mitre_mappings
@@ -102,7 +138,7 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
     }
 
     // Sort by kill chain order
-    const sortedTactics: [string, { count: number; techniques: Record<string, number>; events: TimelineEvent[] }][] = Object.entries(tacticsMap)
+    const sortedTactics: [string, TacticData][] = Object.entries(tacticsMap)
       .sort(([a], [b]) => getTacticIndex(a) - getTacticIndex(b))
 
     const maxCount = Math.max(...Object.values(tacticsMap).map(t => t.count), 1)
@@ -119,12 +155,12 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
       sortedTactics,
       maxCount,
       totalMapped,
-      totalEvents: events.length,
+      totalEvents,
       uniqueTactics: Object.keys(tacticsMap).length,
       uniqueTechniques: allTechniques.size,
       allTechniqueIds: Array.from(allTechniques),
     }
-  }, [events])
+  }, [events, aggregate])
 
   if (analytics.totalMapped === 0) {
     return null
@@ -176,8 +212,8 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
             const colors = tacticColors[tactic] || defaultTacticColor
             const techniques: [string, number][] = Object.entries(data.techniques).sort((a, b) => b[1] - a[1])
             const isExpanded = expandedTactic === tactic
-            const sortedEvents = isExpanded
-              ? [...data.events].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            const sortedEvents = isExpanded && !isAggregate
+              ? [...data.events].sort((a, b) => (parseTs(b.timestamp)?.getTime() ?? 0) - (parseTs(a.timestamp)?.getTime() ?? 0))
               : []
 
             return (
@@ -223,8 +259,25 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
                   </div>
                 </button>
 
-                {/* Expanded events list */}
-                {isExpanded && (
+                {/* Expanded: techniques only for an aggregate, else the events */}
+                {isExpanded && isAggregate && (
+                  <div className="ml-5 pl-3 border-l-2 border-black/5 dark:border-white/5 py-1 flex flex-wrap gap-1 animate-in slide-in-from-top-1 fade-in duration-200">
+                    {techniques.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground py-1">No techniques recorded for this tactic</p>
+                    ) : (
+                      techniques.map(([tech, techCount]) => (
+                        <Badge
+                          key={tech}
+                          variant="outline"
+                          className={`text-[10px] px-1.5 py-0 font-mono border-black/10 dark:border-white/10 ${colors.text}`}
+                        >
+                          {tech} x{techCount}
+                        </Badge>
+                      ))
+                    )}
+                  </div>
+                )}
+                {isExpanded && !isAggregate && (
                   <div className="ml-5 pl-3 border-l-2 border-black/5 dark:border-white/5 space-y-1 animate-in slide-in-from-top-1 fade-in duration-200">
                     {sortedEvents.length === 0 ? (
                       <p className="text-[11px] text-muted-foreground py-2">No events for this tactic</p>
@@ -237,9 +290,7 @@ export function MitreTTPAnalytics({ events, compact = false, title = 'MITRE ATT&
                           <div className="shrink-0 pt-0.5">
                             <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
                               <Clock className="h-3 w-3" />
-                              {new Date(event.timestamp).toLocaleString(undefined, {
-                                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                              })}
+                              <Timestamp value={event.timestamp} seconds={false} />
                             </div>
                           </div>
                           <div className="flex-1 min-w-0">

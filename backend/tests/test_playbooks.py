@@ -105,16 +105,32 @@ def test_toggle_task_is_audited(app, db, users, auth, make_incident):
                      json={'task_key': 'k', 'done': 'yes'}).status_code == 400
 
 
-def test_template_update_delete_restricted_to_owner_or_manager(app, users, auth):
+def test_template_crud_requires_templates_manage(app, users, auth):
+    """C22: playbook CRUD needs templates:manage (Administrator + Incident
+    Responder); it no longer depends on being the creator."""
     admin = auth(users['Administrator'])
     responder = auth(users['Incident Responder'])
+    analyst = auth(users['Analyst'])
     pb = _make_template(admin, _definition())
-    assert responder.put(f'/api/v1/playbooks/{pb}', json={'name': 'hijack'}).status_code == 403
-    assert responder.delete(f'/api/v1/playbooks/{pb}').status_code == 403
+    # No templates:manage: every write is a 403, reads stay open.
+    assert analyst.post('/api/v1/playbooks', json={'name': 'x', 'definition': _definition()}).status_code == 403
+    assert analyst.put(f'/api/v1/playbooks/{pb}', json={'name': 'hijack'}).status_code == 403
+    assert analyst.delete(f'/api/v1/playbooks/{pb}').status_code == 403
+    assert analyst.get(f'/api/v1/playbooks/{pb}').status_code == 200
+    # A holder may edit and delete a template somebody else created.
+    assert responder.put(f'/api/v1/playbooks/{pb}', json={'name': 'shared edit'}).status_code == 200
     own = _make_template(responder, _definition())
-    assert responder.put(f'/api/v1/playbooks/{own}', json={'name': 'mine'}).status_code == 200
-    # Administrator holds organizations:manage
     assert admin.delete(f'/api/v1/playbooks/{own}').status_code == 200
+    assert responder.delete(f'/api/v1/playbooks/{pb}').status_code == 200
+
+
+def test_template_is_org_scoped(app, users, auth):
+    admin = auth(users['Administrator'])
+    pb = _make_template(admin, _definition())
+    other = auth(users['admin_b'])
+    assert other.get(f'/api/v1/playbooks/{pb}').status_code == 404
+    assert other.put(f'/api/v1/playbooks/{pb}', json={'name': 'x'}).status_code == 404
+    assert other.delete(f'/api/v1/playbooks/{pb}').status_code == 404
 
 
 @pytest.mark.parametrize('definition', [

@@ -17,6 +17,7 @@ import { Search, Loader2, Plus, Trash2, Zap, Shield, Globe, AlertTriangle, Brain
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -58,6 +59,8 @@ function MitreAutoSuggestTester() {
   const [results, setResults] = useState<{ technique: string; tactic: string; name: string; score: number }[]>([])
   const [loading, setLoading] = useState(false)
   const [patternCount, setPatternCount] = useState<number | null>(null)
+  // POST /mitre/suggest needs incidents:read; this tab is shown for integrations:read.
+  const canSuggest = usePermission('incidents:read')
 
   useEffect(() => {
     api.get<{ patterns: any[] }>('/mitre/patterns').then(d => setPatternCount(d.patterns?.length ?? 0)).catch(() => {})
@@ -82,10 +85,11 @@ function MitreAutoSuggestTester() {
       <CardContent className="space-y-3">
         <Textarea value={text} onChange={e => setText(e.target.value)} placeholder="Paste a timeline activity description to test MITRE auto-mapping..." rows={2} />
         <div className="flex items-center gap-3">
-          <Button size="sm" onClick={testSuggest} disabled={loading || !text.trim()}>
+          <Button size="sm" onClick={testSuggest} disabled={!canSuggest || loading || !text.trim()}>
             {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
             Test Suggestions
           </Button>
+          {!canSuggest && <span className="text-xs text-muted-foreground">Requires the incidents:read permission.</span>}
           {results.length > 0 && <span className="text-xs text-muted-foreground">{results.length} match{results.length !== 1 ? 'es' : ''}</span>}
         </div>
         {results.length > 0 && (
@@ -107,6 +111,11 @@ function MitreAutoSuggestTester() {
 export function ThreatIntelTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
+  // Mirrors the backend: POST/PUT(+test)/DELETE /integrations need
+  // integrations:create / :update / :delete; without them the tab is read-only.
+  const canCreate = usePermission('integrations:create')
+  const canUpdate = usePermission('integrations:update')
+  const canDelete = usePermission('integrations:delete')
   const [loading, setLoading] = useState(true)
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [integrationTypes, setIntegrationTypes] = useState<IntegrationType[]>([])
@@ -195,7 +204,7 @@ export function ThreatIntelTab() {
             {integrations.length} configured · {integrations.filter(i => i.is_enabled).length} active
           </p>
         </div>
-        <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add Provider</Button>
+        {canCreate && <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add Provider</Button>}
       </div>
 
       {/* Configured Integrations */}
@@ -205,7 +214,7 @@ export function ThreatIntelTab() {
             <Search className="h-8 w-8 mb-3 opacity-50" />
             <p className="font-medium">No threat intel providers configured</p>
             <p className="text-sm mt-1">Add VirusTotal, MISP, or Shodan to enrich IOCs automatically.</p>
-            <Button variant="link" onClick={() => openModal()}>Add a provider</Button>
+            {canCreate && <Button variant="link" onClick={() => openModal()}>Add a provider</Button>}
           </CardContent>
         </Card>
       ) : (
@@ -231,11 +240,15 @@ export function ThreatIntelTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
-                      {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>
-                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    {canUpdate && (
+                      <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
+                        {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
+                      </Button>
+                    )}
+                    {canUpdate && <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>}
+                    {canDelete && (
+                      <Button variant="ghost" size="icon" aria-label={`Delete ${int.name}`} className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -257,12 +270,13 @@ export function ThreatIntelTab() {
                 return (
                   <button
                     key={t.id}
+                    disabled={!canCreate}
                     onClick={() => {
                       setEditingIntegration(null)
                       setForm({ type: t.id, name: t.name, config: {}, credentials: {}, is_enabled: true })
                       setShowModal(true)
                     }}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-dashed hover:bg-muted/50 transition-colors text-left"
+                    className="flex items-center gap-3 p-3 rounded-lg border border-dashed hover:bg-muted/50 transition-colors text-left disabled:pointer-events-none disabled:opacity-60"
                   >
                     <span className="text-lg">{meta?.icon || '🔍'}</span>
                     <div>

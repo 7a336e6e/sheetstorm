@@ -1,0 +1,61 @@
+# Built-in playbook: ransomware response (SheetStorm, MIT). See picerl-generic.yaml.
+schema: sheetstorm-playbook
+key: ransomware
+name: Ransomware response
+description: Phase-gated response for ransomware and extortion incidents, covering patient zero, backups, containment of spread, and clean recovery.
+incident_type: ransomware
+metadata:
+  framework: NIST SP 800-61r3 / SANS PICERL
+  note: NIST SP 800-61r3 maps response to CSF 2.0 functions; the phases here stay PICERL 1-6, as in the SheetStorm incident model.
+  references:
+    - https://www.cisa.gov/stopransomware/ransomware-guide
+definition:
+  phases:
+    - phase: 1
+      name: Preparation
+      tasks:
+        - {title: "Open the case and set TLP; restrict who can see it", owner_role: lead}
+        - {title: "Move incident communications out of band if email or chat may be compromised", owner_role: lead}
+        - {title: "Engage legal, insurance and executive stakeholders as your policy requires", owner_role: lead}
+        - {title: "Preserve ransom note, encrypted samples and relevant logs before cleanup", owner_role: forensics}
+    - phase: 2
+      name: Identification
+      tasks:
+        - {title: "Identify patient zero and the earliest attacker activity", owner_role: analyst}
+        - {title: "Identify the ransomware family and variant from the note and sample", owner_role: analyst}
+        - {title: "Determine whether backups are intact and offline copies are reachable", owner_role: it}
+        - {title: "Check for data theft - look for exfiltration tooling and large outbound transfers", owner_role: analyst}
+        - {title: "Map encrypted systems and the accounts used to deploy the encryptor", owner_role: analyst}
+      actions:
+        - {key: enrich-iocs, type: enrich_iocs, name: "Enrich network IOCs", config: {}, auto_run: false}
+        - {key: suggest-mitre, type: suggest_mitre, name: "Suggest MITRE ATT&CK mappings for timeline events", config: {}, auto_run: false}
+    - phase: 3
+      name: Containment
+      tasks:
+        - {title: "Isolate infected hosts from the network without powering them off", owner_role: responder}
+        - {title: "Disable accounts used for deployment and reset privileged credentials", owner_role: responder}
+        - {title: "Block attacker infrastructure and disable remote access paths that were abused", owner_role: responder}
+        - {title: "Protect backups - disconnect backup infrastructure and verify its integrity", owner_role: it}
+        - {title: "Decide on extortion engagement with legal and executives; record the decision", owner_role: lead}
+    - phase: 4
+      name: Eradication
+      tasks:
+        - {title: "Remove persistence and attacker tooling from every in-scope system", owner_role: responder}
+        - {title: "Rebuild domain controllers and other systems that cannot be trusted", owner_role: it}
+        - {title: "Reset all credentials the attacker could have obtained, including service accounts", owner_role: it}
+        - {title: "Close the initial access path (patch, MFA, exposure)", owner_role: it}
+    - phase: 5
+      name: Recovery
+      tasks:
+        - {title: "Restore from clean backups in business-priority order and scan before reconnecting", owner_role: it}
+        - {title: "Validate restored data integrity with the data owners", owner_role: it}
+        - {title: "Monitor for re-encryption, beaconing and new account activity", owner_role: analyst}
+        - {title: "Review leak sites and extortion channels for published data", owner_role: analyst}
+    - phase: 6
+      name: Lessons Learned
+      tasks:
+        - {title: "Complete regulatory and customer notifications", owner_role: lead}
+        - {title: "Hold the post-incident review - detection gaps, dwell time, recovery time", owner_role: lead}
+        - {title: "Create improvement actions - backups, segmentation, EDR coverage, MFA", owner_role: lead}
+      actions:
+        - {key: executive-summary, type: generate_summary, name: "Generate executive summary", config: {report_type: executive}, auto_run: false}

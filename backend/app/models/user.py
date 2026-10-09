@@ -1,6 +1,6 @@
 """User and authentication models"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary, Text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Text, and_, func, or_
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -10,13 +10,21 @@ import bcrypt
 
 
 class Role(BaseModel):
-    """Role model for RBAC."""
+    """Role model for RBAC.
+
+    `organization_id IS NULL` marks a global system role (immutable, shared
+    by every tenant); custom roles always belong to one organization. Names
+    are unique case-insensitively among system roles and within an org, and
+    custom roles cannot shadow a system role name.
+    """
     __tablename__ = 'roles'
 
-    name = Column(String(100), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
     description = Column(String(500))
     permissions = Column(JSONB, default=list)
     is_system = Column(Boolean, default=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'),
+                             nullable=True)
 
     # Relationships
     user_roles = relationship('UserRole', back_populates='role', lazy='dynamic')
@@ -26,7 +34,35 @@ class Role(BaseModel):
 
     def has_permission(self, permission):
         """Check if role has a specific permission."""
-        return permission in self.permissions
+        return permission in (self.permissions or [])
+
+    def applies_to_org(self, org_id):
+        """A role only counts for users of its own org (system roles: all)."""
+        if self.organization_id is None:
+            return bool(self.is_system)
+        return self.organization_id == org_id
+
+    @classmethod
+    def visible_to(cls, org_id):
+        """Query of the roles an org may see and assign: system + its own."""
+        return cls.query.filter(or_(
+            and_(cls.organization_id.is_(None), cls.is_system.is_(True)),
+            cls.organization_id == org_id,
+        ))
+
+    @classmethod
+    def resolve(cls, name, org_id):
+        """Case-insensitive name lookup among the roles visible to `org_id`.
+
+        System names cannot be shadowed by custom roles, so at most one row
+        matches; a system role wins if legacy data ever disagrees.
+        """
+        if not name or not isinstance(name, str):
+            return None
+        return (cls.visible_to(org_id)
+                .filter(func.lower(cls.name) == name.strip().lower())
+                .order_by(cls.organization_id.isnot(None))
+                .first())
 
 
 class User(BaseModel):
@@ -50,6 +86,27 @@ class User(BaseModel):
     password_changed_at = Column(DateTime(timezone=True))
     organizational_role = Column(String(150))
     updated_at = Column(DateTime(timezone=True))
+    # Per-user UI preferences. Keys are allowlisted by PATCH /auth/me/preferences
+    # (PREFERENCE_KEYS); never store arbitrary client JSON here.
+    preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
+
+    # ── Account lifecycle (W1-LIFE-BE, migration user_lifecycle) ──────────
+    # Login lockout: counter + lock expiry (services/user_lifecycle.py).
+    failed_login_count = Column(Integer, nullable=False, default=0, server_default='0')
+    locked_until = Column(DateTime(timezone=True))
+    # Restricted session until the user changes their password
+    # (middleware/account_state.py: 403 password_change_required).
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default='false')
+    deactivated_at = Column(DateTime(timezone=True))
+    deactivated_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
+    deactivation_reason = Column(String(500))
+    # ── end account lifecycle ────────────────────────────────────────────
+
+    # ── API keys (W2-APIK, migration add_api_keys) ────────────────────────
+    # Non-human owner of API keys: never logs in interactively (no password,
+    # synthetic svc-…@service.invalid email, auth_provider 'service').
+    is_service_account = Column(Boolean, nullable=False, default=False, server_default='false')
+    # ── end API keys ─────────────────────────────────────────────────────
 
     # Relationships
     organization = relationship('Organization', back_populates='users')
@@ -74,6 +131,11 @@ class User(BaseModel):
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
 
     @property
+    def is_locked(self):
+        """True while a login lockout is in force."""
+        return bool(self.locked_until and self.locked_until > datetime.now(timezone.utc))
+
+    @property
     def roles(self):
         """Get list of role objects."""
         return [ur.role for ur in self.user_roles]
@@ -84,13 +146,31 @@ class User(BaseModel):
         return [ur.role.name for ur in self.user_roles]
 
     @property
-    def permissions(self):
-        """Get combined permissions from all roles."""
+    def role_permissions(self):
+        """Union of the permissions of all roles (additive; no role restricts
+        another), ignoring any API-key scope limit. Roles of a foreign org are
+        ignored even if a stray user_roles row exists. Use `permissions` for
+        authorization; this is for the owner's incident visibility and for
+        API-key scope validation."""
         perms = set()
         for user_role in self.user_roles:
-            if user_role.role and user_role.role.permissions:
-                perms.update(user_role.role.permissions)
-        return list(perms)
+            role = user_role.role
+            if role and role.permissions and role.applies_to_org(self.organization_id):
+                perms.update(role.permissions)
+        return sorted(perms)
+
+    @property
+    def permissions(self):
+        """Effective permissions: `role_permissions`, intersected with the
+        key's scopes when the current request is authenticated by an API-key
+        token for this user (evaluated per request, so an owner downgrade
+        shrinks the key at once and scopes can never grow)."""
+        perms = self.role_permissions
+        from app.utils.token_scopes import current_scope_limit
+        limit = current_scope_limit(self.id)
+        if limit is None:
+            return perms
+        return [p for p in perms if p in limit]
 
     def has_permission(self, permission):
         """Check if user has a specific permission."""
@@ -107,7 +187,8 @@ class User(BaseModel):
         return all(p in user_perms for p in permissions)
 
     def has_role(self, role_name):
-        """Check if user has a specific role."""
+        """Check if user has a role by name. Display / sync only — never use
+        a role name for an authorization decision (check a permission)."""
         return role_name in self.role_names
 
     @property
@@ -144,9 +225,30 @@ class User(BaseModel):
             'organizational_role': self.organizational_role,
             'teams': self.teams,
             'organization_id': str(self.organization_id) if self.organization_id else None,
+            'preferences': dict(self.preferences or {}),
+            'is_locked': self.is_locked,
+            'locked_until': self.locked_until.isoformat() if self.is_locked else None,
+            'must_change_password': bool(self.must_change_password),
+            'is_service_account': bool(self.is_service_account),
+            'deactivated_at': self.deactivated_at.isoformat() if self.deactivated_at else None,
         }
         if include_permissions:
             data['permissions'] = self.permissions
+        return data
+
+    def to_admin_dict(self, include_permissions=False):
+        """to_dict plus account-state details for holders of users:manage."""
+        data = self.to_dict(include_permissions=include_permissions)
+        deactivator = None
+        if self.deactivated_by:
+            other = db.session.get(User, self.deactivated_by)
+            deactivator = {'id': str(self.deactivated_by), 'name': other.name if other else None}
+        data.update({
+            'failed_login_count': self.failed_login_count or 0,
+            'deactivated_by': deactivator,
+            'deactivation_reason': self.deactivation_reason,
+            'password_changed_at': self.password_changed_at.isoformat() if self.password_changed_at else None,
+        })
         return data
 
 
@@ -160,7 +262,7 @@ class UserRole(BaseModel):
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     role_id = Column(UUID(as_uuid=True), ForeignKey('roles.id', ondelete='CASCADE'), nullable=False)
     organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'))
-    granted_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))
+    granted_by = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'))
     granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
@@ -180,16 +282,30 @@ class PasswordHistory(BaseModel):
 
 
 class Session(BaseModel):
-    """Session model for token management."""
+    """A sign-in session (services/session_service.py).
+
+    One row per interactive sign-in; its id is the ``sid`` claim of every
+    access/refresh token minted for it. Refresh rotation keeps the row and
+    updates ``refresh_jti``/``expires_at``. Revoking the row blocklists its
+    tokens (``revoked_session:<sid>`` in Redis, checked by is_token_revoked).
+    API-key tokens carry no sid and have no row.
+    """
     __tablename__ = 'sessions'
 
+    # ── Session columns (W3-SEC, migration security_policy_sessions) ──────
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    token_hash = Column(String(255), nullable=False)
-    refresh_token_hash = Column(String(255))
+    organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'))
+    token_hash = Column(String(255))  # legacy, unused
+    refresh_token_hash = Column(String(255))  # legacy, unused
+    refresh_jti = Column(String(64))
     ip_address = Column(INET)
     user_agent = Column(String(500))
+    auth_method = Column(String(32))
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True))
     revoked_at = Column(DateTime(timezone=True))
+    revoked_reason = Column(String(32))
+    # ── end session columns ──────────────────────────────────────────────
 
     # Relationships
     user = relationship('User', back_populates='sessions')
@@ -200,3 +316,17 @@ class Session(BaseModel):
         if self.revoked_at:
             return False
         return datetime.now(timezone.utc) < self.expires_at
+
+    def to_dict(self, current_sid=None):
+        return {
+            'id': str(self.id),
+            'user_id': str(self.user_id),
+            'ip_address': str(self.ip_address) if self.ip_address else None,
+            'user_agent': self.user_agent,
+            'auth_method': self.auth_method,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
+            'current': current_sid is not None and str(self.id) == str(current_sid),
+        }

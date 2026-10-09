@@ -186,3 +186,45 @@ def test_github_login_rejects_inactive_and_requires_state(app, monkeypatch, redi
     resp = client.post('/api/v1/auth/github/callback', json={'code': 'c', 'state': 's1'})
     assert resp.status_code == 401
     assert 'access_token' not in resp.get_json()
+
+
+# -- Supabase bulk sync (admin guardrails) ---------------------------------
+
+from rbac_helpers import default_org, make_role, make_user  # noqa: E402,F401
+
+
+@pytest.fixture
+def supabase_config(app, monkeypatch):
+    monkeypatch.setitem(app.config, 'SUPABASE_URL', 'https://sb.example')
+    monkeypatch.setitem(app.config, 'SUPABASE_SERVICE_ROLE_KEY', 'service-key')
+
+
+def test_sync_supabase_rejects_non_default_org(app, users, auth, supabase_config):
+    resp = auth(users['Administrator']).post('/api/v1/users/sync-supabase')
+    assert resp.status_code == 403 and resp.get_json()['error'] == 'not_default_org'
+
+
+def test_sync_supabase_audited_and_skips_other_org_users(app, db, users, auth, monkeypatch, supabase_config,
+                                                        default_org, make_user):
+    import requests
+    from app.models import AuditLog, User
+    deputy = make_user(default_org, perms=['users:manage', 'users:read'], roles=['Viewer'])
+    new_email = f'sb-{uuid.uuid4().hex[:8]}@sb.test'
+    sb_users = [
+        {'id': 'sb-new', 'email': new_email, 'app_metadata': {'sheetstorm_roles': ['Administrator']}},
+        {'id': 'sb-foreign', 'email': users['Analyst'].email, 'app_metadata': {'sheetstorm_roles': ['Administrator']}},
+    ]
+    monkeypatch.setattr(requests, 'get', lambda *a, **k: _Resp(200, {'users': sb_users}))
+    resp = auth(deputy).post('/api/v1/users/sync-supabase')
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body['created'] == 1 and body['skipped_other_org'] == 1
+    assert body['roles_skipped'] == ['Administrator']
+    db.session.expire_all()
+    created = User.query.filter_by(email=new_email).one()
+    assert created.organization_id == default_org.id and created.role_names == ['Viewer']
+    analyst = User.query.get(users['Analyst'].id)
+    assert analyst.supabase_id != 'sb-foreign' and analyst.role_names == ['Analyst']
+    row = (AuditLog.query.filter_by(action='sync_supabase', user_id=deputy.id)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert row is not None and row.event_type == 'admin_action'

@@ -92,12 +92,17 @@ import sheetstorm_bridge.tools.assignments  # noqa: E402, F401
 import sheetstorm_bridge.tools.attack_graph  # noqa: E402, F401
 import sheetstorm_bridge.tools.auth  # noqa: E402, F401
 import sheetstorm_bridge.tools.case_notes  # noqa: E402, F401
+import sheetstorm_bridge.tools.case_templates  # noqa: E402, F401
+import sheetstorm_bridge.tools.decisions  # noqa: E402, F401
 import sheetstorm_bridge.tools.defang  # noqa: E402, F401
+import sheetstorm_bridge.tools.evidence  # noqa: E402, F401
 import sheetstorm_bridge.tools.incidents  # noqa: E402, F401
 import sheetstorm_bridge.tools.iocs  # noqa: E402, F401
 import sheetstorm_bridge.tools.knowledge_base  # noqa: E402, F401
+import sheetstorm_bridge.tools.metrics  # noqa: E402, F401
 import sheetstorm_bridge.tools.playbooks  # noqa: E402, F401
 import sheetstorm_bridge.tools.prompts  # noqa: E402, F401
+import sheetstorm_bridge.tools.questions  # noqa: E402, F401
 import sheetstorm_bridge.tools.reports  # noqa: E402, F401
 import sheetstorm_bridge.tools.resources  # noqa: E402, F401
 import sheetstorm_bridge.tools.tasks  # noqa: E402, F401

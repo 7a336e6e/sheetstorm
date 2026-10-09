@@ -1,17 +1,14 @@
 "use client"
 
-import { useEffect, useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import {
     Dialog,
     DialogContent,
     DialogHeader,
     DialogTitle,
-    DialogDescription,
     DialogFooter,
     DialogBody,
 } from '@/components/ui/dialog'
@@ -22,99 +19,102 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-    GlassTable,
-    TableEmpty,
-} from '@/components/ui/table'
-import { SkeletonTableRow } from '@/components/ui/skeleton'
-import { formatDateTime } from '@/lib/utils'
+import { Combobox } from '@/components/ui/combobox'
+import { DataTable, FilterSelect, type DataTableColumn } from '@/components/ui/data-table'
+import { useAllPages, usePaginatedQuery } from '@/hooks/use-paginated-query'
 import api from '@/lib/api'
-import type { NetworkIndicator, CompromisedHost } from '@/types'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError } from '@/lib/errors'
+import type { NetworkIndicator, CompromisedHost, VersionedRow } from '@/types'
 import {
-    Plus,
     Globe,
-    Search,
     ArrowUpRight,
     ArrowDownLeft,
     ArrowLeftRight,
+    Pencil,
     Trash2,
-    Network,
-    MoreHorizontal
 } from 'lucide-react'
-import { useConfirm } from '@/components/ui/confirm-dialog'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
+import {
+    ProvenanceBadge,
+    ProvenanceSection,
+    emptyProvenance,
+    provenanceFromRecord,
+    provenancePayload,
+    useProvenanceRowActions,
+} from './provenance'
+import { BulkEnrichAction } from './BulkEnrichAction'
 
-interface NetworkIOCsTabProps {
-    incidentId: string
+type IndicatorRow = VersionedRow<NetworkIndicator>
+
+const PROTOCOLS = ['TCP', 'UDP', 'HTTP', 'HTTPS', 'DNS', 'ICMP', 'SMB', 'RDP', 'SSH']
+
+const DIRECTIONS = [
+    { value: 'outbound', label: 'Outbound' },
+    { value: 'inbound', label: 'Inbound' },
+    { value: 'lateral', label: 'Lateral' },
+]
+
+const EMPTY_FORM = {
+    timestamp: '',
+    protocol: '',
+    port: '',
+    dns_ip: '',
+    source_host: '',
+    destination_host: '',
+    source_host_id: '',
+    destination_host_id: '',
+    direction: 'outbound',
+    host_id: '',
+    timeline_event_id: '',
+    description: '',
+    is_malicious: true,
+    threat_intel_source: '',
+    add_to_attack_graph: false,
 }
 
-export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
-    const confirm = useConfirm()
-    const [indicators, setIndicators] = useState<NetworkIndicator[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const [search, setSearch] = useState('')
-    const [showModal, setShowModal] = useState(false)
-    const [editingItem, setEditingItem] = useState<NetworkIndicator | null>(null)
-    const [isSubmitting, setIsSubmitting] = useState(false)
-    const [hosts, setHosts] = useState<CompromisedHost[]>([])
-
-    const [form, setForm] = useState({
-        timestamp: '',
-        protocol: '',
-        port: '',
-        dns_ip: '',
-        source_host: '',
-        destination_host: '',
-        source_host_id: '',
-        destination_host_id: '',
-        direction: 'outbound',
-        host_id: '',
-        timeline_event_id: '',
-        description: '',
-        is_malicious: true,
-        threat_intel_source: '',
-        add_to_attack_graph: false,
-    })
-
-    useEffect(() => {
-        if (incidentId) {
-            loadData()
-        }
-    }, [incidentId])
-
-    const loadData = async () => {
-        setIsLoading(true)
-        try {
-            const [indicatorsRes, hostsRes] = await Promise.all([
-                api.get<{ items: NetworkIndicator[] }>(`/incidents/${incidentId}/network-iocs`),
-                api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
-            ])
-            setIndicators(indicatorsRes.items || [])
-            setHosts(hostsRes.items || [])
-        } catch (error) {
-            console.error('Failed to load network IOCs:', error)
-        } finally {
-            setIsLoading(false)
-        }
+const getDirectionIcon = (direction: string) => {
+    switch (direction) {
+        case 'inbound': return <ArrowDownLeft className="h-4 w-4 text-orange-400" />
+        case 'outbound': return <ArrowUpRight className="h-4 w-4 text-red-400" />
+        case 'lateral': return <ArrowLeftRight className="h-4 w-4 text-yellow-400" />
+        default: return <Globe className="h-4 w-4" />
     }
+}
+
+export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
+    const confirm = useConfirm()
+    const endpoint = `/incidents/${incidentId}/network-iocs`
+    const query = usePaginatedQuery<IndicatorRow>({
+        endpoint,
+        urlKey: 'network',
+        focus: focusRowId,
+        live: 'network_ioc',
+    })
+    const [showModal, setShowModal] = useState(false)
+    const [editingItem, setEditingItem] = useState<IndicatorRow | null>(null)
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [form, setForm] = useState(EMPTY_FORM)
+    // Provenance (W3-PROV); `provInitial` limits an edit to the changed fields.
+    const [prov, setProv] = useState(emptyProvenance)
+    const [provInitial, setProvInitial] = useState(emptyProvenance)
+
+    // Source/destination host pickers: every host, loaded only while the modal is open.
+    const hosts = useAllPages<CompromisedHost>(`/incidents/${incidentId}/hosts`, {
+        live: 'host',
+        enabled: showModal,
+    }).items
 
     const resetForm = () => {
-        setForm({
-            timestamp: '', protocol: '', port: '', dns_ip: '', source_host: '', destination_host: '',
-            source_host_id: '', destination_host_id: '',
-            direction: 'outbound', host_id: '', timeline_event_id: '', description: '', is_malicious: true, threat_intel_source: '',
-            add_to_attack_graph: false,
-        })
+        setForm(EMPTY_FORM)
+        setProv(emptyProvenance())
+        setProvInitial(emptyProvenance())
         setEditingItem(null)
     }
 
-    const handleOpenModal = (item?: NetworkIndicator) => {
+    const handleOpenModal = (item?: IndicatorRow) => {
         if (item) {
             setEditingItem(item)
             setForm({
@@ -134,6 +134,9 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                 threat_intel_source: item.threat_intel_source || '',
                 add_to_attack_graph: false,
             })
+            const fromRecord = provenanceFromRecord(item)
+            setProv(fromRecord)
+            setProvInitial(fromRecord)
         } else {
             resetForm()
         }
@@ -144,10 +147,10 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
         if (!form.dns_ip) return
         setIsSubmitting(true)
         try {
-            const payload: Record<string, any> = {
+            const payload: Record<string, unknown> = {
                 timestamp: form.timestamp || null,
                 protocol: form.protocol || null,
-                port: form.port ? parseInt(form.port) : null,
+                port: form.port ? parseInt(form.port, 10) : null,
                 dns_ip: form.dns_ip,
                 source_host: form.source_host || null,
                 destination_host: form.destination_host || null,
@@ -159,6 +162,7 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                 description: form.description || null,
                 is_malicious: form.is_malicious,
                 threat_intel_source: form.threat_intel_source || null,
+                ...provenancePayload(prov, editingItem ? provInitial : undefined),
             }
 
             if (!editingItem && form.add_to_attack_graph) {
@@ -166,128 +170,113 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
             }
 
             if (editingItem) {
-                await api.put(`/incidents/${incidentId}/network-iocs/${editingItem.id}`, payload)
+                await api.put(`${endpoint}/${editingItem.id}`, payload, { ifMatch: editingItem.version })
             } else {
-                await api.post(`/incidents/${incidentId}/network-iocs`, payload)
+                await api.post(endpoint, payload)
             }
 
             setShowModal(false)
             resetForm()
-            loadData()
+            invalidate(endpoint)
+            if (!editingItem && payload.add_to_attack_graph) invalidate(`/incidents/${incidentId}/attack-graph`)
         } catch (error) {
-            console.error('Failed to save network IOC:', error)
+            notifyError(error, editingItem ? 'save the network IOC' : 'add the network IOC')
         } finally {
             setIsSubmitting(false)
         }
     }
 
-    const handleDelete = async (id: string) => {
-        const confirmed = await confirm({
-            title: 'Delete IOC',
-            description: 'Are you sure you want to delete this network indicator?',
-            confirmLabel: 'Delete',
-            variant: 'destructive',
-        })
-        if (!confirmed) return
+    const handleDelete = async (item: IndicatorRow) => {
+        if (!(await confirmDelete(confirm, 'network IOC', item.dns_ip))) return
         try {
-            await api.delete(`/incidents/${incidentId}/network-iocs/${id}`)
-            loadData()
+            await api.delete(`${endpoint}/${item.id}`, undefined, { ifMatch: item.version })
+            invalidate(endpoint)
         } catch (error) {
-            console.error('Failed to delete', error)
+            notifyError(error, 'delete the network IOC')
         }
     }
 
-    const getDirectionIcon = (direction: string) => {
-        switch (direction) {
-            case 'inbound': return <ArrowDownLeft className="h-4 w-4 text-orange-400" />
-            case 'outbound': return <ArrowUpRight className="h-4 w-4 text-red-400" />
-            case 'lateral': return <ArrowLeftRight className="h-4 w-4 text-yellow-400" />
-            default: return <Globe className="h-4 w-4" />
-        }
-    }
+    const provenanceActions = useProvenanceRowActions(incidentId, 'network_ioc', () => invalidate(endpoint))
 
-    const filteredIndicators = indicators.filter(i =>
-        i.dns_ip.includes(search) || i.description?.toLowerCase().includes(search.toLowerCase())
-    )
+    const hostLabel = (ref: CompromisedHost | undefined, text: string | undefined) => ref?.hostname || text || '-'
+
+    const columns: DataTableColumn<IndicatorRow>[] = [
+        {
+            id: 'direction', header: 'Direction', sortKey: 'direction', cell: (item) => (
+                <div className="flex items-center gap-2">
+                    <div className="p-1 rounded bg-white/5">{getDirectionIcon(item.direction || '')}</div>
+                    <span className="capitalize text-xs">{item.direction}</span>
+                </div>
+            ),
+        },
+        { id: 'dns_ip', header: 'Value (IP/DNS)', sortKey: 'dns_ip', className: 'font-mono text-sm', cell: (item) => item.dns_ip },
+        { id: 'provenance', header: 'Source', hideBelow: 'sm', className: 'w-[56px]', cell: (item) => <ProvenanceBadge record={item} /> },
+        {
+            id: 'protocol', header: 'Protocol/Port', sortKey: 'protocol', hideBelow: 'sm',
+            cell: (item) => `${item.protocol ?? ''}${item.port ? ` :${item.port}` : ''}` || '-',
+        },
+        {
+            id: 'source', header: 'Source Host', hideBelow: 'md', className: 'text-sm text-muted-foreground',
+            cell: (item) => hostLabel(item.source_host_ref, item.source_host),
+        },
+        {
+            id: 'destination', header: 'Dest Host', hideBelow: 'md', className: 'text-sm text-muted-foreground',
+            cell: (item) => hostLabel(item.destination_host_ref, item.destination_host),
+        },
+        {
+            id: 'description', header: 'Description', hideBelow: 'lg', className: 'text-sm text-muted-foreground',
+            cell: (item) => item.description || '-',
+        },
+    ]
 
     return (
         <div className="space-y-4">
-            <Card>
-                <CardContent className="p-4">
-                    <div className="flex justify-between gap-4">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search IPs, domains..." className="pl-10" variant="glass" />
-                        </div>
-                        <Button onClick={() => handleOpenModal()}><Plus className="mr-2 h-4 w-4" /> Add IOC</Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardContent className="p-0">
-                    <GlassTable className="border-0">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Direction</TableHead>
-                                    <TableHead>Value (IP/DNS)</TableHead>
-                                    <TableHead>Protocol/Port</TableHead>
-                                    <TableHead>Source Host</TableHead>
-                                    <TableHead>Dest Host</TableHead>
-                                    <TableHead>Description</TableHead>
-                                    <TableHead className="w-[50px]"></TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {isLoading ? <SkeletonTableRow columns={7} /> : filteredIndicators.length === 0 ? (
-                                    <TableRow><TableCell colSpan={7}>
-                                        <TableEmpty
-                                            title={search ? 'No matching network IOCs' : 'No network IOCs'}
-                                            description={search ? 'Try adjusting your search criteria' : 'Track IP addresses, domains, and URLs associated with malicious network activity.'}
-                                            icon={<Network className="w-8 h-8" />}
-                                        />
-                                    </TableCell></TableRow>
-                                ) : (
-                                    filteredIndicators.map(item => (
-                                        <TableRow key={item.id} className="group">
-                                            <TableCell>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="p-1 rounded bg-black/5 dark:bg-white/5">{getDirectionIcon(item.direction || '')}</div>
-                                                    <span className="capitalize text-xs">{item.direction}</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="font-mono text-sm">{item.dns_ip}</TableCell>
-                                            <TableCell>{item.protocol} {item.port ? `:${item.port}` : ''}</TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {item.source_host_id
-                                                    ? hosts.find(h => h.id === item.source_host_id)?.hostname
-                                                    : item.source_host || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {item.destination_host_id
-                                                    ? hosts.find(h => h.id === item.destination_host_id)?.hostname
-                                                    : item.destination_host || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">{item.description || '-'}</TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1">
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenModal(item)}>
-                                                        <MoreHorizontal className="w-4 h-4" />
-                                                    </Button>
-                                                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(item.id)}>
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </GlassTable>
-                </CardContent>
-            </Card>
+            <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="network IOC" />
+            <DataTable
+                query={query}
+                columns={columns}
+                getRowId={(i) => i.id}
+                ariaLabel="Network IOCs"
+                searchPlaceholder="Search IPs, domains..."
+                toolbar={
+                    <>
+                        <FilterSelect
+                            label="Direction"
+                            allLabel="All directions"
+                            value={query.state.filters.direction}
+                            onChange={(v) => query.setFilter('direction', v)}
+                            options={DIRECTIONS}
+                        />
+                        <FilterSelect
+                            label="Protocol"
+                            allLabel="All protocols"
+                            value={query.state.filters.protocol}
+                            onChange={(v) => query.setFilter('protocol', v)}
+                            options={PROTOCOLS.map((p) => ({ value: p, label: p }))}
+                        />
+                    </>
+                }
+                selectable
+                bulkActions={(ids, clear) => (
+                    <BulkEnrichAction
+                        incidentId={incidentId}
+                        noun="network IOC"
+                        values={query.items.filter((i) => ids.includes(i.id)).map((i) => i.dns_ip)}
+                        onDone={clear}
+                    />
+                )}
+                primaryAction={{ label: 'Add IOC', onSelect: () => handleOpenModal(), permission: 'network_iocs:create' }}
+                rowActions={(i) => [
+                    { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(i), permission: 'network_iocs:update' },
+                    ...provenanceActions(i),
+                    { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(i), permission: 'network_iocs:delete' },
+                ]}
+                focusedRowId={focusRowId}
+                empty={{
+                    title: 'No network IOCs',
+                    description: 'Track IP addresses, domains, and URLs associated with malicious network activity.',
+                }}
+            />
 
             <Dialog open={showModal} onOpenChange={setShowModal}>
                 <DialogContent className="max-w-xl">
@@ -296,7 +285,7 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Timestamp</Label>
-                                <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} variant="glass" />
+                                <DateTimeInput value={form.timestamp} onChange={iso => setForm({ ...form, timestamp: iso ?? '' })} variant="glass" />
                             </div>
                             <div className="space-y-2">
                                 <Label>Direction</Label>
@@ -322,15 +311,9 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                                 <Select value={form.protocol} onValueChange={v => setForm({ ...form, protocol: v })}>
                                     <SelectTrigger variant="glass"><SelectValue placeholder="Select Protocol" /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="TCP">TCP</SelectItem>
-                                        <SelectItem value="UDP">UDP</SelectItem>
-                                        <SelectItem value="HTTP">HTTP</SelectItem>
-                                        <SelectItem value="HTTPS">HTTPS</SelectItem>
-                                        <SelectItem value="DNS">DNS</SelectItem>
-                                        <SelectItem value="ICMP">ICMP</SelectItem>
-                                        <SelectItem value="SMB">SMB</SelectItem>
-                                        <SelectItem value="RDP">RDP</SelectItem>
-                                        <SelectItem value="SSH">SSH</SelectItem>
+                                        {PROTOCOLS.map((p) => (
+                                            <SelectItem key={p} value={p}>{p}</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -393,14 +376,27 @@ export function NetworkIOCsTab({ incidentId }: NetworkIOCsTabProps) {
                             <Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} variant="glass" />
                         </div>
 
+                        <ProvenanceSection
+                            incidentId={incidentId}
+                            value={prov}
+                            onChange={setProv}
+                            timestamp={form.timestamp}
+                            onUseComputed={(utc) => {
+                                setForm((f) => ({ ...f, timestamp: utc }))
+                                setProv((p) => ({ ...p, keep_manual: false }))
+                            }}
+                            hostId={form.host_id || form.source_host_id || null}
+                            timestampLabel="timestamp"
+                        />
+
                         {/* Attack Graph Integration */}
                         {!editingItem && (
-                            <div className="flex items-center gap-2 p-3 rounded-md border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]">
+                            <div className="flex items-center gap-2 p-3 rounded-md border border-white/10 bg-white/[0.02]">
                                 <input
                                     type="checkbox"
                                     checked={form.add_to_attack_graph}
                                     onChange={e => setForm({ ...form, add_to_attack_graph: e.target.checked })}
-                                    className="rounded bg-black/5 dark:bg-white/10 border-black/10 dark:border-white/20"
+                                    className="rounded bg-white/10 border-white/20"
                                 />
                                 <div>
                                     <Label className="cursor-pointer">Add to Attack Graph</Label>

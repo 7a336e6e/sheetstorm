@@ -20,6 +20,7 @@ import {
 import { api } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -45,7 +46,8 @@ interface StorageStats {
     used_bytes: number
     free_bytes: number
     usage_percent: number
-    path: string
+    /** Server filesystem path: platform admins only. */
+    path?: string
   }
 }
 
@@ -72,6 +74,11 @@ const DRIVE_ERROR_MESSAGES: Record<string, string> = {
 export function StorageTab() {
   const { toast } = useToast()
   const confirm = useConfirm()
+  // Mirrors the backend: POST/PUT(+test)/DELETE /integrations need
+  // integrations:create / :update / :delete; without them the tab is read-only.
+  const canCreate = usePermission('integrations:create')
+  const canUpdate = usePermission('integrations:update')
+  const canDelete = usePermission('integrations:delete')
   const searchParams = useSearchParams()
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -213,7 +220,7 @@ export function StorageTab() {
           <h3 className="text-lg font-medium">Storage</h3>
           <p className="text-sm text-muted-foreground">Evidence storage backends — S3-compatible object storage and Google Drive</p>
         </div>
-        <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add S3 Configuration</Button>
+        {canCreate && <Button onClick={() => openModal()}><Plus className="mr-2 h-4 w-4" /> Add S3 Configuration</Button>}
       </div>
 
       {/* Storage Analytics */}
@@ -260,7 +267,9 @@ export function StorageTab() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2"><Server className="h-4 w-4" /> Disk Usage</CardTitle>
-                <CardDescription>Local artifact storage volume ({stats.disk_usage.path})</CardDescription>
+                <CardDescription>
+                  Local artifact storage volume{stats.disk_usage.path ? ` (${stats.disk_usage.path})` : ''}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
@@ -334,7 +343,7 @@ export function StorageTab() {
           </div>
           <div className="flex items-center gap-2">
             {driveStatus?.connected ? (
-              <>
+              canUpdate && <>
                 <Button variant="outline" size="sm" onClick={openFolderPicker}>
                   <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
                   {driveStatus.root_folder_id && driveStatus.root_folder_id !== 'root' ? 'Change Folder' : 'Set Folder'}
@@ -343,7 +352,7 @@ export function StorageTab() {
                   <Unlink className="mr-1.5 h-3.5 w-3.5" />Disconnect
                 </Button>
               </>
-            ) : (
+            ) : canCreate && (
               <Button
                 variant="outline" size="sm" onClick={handleDriveConnect}
                 disabled={driveLoading || (driveStatus?.configured === false)}
@@ -363,7 +372,7 @@ export function StorageTab() {
             <Database className="h-8 w-8 mb-3 opacity-50" />
             <p className="font-medium">No S3 storage configured</p>
             <p className="text-sm mt-1">Artifacts are stored locally. Add S3 for cloud storage.</p>
-            <Button variant="link" onClick={() => openModal()}>Configure S3</Button>
+            {canCreate && <Button variant="link" onClick={() => openModal()}>Configure S3</Button>}
           </CardContent>
         </Card>
       ) : (
@@ -391,11 +400,15 @@ export function StorageTab() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
-                    {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>
-                  <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                  {canUpdate && (
+                    <Button variant="outline" size="sm" onClick={() => handleTest(int.id)} disabled={testing === int.id || !int.is_enabled}>
+                      {testing === int.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}Test
+                    </Button>
+                  )}
+                  {canUpdate && <Button variant="outline" size="sm" onClick={() => openModal(int)}>Configure</Button>}
+                  {canDelete && (
+                    <Button variant="ghost" size="icon" aria-label={`Delete ${int.name}`} className="text-destructive hover:text-destructive/90" onClick={() => handleDelete(int.id)}><Trash2 className="h-4 w-4" /></Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -1,10 +1,10 @@
 "use client"
 
-import { useEffect, useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import {
     Dialog,
@@ -22,116 +22,103 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-    GlassTable,
-    TableEmpty,
-} from '@/components/ui/table'
-import { SkeletonTableRow } from '@/components/ui/skeleton'
-import { formatDateTime } from '@/lib/utils'
+import { DataTable, FilterSelect, type DataTableColumn } from '@/components/ui/data-table'
+import { useAllPages, usePaginatedQuery } from '@/hooks/use-paginated-query'
 import api from '@/lib/api'
-import type { CompromisedAccount, CompromisedHost } from '@/types'
+import { invalidate } from '@/lib/query-cache'
+import { notifyError } from '@/lib/errors'
+import { usePermission } from '@/components/auth/permission-gate'
+import type { CompromisedAccount, CompromisedHost, VersionedRow } from '@/types'
 import {
-    Plus,
     User,
     Key,
     Eye,
     EyeOff,
-    Shield,
-    Search,
-    Filter,
-    MoreHorizontal,
     Copy,
     Check,
     Crown,
+    Pencil,
     Trash2,
 } from 'lucide-react'
-import { useConfirm } from '@/components/ui/confirm-dialog'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
+import { FocusNotice, type IncidentTabBaseProps } from './table-helpers'
 
-interface CompromisedAccountsTabProps {
-    incidentId: string
+type AccountRow = VersionedRow<CompromisedAccount>
+
+const ACCOUNT_TYPES = [
+    { value: 'domain', label: 'Domain' },
+    { value: 'local', label: 'Local' },
+    { value: 'admin', label: 'Admin' },
+    { value: 'service', label: 'Service' },
+    { value: 'ftp', label: 'FTP/Web' },
+    { value: 'application', label: 'Application' },
+    { value: 'other', label: 'Other' },
+]
+
+const ACCOUNT_STATUSES = [
+    { value: 'active', label: 'Active' },
+    { value: 'disabled', label: 'Disabled' },
+    { value: 'reset', label: 'Reset' },
+    { value: 'deleted', label: 'Deleted' },
+]
+
+const EMPTY_FORM = {
+    datetime_seen: '',
+    account_name: '',
+    password: '',
+    clear_password: false,
+    host_id: '',
+    host_system: '',
+    sid: '',
+    account_type: 'domain',
+    domain: '',
+    is_privileged: false,
+    status: 'active',
+    notes: '',
 }
 
-export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabProps) {
+export function CompromisedAccountsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const confirm = useConfirm()
-    const [accounts, setAccounts] = useState<CompromisedAccount[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const [search, setSearch] = useState('')
-    const [typeFilter, setTypeFilter] = useState<string>('all')
+    const canReveal = usePermission('compromised_accounts:reveal')
+    const endpoint = `/incidents/${incidentId}/accounts`
+    const query = usePaginatedQuery<AccountRow>({
+        endpoint,
+        urlKey: 'accounts',
+        focus: focusRowId,
+        live: 'account',
+    })
     const [showModal, setShowModal] = useState(false)
-    const [editingAccount, setEditingAccount] = useState<CompromisedAccount | null>(null)
+    const [editingAccount, setEditingAccount] = useState<AccountRow | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
     const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({})
     const [revealingId, setRevealingId] = useState<string | null>(null)
     const [copiedId, setCopiedId] = useState<string | null>(null)
+    const [form, setForm] = useState(EMPTY_FORM)
 
-    const [form, setForm] = useState({
-        datetime_seen: '',
-        account_name: '',
-        password: '',
-        host_id: '',
-        host_system: '',
-        sid: '',
-        account_type: 'domain',
-        domain: '',
-        is_privileged: false,
-        status: 'active',
-        notes: '',
+    // Host correlation picker: every host, loaded only while the modal is open.
+    const hostsQuery = useAllPages<CompromisedHost>(`/incidents/${incidentId}/hosts`, {
+        live: 'host',
+        enabled: showModal,
     })
-    const [hosts, setHosts] = useState<CompromisedHost[]>([])
-
-    useEffect(() => {
-        if (incidentId) {
-            loadAccounts()
-        }
-    }, [incidentId])
-
-    const loadAccounts = async () => {
-        setIsLoading(true)
-        try {
-            const [accountsRes, hostsRes] = await Promise.all([
-                api.get<{ items: CompromisedAccount[] }>(`/incidents/${incidentId}/accounts`),
-                api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
-            ])
-            setAccounts(accountsRes.items)
-            setHosts(hostsRes.items)
-        } catch (error) {
-            console.error('Failed to load accounts:', error)
-        } finally {
-            setIsLoading(false)
-        }
-    }
+    const hosts = hostsQuery.items
 
     const resetForm = () => {
-        setForm({
-            datetime_seen: '',
-            account_name: '',
-            password: '',
-            host_id: '',
-            host_system: '',
-            sid: '',
-            account_type: 'domain',
-            domain: '',
-            is_privileged: false,
-            status: 'active',
-            notes: '',
-        })
+        setForm(EMPTY_FORM)
         setEditingAccount(null)
     }
 
-    const handleOpenModal = (account?: CompromisedAccount) => {
+    const handleOpenModal = (account?: AccountRow) => {
         if (account) {
             setEditingAccount(account)
             setForm({
-                datetime_seen: account.datetime_seen?.slice(0, 16) || '', // Format for datetime-local
+                datetime_seen: account.datetime_seen || '',
                 account_name: account.account_name,
-                password: account.password || '',
+                // Never pre-fill: the API only returns the masked value
+                password: '',
+                clear_password: false,
                 host_id: account.host_id || '',
                 host_system: account.host_system || '',
                 sid: account.sid || '',
@@ -149,14 +136,11 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
 
     const handleSubmit = async () => {
         if (!form.account_name) return
-        // datetime_seen is required for creation, but for editing we might keep existing
-
         setIsSubmitting(true)
         try {
-            const payload = {
+            const payload: Record<string, unknown> = {
                 datetime_seen: form.datetime_seen || undefined,
                 account_name: form.account_name,
-                password: form.password || null,
                 host_id: form.host_id || null,
                 host_system: form.host_system || null,
                 sid: form.sid || null,
@@ -166,279 +150,213 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                 status: form.status,
                 notes: form.notes || null,
             }
-            // Ensure datetime_seen is present for new accounts
-            if (!editingAccount && !payload.datetime_seen) {
-                // Fallback or validation error - simplified for now
+            // Only send a password the user actually typed; an empty field leaves
+            // the stored password unchanged. Clearing needs the explicit checkbox.
+            if (form.password) {
+                payload.password = form.password
+            }
+            if (editingAccount && form.clear_password) {
+                payload.clear_password = true
             }
 
             if (editingAccount) {
-                await api.put(`/incidents/${incidentId}/accounts/${editingAccount.id}`, payload)
+                await api.put(`${endpoint}/${editingAccount.id}`, payload, { ifMatch: editingAccount.version })
+                // A changed password must be revealed again.
+                setRevealedPasswords((prev) => {
+                    const next = { ...prev }
+                    delete next[editingAccount.id]
+                    return next
+                })
+                setShowPasswords((prev) => ({ ...prev, [editingAccount.id]: false }))
             } else {
-                await api.post(`/incidents/${incidentId}/accounts`, payload)
+                await api.post(endpoint, payload)
             }
 
             setShowModal(false)
             resetForm()
-            loadAccounts()
+            invalidate(endpoint)
         } catch (error) {
-            console.error('Failed to save account:', error)
+            notifyError(error, editingAccount ? 'save the account' : 'add the account')
         } finally {
             setIsSubmitting(false)
         }
     }
 
-    const handleDelete = async (id: string) => {
-        const confirmed = await confirm({
-            title: 'Delete Account',
-            description: 'Are you sure you want to delete this compromised account?',
-            confirmLabel: 'Delete',
-            variant: 'destructive',
-        })
-        if (!confirmed) return
+    const handleDelete = async (account: AccountRow) => {
+        if (!(await confirmDelete(confirm, 'account', account.account_name))) return
         try {
-            await api.delete(`/incidents/${incidentId}/accounts/${id}`)
-            loadAccounts()
+            await api.delete(`${endpoint}/${account.id}`, undefined, { ifMatch: account.version })
+            invalidate(endpoint)
         } catch (error) {
-            console.error('Failed to delete:', error)
+            notifyError(error, 'delete the account')
         }
     }
 
+    /** Reveal ONE account's password (single-account endpoint, one audit event). */
     const togglePassword = async (id: string) => {
         if (showPasswords[id]) {
-            // Hide password
             setShowPasswords((prev) => ({ ...prev, [id]: false }))
             return
         }
-        // If already revealed from API, just show it
-        if (revealedPasswords[id]) {
+        if (revealedPasswords[id] !== undefined) {
             setShowPasswords((prev) => ({ ...prev, [id]: true }))
             return
         }
-        // Fetch the decrypted password from the API
         setRevealingId(id)
         try {
-            const res = await api.get<{ items: CompromisedAccount[] }>(
-                `/incidents/${incidentId}/accounts?reveal=true`
-            )
-            const account = res.items.find((a) => a.id === id)
-            if (account?.password && account.password !== '********') {
-                setRevealedPasswords((prev) => ({ ...prev, [id]: account.password! }))
-                setShowPasswords((prev) => ({ ...prev, [id]: true }))
-            } else {
-                // User may not have permission to reveal
-                setShowPasswords((prev) => ({ ...prev, [id]: true }))
-            }
+            const account = await api.get<CompromisedAccount>(`${endpoint}/${id}?reveal=true`)
+            const password = account.password && account.password !== '********' ? account.password : ''
+            setRevealedPasswords((prev) => ({ ...prev, [id]: password }))
+            setShowPasswords((prev) => ({ ...prev, [id]: true }))
         } catch (error) {
-            console.error('Failed to reveal password:', error)
+            notifyError(error, 'reveal the password')
         } finally {
             setRevealingId(null)
         }
     }
 
-    const copyToClipboard = (text: string, id: string) => {
-        navigator.clipboard.writeText(text)
-        setCopiedId(id)
-        setTimeout(() => setCopiedId(null), 2000)
+    const copyToClipboard = async (text: string, id: string) => {
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopiedId(id)
+            setTimeout(() => setCopiedId(null), 2000)
+        } catch (error) {
+            notifyError(error, 'copy the password')
+        }
     }
 
-    const filteredAccounts = accounts.filter((account) => {
-        const matchesSearch =
-            account.account_name.toLowerCase().includes(search.toLowerCase()) ||
-            account.host_system?.toLowerCase().includes(search.toLowerCase()) ||
-            account.domain?.toLowerCase().includes(search.toLowerCase())
-        const matchesType = typeFilter === 'all' || account.account_type === typeFilter
-        return matchesSearch && matchesType
-    })
+    const renderPassword = (account: AccountRow) => {
+        if (!account.has_password) {
+            return <span className="text-muted-foreground text-xs italic">No password</span>
+        }
+        const shown = !!showPasswords[account.id]
+        const revealed = revealedPasswords[account.id]
+        return (
+            <div className="flex items-center gap-2">
+                {canReveal && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        aria-label={shown ? 'Hide password' : 'Reveal password'}
+                        onClick={() => void togglePassword(account.id)}
+                        disabled={revealingId === account.id}
+                    >
+                        {revealingId === account.id ? (
+                            <span className="h-3 w-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
+                        ) : shown ? (
+                            <EyeOff className="h-3 w-3" />
+                        ) : (
+                            <Eye className="h-3 w-3" />
+                        )}
+                    </Button>
+                )}
+                <span className="font-mono text-xs">
+                    {shown ? (revealed || '********') : '••••••••'}
+                </span>
+                {shown && !!revealed && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        aria-label="Copy password"
+                        onClick={() => void copyToClipboard(revealed, account.id)}
+                    >
+                        {copiedId === account.id ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                    </Button>
+                )}
+            </div>
+        )
+    }
+
+    const columns: DataTableColumn<AccountRow>[] = [
+        {
+            id: 'account_name', header: 'Account Name', sortKey: 'account_name', cell: (account) => (
+                <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${account.is_privileged
+                        ? 'bg-red-500/20 text-red-500'
+                        : 'bg-white/5 text-muted-foreground'
+                        }`}>
+                        {account.is_privileged ? <Crown className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                    </div>
+                    <div>
+                        <div className="font-medium text-foreground flex items-center gap-2">
+                            {account.domain && <span className="text-muted-foreground">{account.domain}\</span>}
+                            {account.account_name}
+                        </div>
+                        {account.sid && <div className="text-xs text-muted-foreground">{account.sid}</div>}
+                    </div>
+                </div>
+            ),
+        },
+        {
+            id: 'type', header: 'Type', hideBelow: 'md', cell: (account) => (
+                <Badge variant="outline" className="capitalize">{account.account_type}</Badge>
+            ),
+        },
+        {
+            id: 'host', header: 'Host System', hideBelow: 'md',
+            cell: (account) => account.host?.hostname || account.host_system || '-',
+        },
+        { id: 'password', header: 'Password', cell: renderPassword },
+        {
+            id: 'datetime_seen', header: 'Date Seen', sortKey: 'datetime_seen', hideBelow: 'sm',
+            className: 'text-muted-foreground text-sm whitespace-nowrap',
+            cell: (account) => <Timestamp value={account.datetime_seen} />,
+        },
+        {
+            id: 'status', header: 'Status', sortKey: 'status', cell: (account) => (
+                <Badge
+                    className={
+                        account.status === 'active'
+                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border-red-500/30'
+                            : 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+                    }
+                >
+                    {account.status}
+                </Badge>
+            ),
+        },
+    ]
 
     return (
         <div className="space-y-4">
-            {/* Filters & Action */}
-            <Card>
-                <CardContent className="p-4">
-                    <div className="flex flex-col lg:flex-row gap-4 justify-between">
-                        <div className="flex flex-col lg:flex-row gap-4 flex-1">
-                            <div className="relative flex-1">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Search accounts, hosts, domains..."
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    className="pl-10"
-                                    variant="glass"
-                                />
-                            </div>
-                            <Select value={typeFilter} onValueChange={setTypeFilter}>
-                                <SelectTrigger className="w-[180px]">
-                                    <Filter className="mr-2 h-4 w-4" />
-                                    <SelectValue placeholder="All Types" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Types</SelectItem>
-                                    <SelectItem value="domain">Domain</SelectItem>
-                                    <SelectItem value="local">Local</SelectItem>
-                                    <SelectItem value="service">Service</SelectItem>
-                                    <SelectItem value="admin">Admin</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <Button onClick={() => handleOpenModal()}>
-                            <Plus className="mr-2 h-4 w-4" />
-                            Add Account
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Accounts Table */}
-            <Card>
-                <CardContent className="p-0">
-                    <GlassTable className="border-0">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Account Name</TableHead>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead>Host System</TableHead>
-                                    <TableHead>Password</TableHead>
-                                    <TableHead>Date Seen</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead className="w-[80px]">Actions</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {isLoading ? (
-                                    <>
-                                        <SkeletonTableRow columns={7} />
-                                        <SkeletonTableRow columns={7} />
-                                        <SkeletonTableRow columns={7} />
-                                    </>
-                                ) : filteredAccounts.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={7}>
-                                            <TableEmpty
-                                                icon={<User className="h-8 w-8" />}
-                                                title={search || typeFilter !== 'all' ? 'No matching accounts' : 'No compromised accounts'}
-                                                description={
-                                                    search || typeFilter !== 'all'
-                                                        ? 'Try adjusting your search or filter criteria'
-                                                        : 'Record user and service accounts that have been compromised or are under investigation.'
-                                                }
-                                            />
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    filteredAccounts.map((account) => (
-                                        <TableRow key={account.id} className="group">
-                                            <TableCell>
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${account.is_privileged
-                                                        ? 'bg-red-500/20 text-red-500'
-                                                        : 'bg-black/5 dark:bg-white/5 text-muted-foreground'
-                                                        }`}>
-                                                        {account.is_privileged ? <Crown className="h-4 w-4" /> : <User className="h-4 w-4" />}
-                                                    </div>
-                                                    <div>
-                                                        <div className="font-medium text-foreground flex items-center gap-2">
-                                                            {account.domain && <span className="text-muted-foreground">{account.domain}\</span>}
-                                                            {account.account_name}
-                                                        </div>
-                                                        {account.sid && <div className="text-xs text-muted-foreground">{account.sid}</div>}
-                                                    </div>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge variant="outline" className="capitalize">
-                                                    {account.account_type}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell>
-                                                {account.host_id ? (
-                                                    // If correlated with a host object, display nicely
-                                                    hosts.find(h => h.id === account.host_id)?.hostname || account.host_system || '-'
-                                                ) : (
-                                                    account.host_system || '-'
-                                                )}
-                                            </TableCell>
-                                            <TableCell>
-                                                {account.has_password ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="h-6 w-6 p-0"
-                                                            onClick={() => togglePassword(account.id)}
-                                                            disabled={revealingId === account.id}
-                                                        >
-                                                            {revealingId === account.id ? (
-                                                                <span className="h-3 w-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
-                                                            ) : showPasswords[account.id] ? (
-                                                                <EyeOff className="h-3 w-3" />
-                                                            ) : (
-                                                                <Eye className="h-3 w-3" />
-                                                            )}
-                                                        </Button>
-                                                        <span className="font-mono text-xs">
-                                                            {showPasswords[account.id]
-                                                                ? (revealedPasswords[account.id] || account.password || '********')
-                                                                : '••••••••'}
-                                                        </span>
-                                                        {showPasswords[account.id] && revealedPasswords[account.id] && (
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                                onClick={() => copyToClipboard(revealedPasswords[account.id], account.id)}
-                                                            >
-                                                                {copiedId === account.id ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
-                                                            </Button>
-                                                        )}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-muted-foreground text-xs italic">No password</span>
-                                                )}
-                                            </TableCell>
-                                            <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
-                                                {formatDateTime(account.datetime_seen)}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    className={
-                                                        account.status === 'active'
-                                                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border-red-500/30'
-                                                            : 'bg-slate-500/20 text-slate-400 border-slate-500/30'
-                                                    }
-                                                >
-                                                    {account.status}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => handleOpenModal(account)}
-                                                        className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0"
-                                                    >
-                                                        <MoreHorizontal className="h-4 w-4" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => handleDelete(account.id)}
-                                                        className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </GlassTable>
-                </CardContent>
-            </Card>
+            <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="account" />
+            <DataTable
+                query={query}
+                columns={columns}
+                getRowId={(a) => a.id}
+                ariaLabel="Compromised accounts"
+                searchPlaceholder="Search accounts, hosts, domains..."
+                toolbar={
+                    <>
+                        <FilterSelect
+                            label="Type"
+                            allLabel="All types"
+                            value={query.state.filters.account_type}
+                            onChange={(v) => query.setFilter('account_type', v)}
+                            options={ACCOUNT_TYPES}
+                        />
+                        <FilterSelect
+                            label="Status"
+                            allLabel="All statuses"
+                            value={query.state.filters.status}
+                            onChange={(v) => query.setFilter('status', v)}
+                            options={ACCOUNT_STATUSES}
+                        />
+                    </>
+                }
+                primaryAction={{ label: 'Add Account', onSelect: () => handleOpenModal(), permission: 'accounts:create' }}
+                rowActions={(a) => [
+                    { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(a), permission: 'accounts:update' },
+                    { label: 'Delete', icon: Trash2, destructive: true, onSelect: () => void handleDelete(a), permission: 'accounts:delete' },
+                ]}
+                focusedRowId={focusRowId}
+                empty={{
+                    title: 'No compromised accounts',
+                    description: 'Record user and service accounts that have been compromised or are under investigation.',
+                }}
+            />
 
             {/* Add/Edit Account Modal */}
             <Dialog open={showModal} onOpenChange={setShowModal}>
@@ -453,11 +371,10 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="datetime">Date Seen *</Label>
-                                <Input
+                                <DateTimeInput
                                     id="datetime"
-                                    type="datetime-local"
                                     value={form.datetime_seen}
-                                    onChange={(e) => setForm({ ...form, datetime_seen: e.target.value })}
+                                    onChange={(iso) => setForm({ ...form, datetime_seen: iso ?? '' })}
                                     variant="glass"
                                 />
                             </div>
@@ -523,13 +440,28 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                 <Input
                                     id="password"
                                     type="text"
-                                    placeholder="Enter compromised password or hash..."
+                                    placeholder={editingAccount?.has_password
+                                        ? 'Leave blank to keep current password'
+                                        : 'Enter compromised password or hash...'}
                                     value={form.password}
-                                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                                    onChange={(e) => setForm({ ...form, password: e.target.value, clear_password: false })}
                                     className="pl-10"
                                     variant="glass"
                                 />
                             </div>
+                            {!!editingAccount?.has_password && (
+                                <div className="flex items-center gap-2">
+                                    <Checkbox
+                                        id="clear_password"
+                                        checked={form.clear_password}
+                                        disabled={!!form.password}
+                                        onCheckedChange={(checked) => setForm({ ...form, clear_password: checked === true })}
+                                    />
+                                    <Label htmlFor="clear_password" className="text-xs text-muted-foreground font-normal">
+                                        Clear stored password
+                                    </Label>
+                                </div>
+                            )}
                         </div>
 
                         <div className="space-y-2">
@@ -542,11 +474,13 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                 }}
                             >
                                 <SelectTrigger variant="glass">
-                                    <SelectValue placeholder="Select Host..." />
+                                    <SelectValue placeholder={hostsQuery.isLoading ? 'Loading hosts...' : 'Select Host...'} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {hosts.map(host => (
-                                        <SelectItem key={host.id} value={host.id}>{host.hostname} ({host.ip_address})</SelectItem>
+                                        <SelectItem key={host.id} value={host.id}>
+                                            {host.hostname}{host.ip_address ? ` (${host.ip_address})` : ''}
+                                        </SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
@@ -570,7 +504,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                     id="privileged"
                                     checked={form.is_privileged}
                                     onChange={(e) => setForm({ ...form, is_privileged: e.target.checked })}
-                                    className="w-4 h-4 rounded border-black/10 dark:border-white/20 bg-black/5 dark:bg-white/5"
+                                    className="w-4 h-4 rounded border-white/20 bg-white/5"
                                 />
                                 <Label htmlFor="privileged" className="text-sm font-normal cursor-pointer">
                                     Privileged / Admin Account

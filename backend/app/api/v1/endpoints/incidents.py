@@ -14,6 +14,7 @@ from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
 from app.services import realtime
+from app.services.incident_purge import register_purge_step
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
@@ -693,28 +694,10 @@ def revoke_incident_rooms(incident_id, reason):
     realtime.close_incident_rooms(incident_id)
 
 
-def _purge_access_revoked(incident=None, *args, incident_id=None, **ctx):
-    """incident_purge post-commit step `access_revoked`. The row is gone, so
-    only the primary key is used (from the instance identity, which survives
-    the delete + commit)."""
-    if incident_id is None and isinstance(incident, dict):    # a context dict
-        incident_id = incident.get('incident_id') or incident.get('id')
-    elif incident_id is None and incident is not None:
-        try:
-            from sqlalchemy import inspect as sa_inspect
-            identity = sa_inspect(incident).identity
-            incident_id = identity[0] if identity else None
-        except Exception:  # not a mapped instance: a context object
-            incident_id = getattr(incident, 'incident_id', None)
-    if incident_id is None:
-        logger.warning('realtime: purge step access_revoked got no incident id')
-        return
-    revoke_incident_rooms(incident_id, 'purged')
+def _purge_access_revoked(ctx):
+    """incident_purge post-commit step `access_revoked` (ctx: PurgeContext).
+    The row is gone by then, so only ``ctx.incident_id`` is used."""
+    revoke_incident_rooms(ctx.incident_id, 'purged')
 
 
-try:  # incident_purge ships with W1-EVD-CORE; without it there is nothing to hook.
-    from app.services.incident_purge import register_purge_step
-except ImportError:  # pragma: no cover - depends on merge order
-    register_purge_step = None
-if register_purge_step is not None:
-    register_purge_step('access_revoked', _purge_access_revoked, phase='post_commit')
+register_purge_step('access_revoked', _purge_access_revoked, phase='post_commit')

@@ -15,7 +15,8 @@ from app.api.v1 import api_bp
 from app import db
 from app.models import Artifact, Incident, Integration, ChainOfCustody, EvidenceItem
 from app.models.evidence import EVIDENCE_TYPES
-from app.middleware.rbac import require_incident_access, get_current_user, is_platform_admin
+from app.middleware.rbac import (require_any_permission, require_incident_access, get_current_user,
+                                 is_platform_admin)
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
 from app.services.storage_service import storage_service
@@ -705,8 +706,11 @@ def _get_drive_credentials(user):
 
 @api_bp.route('/storage/stats', methods=['GET'])
 @jwt_required()
+@require_any_permission(['integrations:read', 'organizations:manage'])
 def storage_stats():
-    """Return aggregate storage statistics across all stored (not deleted) artifacts."""
+    """Return aggregate storage statistics across all stored (not deleted) artifacts.
+
+    Same gate as the Settings > Storage tab (org storage totals are admin data)."""
     import shutil
     from sqlalchemy import func
 

@@ -615,6 +615,12 @@ def test_storage_stats_hides_the_server_path_from_org_admins(app, users, auth, m
     assert 'path' not in stats['disk_usage'] and str(tmp_path) not in str(stats)
 
 
+def test_storage_stats_requires_integrations_read(app, users, auth):
+    for role in ('Viewer', 'Analyst', 'Incident Responder'):
+        assert auth(users[role]).get('/api/v1/storage/stats').status_code == 403, role
+    assert auth(users['Administrator']).get('/api/v1/storage/stats').status_code == 200
+
+
 def test_download_and_verify_append_entries(app, db, users, auth, make_incident, fake_storage):
     inc = make_incident()
     client = auth(users['Administrator'])

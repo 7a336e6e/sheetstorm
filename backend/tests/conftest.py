@@ -85,8 +85,28 @@ def app():
         if app_pkg.redis_client is not None:
             app_pkg.redis_client.flushdb()
         _seed(db)
+        _fresh_g_per_request(application)
         yield application
         db.session.remove()
+
+
+def _fresh_g_per_request(application):
+    """Give every test request a clean ``g``, as production does.
+
+    In production each request pushes its own app context, so ``g`` starts
+    empty. Here the session-wide app context above stays pushed, Flask reuses
+    it for every test-client request, and ``g`` (e.g. ``g.incident`` read by
+    ``@audit_log``) would carry over from earlier requests and tests. The hook
+    runs first and drops everything set after the session context was built.
+    """
+    from flask import g
+    baseline = set(vars(g))
+
+    def reset_g():
+        for key in [k for k in vars(g) if k not in baseline]:
+            delattr(g, key)
+
+    application.before_request_funcs.setdefault(None, []).insert(0, reset_g)
 
 
 def _seed(db):

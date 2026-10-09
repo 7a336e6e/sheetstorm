@@ -48,3 +48,19 @@ def test_platform_admin(platform_admin, platform_org, app):
     assert platform_org.slug == app.config.get('PLATFORM_ORG_SLUG', 'default')
     assert platform_admin.organization_id == platform_org.id
     assert platform_admin.has_role('Administrator')
+
+
+def test_g_is_fresh_for_every_request(app, db, auth, fresh_user, make_incident):
+    """The session-wide app context is shared by every test request; g must
+    not carry an earlier request's incident into the next audit row."""
+    from flask import g
+    from app.models import AuditLog
+    admin = fresh_user('Administrator')
+    inc = make_incident(assign=[admin])
+    client = auth(admin)
+    assert client.get(f'/api/v1/incidents/{inc.id}').status_code == 200
+    assert getattr(g, 'incident', None) is not None  # left behind by the shared context
+    assert client.patch('/api/v1/auth/me/preferences', json={'display_timezone': 'utc'}).status_code == 200
+    row = (AuditLog.query.filter_by(action='update_preferences', user_id=admin.id)
+           .order_by(AuditLog.chain_seq.desc()).first())
+    assert row is not None and row.incident_id is None

@@ -104,10 +104,8 @@ def test_permanent_delete_audit_row_written_after_purge(app, db, users, auth, ar
     """@audit_log on the purge endpoint writes its row after the incident is
     gone: audit_logs has no FK to incidents any more (W1-AUD-BE), so the row
     keeps the dangling incident_id instead of failing."""
-    from flask import g
     from app.models import AuditLog, Incident
     iid = archived.id
-    g.pop('incident', None)  # the shared test app context may hold an earlier request's incident
     assert auth(users['Administrator']).delete(f'/api/v1/incidents/{iid}/permanent').status_code == 200
     db.session.expire_all()
     assert db.session.get(Incident, iid) is None

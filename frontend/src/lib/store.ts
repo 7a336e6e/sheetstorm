@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from './api'
+import { invalidate } from './query-cache'
 import { supabase, getSupabase } from './supabase'
 import { isTimeMode, type TimeMode } from './time'
 
@@ -271,38 +272,30 @@ export interface Incident {
   }
 }
 
+// The incident *lists* live in usePaginatedQuery / useAllPages (server
+// paging, filters, URL state). This store keeps the open incident and the
+// mutations; every mutation invalidates the cached lists so readers refetch.
+// `/incidents?` (with the `?`) matches list queries only, not the
+// per-incident tab endpoints under `/incidents/<id>/…`.
+function invalidateIncidentLists() {
+  invalidate('/incidents?')
+  invalidate('/incidents/archived')
+}
+
 interface IncidentState {
-  incidents: Incident[]
-  archivedIncidents: Incident[]
   currentIncident: Incident | null
   isLoading: boolean
-  fetchIncidents: (params?: Record<string, string>) => Promise<void>
   fetchIncident: (id: string) => Promise<void>
   createIncident: (data: Partial<Incident>) => Promise<Incident>
   updateIncident: (id: string, data: Partial<Incident>) => Promise<void>
   archiveIncident: (id: string) => Promise<void>
-  fetchArchivedIncidents: (params?: Record<string, string>) => Promise<void>
   unarchiveIncident: (id: string) => Promise<void>
   permanentDeleteIncident: (id: string) => Promise<void>
 }
 
-export const useIncidentStore = create<IncidentState>((set, get) => ({
-  incidents: [],
-  archivedIncidents: [],
+export const useIncidentStore = create<IncidentState>((set) => ({
   currentIncident: null,
   isLoading: false,
-
-  fetchIncidents: async (params?: Record<string, string>) => {
-    set({ isLoading: true })
-    try {
-      const query = params ? '?' + new URLSearchParams(params).toString() : ''
-      const response = await api.get<{ items: Incident[] }>(`/incidents${query}`)
-      set({ incidents: response.items, isLoading: false })
-    } catch (error) {
-      set({ isLoading: false })
-      throw error
-    }
-  },
 
   fetchIncident: async (id: string) => {
     set({ isLoading: true })
@@ -317,57 +310,36 @@ export const useIncidentStore = create<IncidentState>((set, get) => ({
 
   createIncident: async (data: Partial<Incident>) => {
     const incident = await api.post<Incident>('/incidents', data)
-    set((state) => ({ incidents: [incident, ...state.incidents] }))
+    invalidateIncidentLists()
     return incident
   },
 
   updateIncident: async (id: string, data: Partial<Incident>) => {
     const updated = await api.put<Incident>(`/incidents/${id}`, data)
     set((state) => ({
-      incidents: state.incidents.map((i) => (i.id === id ? updated : i)),
       currentIncident: state.currentIncident?.id === id ? updated : state.currentIncident,
     }))
-  },
-
-  deleteIncident: async (id: string) => {
-    await api.delete(`/incidents/${id}`)
-    set((state) => ({
-      incidents: state.incidents.filter((i) => i.id !== id),
-      currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
-    }))
+    invalidateIncidentLists()
   },
 
   archiveIncident: async (id: string) => {
     await api.post(`/incidents/${id}/archive`, {})
     set((state) => ({
-      incidents: state.incidents.filter((i) => i.id !== id),
       currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
     }))
-  },
-
-  fetchArchivedIncidents: async (params?: Record<string, string>) => {
-    set({ isLoading: true })
-    try {
-      const query = params ? '?' + new URLSearchParams(params).toString() : ''
-      const response = await api.get<{ items: Incident[]; total: number }>(`/incidents/archived${query}`)
-      set({ archivedIncidents: response.items, isLoading: false })
-    } catch (error) {
-      set({ isLoading: false })
-      throw error
-    }
+    invalidateIncidentLists()
   },
 
   unarchiveIncident: async (id: string) => {
     await api.post(`/incidents/${id}/unarchive`, {})
-    set((state) => ({
-      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
-    }))
+    invalidateIncidentLists()
   },
 
   permanentDeleteIncident: async (id: string) => {
     await api.delete(`/incidents/${id}/permanent`)
     set((state) => ({
-      archivedIncidents: state.archivedIncidents.filter((i) => i.id !== id),
+      currentIncident: state.currentIncident?.id === id ? null : state.currentIncident,
     }))
+    invalidateIncidentLists()
   },
 }))

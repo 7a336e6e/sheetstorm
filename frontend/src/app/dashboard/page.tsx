@@ -10,10 +10,11 @@ import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, StatCard } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge, SeverityBadge, StatusBadge } from '@/components/ui/badge'
-import { useIncidentStore, useAuthStore } from '@/lib/store'
+import { useAuthStore } from '@/lib/store'
+import { useAllPages } from '@/hooks/use-paginated-query'
 import { formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
-import type { TimelineEvent } from '@/types'
+import type { Incident, TimelineEvent } from '@/types'
 import { MitreTTPAnalytics } from '@/components/incidents/MitreTTPAnalytics'
 import {
   AlertTriangle,
@@ -58,12 +59,11 @@ const TLP_STYLES: Record<string, { bg: string; text: string; label: string }> = 
 
 export default function DashboardPage() {
   const { user } = useAuthStore()
-  const { incidents, fetchIncidents, isLoading } = useIncidentStore()
+  // Incident list for the analytics below (W1-LST: the store no longer holds
+  // lists). Bounded to the 1,000 most recent; W2-DFIR-B replaces this with
+  // the dashboard summary endpoint.
+  const { items: incidents, isLoading } = useAllPages<Incident>('/incidents', { maxPages: 5 })
   const [allTimelineEvents, setAllTimelineEvents] = useState<TimelineEvent[]>([])
-
-  useEffect(() => {
-    fetchIncidents()
-  }, [fetchIncidents])
 
   // Fetch timeline events for all incidents to aggregate TTP data
   useEffect(() => {

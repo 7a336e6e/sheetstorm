@@ -308,8 +308,7 @@ def _visible_incident_resource_types(user):
     user can read). Rows without a resource type are always visible."""
     from app.services import realtime
     scopes = set(realtime.scopes_for_user(user))
-    names = set(realtime.ENTITY_SCOPES) | set(getattr(realtime, '_RESOURCE_TYPE_ALIASES', {}))
-    return sorted(n for n in names if realtime.scope_for_resource_type(n) in scopes)
+    return sorted(n for n in realtime.known_resource_types() if realtime.scope_for_resource_type(n) in scopes)
 
 
 @api_bp.route('/activity-feed', methods=['GET'])

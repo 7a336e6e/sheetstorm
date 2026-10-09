@@ -193,6 +193,12 @@ def scope_for_resource_type(resource_type):
     return scope_for_entity(entity)
 
 
+def known_resource_types() -> set:
+    """Every name ``scope_for_resource_type`` can map: the registered entity
+    names plus the audit ``resource_type`` aliases."""
+    return set(ENTITY_SCOPES) | set(_RESOURCE_TYPE_ALIASES)
+
+
 def scopes_for_user(user):
     """Scopes whose read permission the user holds (always includes the base
     scope when the user can read incidents)."""
@@ -667,7 +673,7 @@ def _reset_local_state():
 
 __all__ = [
     'BASE_SCOPE', 'ENTITY_SCOPES', 'SCOPE_PERMS', 'register_entity', 'scope_for_entity',
-    'scope_for_resource_type', 'scopes_for_user', 'base_room', 'scope_room', 'all_rooms',
+    'scope_for_resource_type', 'known_resource_types', 'scopes_for_user', 'base_room', 'scope_room', 'all_rooms',
     'canonical_incident_id', 'get_emitter', 'set_emitter', 'build_envelope', 'emit_change',
     'emit_resync', 'emit_to_user', 'evict_user_from_incident', 'disconnect_user_sockets',
     'notify_permissions_changed', 'close_incident_rooms', 'register_sid', 'unregister_sid',

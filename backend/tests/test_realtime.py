@@ -223,6 +223,9 @@ def test_registry_and_resource_type_mapping():
                      'decision_privileged', 'response_action', 'review', 'improvement_action'):
         assert reserved in realtime.ENTITY_SCOPES
     assert realtime.scope_for_entity('decision_privileged') == 'decisions_privileged'
+    names = realtime.known_resource_types()
+    assert {'compromised_host', 'chain_of_custody', 'artifact', 'incident'} <= names
+    assert all(realtime.scope_for_resource_type(n) is not None for n in names)
     with pytest.raises(ValueError):
         realtime.register_entity('sneaky', 'artifacts', 'incidents:read')
 

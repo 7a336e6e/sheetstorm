@@ -141,6 +141,25 @@ CASES: dict[str, tuple] = {
                                   f"/incidents/{I}/artifacts/a1/custody/export", None, {"format": "json"}),
     "sheetstorm_download_artifact": ({"incident_id": I, "artifact_id": "a1"}, "GET",
                                      f"/incidents/{I}/artifacts/a1/download", None, None),
+    # evidence register / custody ledger
+    "sheetstorm_list_evidence": ({"incident_id": I, "custody_state": "checked_out", "search": "EV-0007",
+                                  "per_page": 500}, "GET", f"/incidents/{I}/evidence", None,
+                                 {"custody_state": "checked_out", "q": "EV-0007", "per_page": "200"}),
+    "sheetstorm_get_evidence": ({"incident_id": I, "evidence_id": "e1"}, "GET", f"/incidents/{I}/evidence/e1",
+                                None, None),
+    "sheetstorm_register_evidence": (
+        {"incident_id": I, "title": "SSD", "evidence_type": "disk_image", "seal_number": "S-1",
+         "hashes_json": '[{"algorithm": "sha256", "value": "ab", "source": "tool_reported"}]'},
+        "POST", f"/incidents/{I}/evidence",
+        {"title": "SSD", "evidence_type": "disk_image", "seal_number": "S-1",
+         "acquisition_hashes": [{"algorithm": "sha256", "value": "ab", "source": "tool_reported"}]}, None),
+    "sheetstorm_transfer_evidence": (
+        {"incident_id": I, "evidence_id": "e1", "mode": "transfer", "reason": "lab", "to_party_id": "p1",
+         "transfer_method": "courier", "attested": True},
+        "POST", f"/incidents/{I}/evidence/e1/custody/transfer",
+        {"reason": "lab", "to_party_id": "p1", "transfer_method": "courier"}, None),
+    "sheetstorm_verify_evidence_chain": ({"incident_id": I}, "GET", f"/incidents/{I}/evidence/custody/verify",
+                                         None, None),
     # attack graph
     "sheetstorm_get_attack_graph": ({"incident_id": I}, "GET", f"/incidents/{I}/attack-graph", None, None),
     "sheetstorm_auto_generate_graph": ({"incident_id": I}, "POST", f"/incidents/{I}/attack-graph/auto-generate",
@@ -279,7 +298,7 @@ def test_tool_names_are_unique(pkg):
 def _tool_fn(name: str):
     for mod in ("auth", "incidents", "assignments", "timeline", "tasks", "assets", "iocs", "artifacts",
                 "attack_graph", "case_notes", "playbooks", "reports", "admin", "threat_intel",
-                "knowledge_base", "advanced_analysis", "defang"):
+                "knowledge_base", "advanced_analysis", "defang", "evidence"):
         m = importlib.import_module(f"{PKG}.tools.{mod}")
         if hasattr(m, name):
             return getattr(m, name)

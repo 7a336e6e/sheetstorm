@@ -135,6 +135,7 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Assets | 10 | Hosts (triage / acquisition status and filters, bulk triage via `sheetstorm_bulk_update_hosts`), accounts (update, delete, single-account reveal) |
 | IOCs | 12 | Network IOCs, host IOCs, malware |
 | Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
+| Evidence | 5 | Evidence register (list, get, register items with tool-reported hashes), custody check-out / transfer / check-in (requires `attested=true`), ledger verification. Requests carry `X-SheetStorm-Client: mcp-bridge` |
 | Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |
 | Case Notes | 5 | Investigator notes |
 | Playbooks | 7 | Templates, activate, phase advance, run actions, tick tasks |
@@ -167,6 +168,7 @@ mcp-bridge/
         ├── assets.py
         ├── iocs.py
         ├── artifacts.py
+        ├── evidence.py
         ├── attack_graph.py
         ├── case_notes.py
         ├── reports.py

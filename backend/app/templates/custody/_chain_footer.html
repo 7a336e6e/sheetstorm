@@ -1,0 +1,15 @@
+{# Chain verdict block. #}
+<h2>Ledger verification</h2>
+<table class="meta">
+  <tr><td class="k">Chain verdict</td><td class="verdict{% if chain.status not in ('intact', 'intact_with_unsigned_legacy') %} bad{% endif %}">{{ chain.status_label }}</td></tr>
+  <tr><td class="k">Head</td><td>seq {{ chain.head_seq }} · <span class="mono">{{ chain.head_hash }}</span></td></tr>
+  <tr><td class="k">Chain start</td><td>{{ chain.genesis | replace('_', ' ') }} · {{ chain.length }} chained entries</td></tr>
+  <tr><td class="k">Signatures</td><td>{% for k, v in chain.signatures | dictsort %}{{ k | replace('_', ' ') }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
+  <tr><td class="k">Signing key id</td><td class="mono">{{ signing_key_id }}</td></tr>
+  <tr><td class="k">Generated</td><td>{{ generated_at }}{% if generated_by %} by {{ generated_by }}{% endif %}</td></tr>
+</table>
+{% if chain.breaks %}
+<p class="bad">Breaks:</p>
+<ul>{% for b in chain.breaks %}<li>{{ b.chain }} chain, seq {{ b.seq }}: {{ b.reason | replace('_', ' ') }}</li>{% endfor %}</ul>
+{% endif %}
+{% for n in chain.notes %}<p class="muted">{{ n }}</p>{% endfor %}

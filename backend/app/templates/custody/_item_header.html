@@ -1,0 +1,36 @@
+{# Item identification block (item_report.html, item_form.html). #}
+<table class="meta">
+  <tr><td class="k">Case</td><td>{{ incident.case }} · {{ incident.title }} (TLP:{{ incident.tlp | upper }})</td></tr>
+  <tr><td class="k">Evidence number</td><td><b>{{ item.evidence_number }}</b> ({{ item.display_id }}) · ID <span class="mono">{{ item.id }}</span></td></tr>
+  <tr><td class="k">Type / title</td><td>{{ item.evidence_type | replace('_', ' ') }} · {{ item.title }}</td></tr>
+  {% if item.description %}<tr><td class="k">Description</td><td>{{ item.description }}</td></tr>{% endif %}
+  <tr><td class="k">Make / model / serial</td><td>{{ item.make or '—' }} / {{ item.model or '—' }} / {{ item.serial_number or '—' }}</td></tr>
+  <tr><td class="k">Media / capacity</td><td>{{ item.media_type or '—' }} / {% if item.capacity_bytes is not none %}{{ item.capacity_bytes }} bytes{% else %}—{% endif %}</td></tr>
+  <tr><td class="k">Seal / bag</td><td>{{ item.seal_number or '—' }} / {{ item.bag_number or '—' }}</td></tr>
+  <tr><td class="k">Acquired</td><td>{{ item.acquired_at or '—' }} by {{ item.acquired_by or '—' }} from {{ item.acquired_from or '—' }}</td></tr>
+  <tr><td class="k">Method / tool</td><td>{{ item.acquisition_method or '—' }} / {{ item.acquisition_tool or '—' }}</td></tr>
+  {% if item.source_host %}<tr><td class="k">Source host</td><td>{{ item.source_host }}</td></tr>{% endif %}
+  {% if item.parent %}<tr><td class="k">Derived from</td><td>{{ item.parent }}</td></tr>{% endif %}
+  <tr><td class="k">Current state</td><td>{{ item.custody_state | replace('_', ' ') }} · {{ item.holder }}</td></tr>
+  <tr><td class="k">Legal hold</td><td>{{ 'YES' if item.under_legal_hold else 'no' }}{% if item.voided %} · <span class="bad">VOIDED</span>: {{ item.void_reason }}{% endif %}</td></tr>
+</table>
+
+<h2>Integrity values</h2>
+{% if item.hashes %}
+<table>
+  <thead><tr><th>Algorithm</th><th>Value</th><th>Source</th><th>Recorded</th></tr></thead>
+  <tbody>
+  {% for h in item.hashes %}
+    <tr{% if h.superseded %} class="muted"{% endif %}>
+      <td>{{ h.algorithm | upper }}{% if h.superseded %} (superseded){% endif %}</td>
+      <td class="mono">{{ h.value }}</td>
+      <td>{{ (h.source or '') | replace('_', ' ') }}</td>
+      <td>{{ h.recorded_at }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if item.weak_hashes_only %}<p class="notice">Only MD5/SHA-1 values are recorded for this item.</p>{% endif %}
+{% else %}
+<p class="muted">No integrity values recorded.</p>
+{% endif %}

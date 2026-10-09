@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chain of custody {{ item.display_id }}</title>
+{% set footer_label = item.evidence_number %}
+{% include 'custody/_styles.html' %}
+</head>
+<body>
+<h1>Chain of Custody Report</h1>
+<div class="sub">{{ item.display_id }} · {{ item.title }}</div>
+
+{% include 'custody/_item_header.html' %}
+
+<h2>Custody ledger ({{ entries | length }} entries)</h2>
+<table>
+  <thead>
+    <tr><th>#</th><th>Timestamp (UTC)</th><th>Action</th><th>By</th><th>Recipient / party</th><th>Method</th><th>Purpose / reason</th><th>Result</th><th>Signature</th><th>Link</th></tr>
+  </thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td>{{ e.seq if e.seq is not none else 'legacy' }}</td>
+      <td>{{ e.timestamp }}</td>
+      <td>{{ e.action | replace('_', ' ') }}</td>
+      <td>{{ e.performed_by }}</td>
+      <td>{{ e.recipient }}{% if e.acknowledged_by %}<br><span class="muted">acknowledged: {{ e.acknowledged_by }}</span>{% endif %}</td>
+      <td>{{ e.transfer_method | replace('_', ' ') }}</td>
+      <td>{{ e.purpose }}</td>
+      <td>{{ e.verification_result }}</td>
+      <td{% if e.signature_status == 'invalid' %} class="bad"{% endif %}>{{ e.signature_label }}</td>
+      <td{% if e.link_status not in ('ok', 'legacy') %} class="bad"{% endif %}>{{ e.link_status | replace('_', ' ') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% include 'custody/_chain_footer.html' %}
+</body>
+</html>

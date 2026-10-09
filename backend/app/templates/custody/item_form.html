@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chain of custody form {{ item.display_id }}</title>
+{% set footer_label = item.evidence_number %}
+{% include 'custody/_styles.html' %}
+</head>
+<body>
+<h1>Chain of Custody Form</h1>
+<div class="sub">{{ item.display_id }} · {{ item.title }}</div>
+
+{% include 'custody/_item_header.html' %}
+
+<h2>Custody transfers</h2>
+<table>
+  <thead>
+    <tr><th>Date / time (UTC)</th><th>Action</th><th>Released by</th><th>Received by</th><th>Purpose / reason</th><th>Method</th><th>Location</th><th>Acknowledgment</th><th>Signature</th></tr>
+  </thead>
+  <tbody>
+  {% for r in custody_rows %}
+    <tr>
+      <td>{{ r.timestamp }}</td>
+      <td>{{ r.action }}</td>
+      <td>{{ r.released_by }}</td>
+      <td>{{ r.received_by }}</td>
+      <td>{{ r.purpose }}</td>
+      <td>{{ r.method }}</td>
+      <td>{{ r.location }}</td>
+      <td>{{ r.acknowledged_by }}</td>
+      <td></td>
+    </tr>
+  {% endfor %}
+  {% for _ in blank_rows %}
+    <tr class="blank"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Verification history</h2>
+{% if verifications %}
+<table>
+  <thead><tr><th>Date / time (UTC)</th><th>By</th><th>Algorithm</th><th>Result</th><th>Method</th><th>Tool</th></tr></thead>
+  <tbody>
+  {% for v in verifications %}
+    <tr><td>{{ v.timestamp }}</td><td>{{ v.performed_by }}</td><td>{{ v.algorithm | upper }}</td>
+        <td{% if v.result == 'mismatch' %} class="bad"{% endif %}>{{ v.result }}</td><td>{{ v.method }}</td><td>{{ v.tool }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No verifications recorded.</p>
+{% endif %}
+
+{% include 'custody/_chain_footer.html' %}
+</body>
+</html>

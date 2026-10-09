@@ -164,6 +164,8 @@ class SheetStormClient:
             timeout=httpx.Timeout(config.http_timeout),
             follow_redirects=True,
             cookies=no_cookie_jar(),
+            # Informational: the backend snapshots it into custody ledger entries.
+            headers={"X-SheetStorm-Client": "mcp-server"},
         )
 
     @property

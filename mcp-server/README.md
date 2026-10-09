@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **119 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **124 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
@@ -144,6 +144,11 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 - **IOCs (12)**: network IOCs, host IOCs, malware
 - **Artifacts (7)**: list, upload (acquisition metadata), download, verify, chain of custody,
   `sheetstorm_set_legal_hold`, `sheetstorm_export_custody` (JSON)
+- **Evidence register (5)**: `sheetstorm_list_evidence`, `sheetstorm_get_evidence`, `sheetstorm_register_evidence`
+  (metadata-only items such as disk images or phones, tool-reported hashes), `sheetstorm_transfer_evidence`
+  (check-out / transfer / check-in; refuses unless `attested=true`, i.e. the user confirmed the physical
+  hand-over happened), `sheetstorm_verify_evidence_chain` (item or whole-incident ledger). Every request
+  sends `X-SheetStorm-Client: mcp-server`, which the backend records in the signed custody entry.
 - **Attack graph (10)**: graph, auto-generate, node/edge CRUD incl. `sheetstorm_update_graph_edge`, node/edge types
 - **Case notes (5)**, **Reports (3)**, **Threat intel (7)**, **Knowledge base (6)**,
   **Advanced analysis (4)**, **Defang (2)**

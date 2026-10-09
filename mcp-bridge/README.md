@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **119 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
+- **124 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
@@ -118,6 +118,7 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Assets | 9 | Hosts (triage / acquisition status), accounts (update, delete, single-account reveal) |
 | IOCs | 12 | Network IOCs, host IOCs, malware |
 | Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
+| Evidence | 5 | Evidence register (list, get, register items with tool-reported hashes), custody check-out / transfer / check-in (requires `attested=true`), ledger verification. Requests carry `X-SheetStorm-Client: mcp-bridge` |
 | Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |
 | Case Notes | 5 | Investigator notes |
 | Playbooks | 7 | Templates, activate, phase advance, run actions, tick tasks |
@@ -150,6 +151,7 @@ mcp-bridge/
         ├── assets.py
         ├── iocs.py
         ├── artifacts.py
+        ├── evidence.py
         ├── attack_graph.py
         ├── case_notes.py
         ├── reports.py

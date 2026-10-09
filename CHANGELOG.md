@@ -139,6 +139,45 @@
   password reset are row actions on the users page; deleting a user who
   authored records is refused and the UI suggests disabling instead.
 
+- **Self-registration moved to Settings → Security** (platform organization
+  only). The setting now lives in the organization security policy
+  (`provisioning.registration_enabled`); the upgrade copies each
+  organization's stored value there and removes the old settings key.
+  `PUT /organization` with `registration_enabled` is now a 400.
+- **Password policy is enforced on every password write** (register, change,
+  admin create and reset, invite accept, reset complete): symbol rule, 72-byte
+  cap, password history and an optional maximum age that forces a change at
+  the next sign-in. Violations are 400 with error code `password_policy` and a
+  `violations` list.
+- **Sign-ins are tracked sessions.** Logout revokes the session; "sign out
+  other devices" is available on the profile page. Token lifetimes are per
+  organization (defaults unchanged: 60-minute access, 7-day refresh).
+- **STIX and CSV exports need `incidents:export`** on top of the read
+  permission, so Analyst, Operator and Viewer lose STIX export. STIX bundles
+  carry TLP markings.
+- **Reports are immutable snapshots.** A generated PDF is stored with its
+  SHA-256 and every download re-checks it (`X-Report-SHA256`; an altered or
+  missing file is a 409 `integrity_error`). Reports issued before the upgrade
+  are re-rendered and marked `X-Report-Snapshot: legacy`.
+- **Attack-graph auto-generate merges by default.** It only adds missing nodes
+  and edges and never moves or deletes existing ones; `mode: "replace"` needs
+  `confirm: true`.
+- **Due-date reminders:** the first reminder job run on an existing install
+  sends one "overdue" notification per task or improvement action that is
+  already overdue.
+- **Playbook create/edit/delete needs `templates:manage`**, and holders can
+  edit any playbook of the organization. `GET /playbooks` also returns the
+  built-in playbooks (`is_builtin`).
+- **MISP push without an incident needs an explicit `tlp`.** `bulk-enrich`
+  and `correlate-iocs` validate their input and are audited.
+- **The Artifacts tab is now Evidence.** Old `?tab=artifacts` links still
+  open it.
+- **`responded_at` is stamped automatically** on the first assignment
+  (`POST /incidents/<id>/assignments`) or the first status change away from
+  open.
+- **CORS exposes `Content-Disposition`, `X-Report-SHA256`, `X-Report-Id` and
+  `ETag`** to an allowed cross-origin frontend.
+
 ### New
 
 - **Audit governance:** filtered audit search, CSV/JSONL export
@@ -210,6 +249,41 @@
   `API_KEY_TOKEN_TTL_MINUTES` (see
   `assets/docs/configuration.md`).
 
+- **Security policy (Settings → Security):** password rules, optional MFA
+  requirement with a grace period (API keys are exempt), per-organization
+  token lifetimes, email-domain allowlist and default role (applied to
+  registration, SSO, admin create and invites), tracked sessions with
+  per-user revoke. MCP: `sheetstorm_get_security_policy` (read-only).
+- **API keys UI:** Settings → API Keys (organization policy, every key,
+  service accounts) and Profile → My API keys; scope picker with presets,
+  secret shown once with an MCP setup hint, rotate with a grace period, revoke
+  with a reason.
+- **Record provenance and clock skew:** timeline events, IOCs and malware
+  record their source evidence or artifact, raw timestamp and zone, MACB and
+  tool; the UTC time is derived from the raw time minus the host clock skew.
+  Second-analyst verification, a clock-skew editor with a re-normalize
+  preview, and provenance parameters on the MCP timeline and IOC tools.
+- **Investigative questions and case templates:** questions and case
+  templates API, `case_template` on `POST /incidents`, custom fields; content:
+  37 core questions plus the `generic-intrusion` and `ransomware` templates
+  and playbooks. MCP: questions and case-template tools.
+- **Post-incident metrics:** `first_malicious_at` and `responded_at`
+  milestones, a response metrics card, Metrics and Improvements pages, a
+  Post-Incident Review tab, improvement actions and due-date reminders through
+  the jobs service (`send-due-reminders`). MCP: metrics and improvement-action
+  tools; `sheetstorm_update_incident` sets and clears the two new milestones.
+- **Exports and analysis:** header Export menu (per-entity CSV with the active
+  tab's filters, STIX), IOC correlation dialog, bulk enrich with the TLP gate,
+  graph regenerate dialog (merge or replace), report integrity badges, MISP
+  TLP select. MCP: `sheetstorm_export_csv`.
+- **Evidence tab:** register with paging, filters and live updates, chain
+  status badge; uploading a file registers an evidence item, and physical and
+  metadata-only items are supported. The drawer covers the custody timeline,
+  write-once hashes (supersede), verification, check out / check in /
+  transfer, acknowledge with receipt, dispose/void with typed confirmation and
+  legal hold. Exports are gated by `incidents:export`.
+- **MCP:** 138 tools in 21 modules (server and bridge).
+
 ### Other fixes
 
 - An update rejected with a 4xx (for example an unknown `host_id` on an IOC or
@@ -231,3 +305,4 @@
   the organization allows it) and tags the MISP event with the TLP.
 - The web client retries only idempotent requests (GET/HEAD/OPTIONS) on server
   or network errors.
+- STIX export escapes values inside STIX patterns (pattern injection).

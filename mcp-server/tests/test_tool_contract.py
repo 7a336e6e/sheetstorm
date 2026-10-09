@@ -188,7 +188,12 @@ CASES: dict[str, tuple] = {
     "sheetstorm_list_notifications": ({"unread_only": True}, "GET", "/notifications", None, {"unread_only": "true"}),
     "sheetstorm_mark_notification_read": ({"notification_id": "n1"}, "POST", "/notifications/n1/read", None, None),
     "sheetstorm_mark_all_notifications_read": ({}, "POST", "/notifications/read-all", None, None),
-    "sheetstorm_get_audit_logs": ({"action": "login"}, "GET", "/audit-logs", None, {"action": "login"}),
+    "sheetstorm_get_audit_logs": ({"action": "login", "event_type": "authentication", "status": "denied",
+                                   "ip": "10.0.0.0/8", "sort": "-created_at", "per_page": 500},
+                                  "GET", "/audit-logs", None,
+                                  {"action_contains": "login", "event_type": "authentication", "status": "denied",
+                                   "ip": "10.0.0.0/8", "sort": "-created_at", "per_page": "200"}),
+    "sheetstorm_get_system_status": ({}, "GET", "/admin/system-status", None, None),
     "sheetstorm_health_check": ({}, "GET", "/health", None, None),
     # threat intel
     "sheetstorm_virustotal_lookup": ({"lookup_type": "hash", "value": "abc"}, "POST",

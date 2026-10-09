@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Evidence register {{ incident.case }}</title>
+{% set page_size = 'A4 landscape' %}
+{% set footer_label = incident.case %}
+{% include 'custody/_styles.html' %}
+</head>
+<body>
+<h1>Evidence Register</h1>
+<div class="sub">{{ incident.case }} · {{ incident.title }} (TLP:{{ incident.tlp | upper }}) · {{ rows | length }} items</div>
+
+<table>
+  <thead>
+    <tr><th>EV#</th><th>Type</th><th>Title</th><th>Serial</th><th>Seal</th><th>State</th><th>Holder</th><th>Location</th><th>Primary hash</th><th>Acquired</th><th>Acquired by</th><th>Hold</th><th>Last verification</th><th>Chain</th><th>Voided</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr{% if r.voided == 'yes' %} class="muted"{% endif %}>
+      <td>{{ r.evidence_number }}</td>
+      <td>{{ r.type | replace('_', ' ') }}</td>
+      <td>{{ r.title }}</td>
+      <td>{{ r.serial_number }}</td>
+      <td>{{ r.seal_number }}</td>
+      <td>{{ r.custody_state | replace('_', ' ') }}</td>
+      <td>{{ r.holder }}</td>
+      <td>{{ r.storage_location }}</td>
+      <td class="mono">{{ r.primary_hash }}</td>
+      <td>{{ r.acquired_at_display }}</td>
+      <td>{{ r.acquired_by }}</td>
+      <td>{{ r.legal_hold }}</td>
+      <td{% if r.last_verification == 'mismatch' %} class="bad"{% endif %}>{{ r.last_verification }}</td>
+      <td{% if r.chain_status not in ('intact', 'intact_with_unsigned_legacy', '') %} class="bad"{% endif %}>{{ r.chain_status | replace('_', ' ') }}</td>
+      <td>{{ r.voided }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if entries is not none %}
+<h2>Incident custody ledger ({{ entries | length }} entries)</h2>
+<table>
+  <thead>
+    <tr><th>#</th><th>EV#</th><th>Timestamp (UTC)</th><th>Action</th><th>By</th><th>Recipient / party</th><th>Purpose / reason</th><th>Result</th><th>Signature</th><th>Link</th></tr>
+  </thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td>{{ e.incident_seq if e.incident_seq is not none else 'legacy' }}</td>
+      <td>{{ e.evidence_number }}</td>
+      <td>{{ e.timestamp }}</td>
+      <td>{{ e.action | replace('_', ' ') }}</td>
+      <td>{{ e.performed_by }}</td>
+      <td>{{ e.recipient }}</td>
+      <td>{{ e.purpose }}</td>
+      <td>{{ e.verification_result }}</td>
+      <td{% if e.signature_status == 'invalid' %} class="bad"{% endif %}>{{ e.signature_label }}</td>
+      <td{% if e.link_status not in ('ok', 'legacy') %} class="bad"{% endif %}>{{ e.link_status | replace('_', ' ') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% include 'custody/_chain_footer.html' %}
+</body>
+</html>

@@ -12,6 +12,7 @@ from app.api.v1.endpoints import timeline
 from app.api.v1.endpoints import compromised
 from app.api.v1.endpoints import iocs
 from app.api.v1.endpoints import artifacts
+from app.api.v1.endpoints import evidence
 from app.api.v1.endpoints import tasks
 from app.api.v1.endpoints import attack_graph
 from app.api.v1.endpoints import reports

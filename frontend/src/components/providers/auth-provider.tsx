@@ -20,25 +20,38 @@ export function useAuth() {
 }
 
 /**
- * Route-level authorization rules.
- * Maps route prefixes to required permissions or roles.
- * If the user lacks the required access, they are redirected to /dashboard.
+ * Route-level authorization rules: the user needs ANY of `anyOf`.
+ * Permissions only, never role names (there is no Administrator bypass).
+ * Cosmetic: every endpoint behind these pages enforces its own permission.
+ * The first matching prefix wins; a user lacking access goes to /dashboard.
  */
-const routeGuards: { path: string; permission?: string; roles?: string[] }[] = [
-  // Admin pages — only Administrators
-  { path: '/dashboard/admin/users', permission: 'users:manage' },
-  { path: '/dashboard/admin/roles', permission: 'users:manage' },
-  { path: '/dashboard/admin/teams', permission: 'users:manage' },
-  { path: '/dashboard/admin/security', roles: ['Administrator'] },
-  { path: '/dashboard/admin/settings', roles: ['Administrator'] },
-  { path: '/dashboard/admin/organization', roles: ['Administrator'] },
-  { path: '/dashboard/admin/sso', roles: ['Administrator'] },
-  { path: '/dashboard/activity', permission: 'audit_logs:read' },
-  // Reports — requires reports:read
-  { path: '/dashboard/reports', permission: 'reports:read' },
-  // Create incident — requires incidents:create
-  { path: '/dashboard/incidents/new', permission: 'incidents:create' },
+export interface RouteGuard {
+  path: string
+  anyOf: string[]
+}
+
+export const routeGuards: RouteGuard[] = [
+  { path: '/dashboard/admin/users', anyOf: ['users:create', 'users:update', 'users:manage'] },
+  { path: '/dashboard/admin/roles', anyOf: ['roles:manage', 'users:read'] },
+  { path: '/dashboard/admin/teams', anyOf: ['teams:create', 'teams:update', 'teams:delete'] },
+  { path: '/dashboard/admin/settings', anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'] },
+  { path: '/dashboard/admin/archived-incidents', anyOf: ['incidents:archive'] },
+  { path: '/dashboard/admin/overview', anyOf: ['organizations:manage'] },
+  { path: '/dashboard/admin/templates', anyOf: ['templates:manage'] },
+  { path: '/dashboard/activity', anyOf: ['audit_logs:read'] },
+  { path: '/dashboard/metrics', anyOf: ['metrics:read'] },
+  { path: '/dashboard/improvements', anyOf: ['improvements:read'] },
+  { path: '/dashboard/reports', anyOf: ['reports:read'] },
+  { path: '/dashboard/incidents/new', anyOf: ['incidents:create'] },
 ]
+
+/** Whether a user holding `permissions` may open `pathname` (true when no guard matches). */
+export function isRouteAllowed(pathname: string, permissions: readonly string[] | undefined): boolean {
+  const guard = routeGuards.find((g) => pathname === g.path || pathname.startsWith(g.path + '/'))
+  if (!guard) return true
+  const granted = permissions ?? []
+  return guard.anyOf.some((p) => granted.includes(p))
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading, checkAuth, user } = useAuthStore()
@@ -56,29 +69,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/register')) {
         router.push('/dashboard')
       } else if (isAuthenticated && user) {
-        // Check route-level authorization
-        for (const guard of routeGuards) {
-          if (pathname === guard.path || pathname.startsWith(guard.path + '/')) {
-            let authorized = true
-
-            if (guard.permission) {
-              authorized = user.permissions?.includes(guard.permission) ?? false
-            }
-            if (guard.roles && authorized) {
-              authorized = guard.roles.some(role => user.roles?.includes(role))
-            }
-
-            // Administrators always have access
-            if (user.roles?.includes('Administrator')) {
-              authorized = true
-            }
-
-            if (!authorized) {
-              router.replace('/dashboard')
-              return
-            }
-            break
-          }
+        if (!isRouteAllowed(pathname, user.permissions)) {
+          router.replace('/dashboard')
         }
       }
     }

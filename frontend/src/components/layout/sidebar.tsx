@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSocketEvent } from '@/hooks/use-socket'
 import { NotificationPanel } from '@/components/layout/NotificationPanel'
 
@@ -41,19 +41,29 @@ const navigation = [
   { name: 'Reports', href: '/dashboard/reports', icon: FileText },
 ]
 
-const adminNavigation = [
-  { name: 'Activity', href: '/dashboard/activity', icon: Activity },
-  { name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive },
-  { name: 'Users', href: '/dashboard/admin/users', icon: Users },
-  { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield },
-  { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound },
-  { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings },
+// Each admin item is shown to holders of ANY of `anyOf` (same sets as the
+// route guards in auth-provider.tsx). The Admin section renders when at least
+// one item is left. Permissions only, never role names.
+export const adminNavigation = [
+  { name: 'Activity', href: '/dashboard/activity', icon: Activity, anyOf: ['audit_logs:read'] },
+  { name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive, anyOf: ['incidents:archive'] },
+  { name: 'Users', href: '/dashboard/admin/users', icon: Users, anyOf: ['users:create', 'users:update', 'users:manage'] },
+  { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield, anyOf: ['roles:manage', 'users:read'] },
+  { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound, anyOf: ['teams:create', 'teams:update', 'teams:delete'] },
+  { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings, anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'] },
 ]
+
+/** Admin items a user holding `permissions` may see. */
+export function visibleAdminItems(permissions: readonly string[] | undefined) {
+  const granted = permissions ?? []
+  return adminNavigation.filter((item) => item.anyOf.some((p) => granted.includes(p)))
+}
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()
-  const { user, logout, hasRole, hasPermission } = useAuthStore()
-  const isAdmin = hasRole('Administrator')
+  const { user, logout, hasPermission } = useAuthStore()
+  const permissions = user?.permissions
+  const visibleAdminNavigation = useMemo(() => visibleAdminItems(permissions), [permissions])
   const [collapsed, setCollapsed] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifPanelOpen, setNotifPanelOpen] = useState(false)
@@ -143,7 +153,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           })}
         </div>
 
-        {isAdmin && (
+        {visibleAdminNavigation.length > 0 && (
           <div className="pt-4">
             {!collapsed && (
               <p className="px-3 mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -152,7 +162,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             )}
             {collapsed && <div className="border-t border-border my-2" />}
             <div className="space-y-1">
-              {adminNavigation.map((item) => {
+              {visibleAdminNavigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
                 return (
                   <Link

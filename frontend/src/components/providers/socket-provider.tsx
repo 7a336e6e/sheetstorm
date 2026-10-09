@@ -52,8 +52,22 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setStatus('connected')
     })
 
-    s.on('disconnect', () => {
+    // permissions_changed: the user's roles/permissions changed. Refetch
+    // /auth/me so nav, route guards and gates update; the server then drops
+    // this socket so rooms are recomputed, and we reconnect right away (a
+    // server-side disconnect is otherwise final in socket.io).
+    let reconnectAfterServerDisconnect = false
+    s.on('permissions_changed', () => {
+      reconnectAfterServerDisconnect = true
+      void useAuthStore.getState().refreshUser()
+    })
+
+    s.on('disconnect', (reason: string) => {
       setStatus('disconnected')
+      if (reason === 'io server disconnect' && reconnectAfterServerDisconnect) {
+        reconnectAfterServerDisconnect = false
+        s.connect()
+      }
     })
 
     s.on('connect_error', () => {

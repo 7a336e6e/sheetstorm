@@ -187,6 +187,12 @@
 
 ### New
 
+- **One-click DFIQ import:** platform administrators can import Google's DFIQ
+  investigative questions (Apache-2.0) from Admin → Case Templates. The server
+  downloads one pinned DFIQ commit from GitHub (or takes the same archive as an
+  upload on offline installs), refuses it unless its SHA-256 matches the value
+  pinned in code, parses it in memory with `yaml.safe_load`, and stores it in
+  the database, so it survives rebuilds and reaches every worker within 30 s.
 - **Admin-configurable rate limits:** every rate-limited route belongs to a
   named group; platform administrators can change limits, disable groups or turn
   rate limiting off from Settings → Security → Rate limiting, without a restart.

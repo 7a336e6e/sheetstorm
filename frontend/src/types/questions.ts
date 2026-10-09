@@ -241,3 +241,24 @@ export interface IncidentCaseTemplateRow {
   applied_by_user?: { id: string; name: string } | null
   result: Partial<CaseTemplateApplyResult>
 }
+
+/** `GET /questions/library/dfiq`: the DFIQ library imported into this instance. */
+export interface DfiqStatus {
+  imported: boolean
+  commit: string | null
+  sha256: string | null
+  method: 'download' | 'upload' | null
+  imported_at: string | null
+  imported_by: { id: string; name: string } | null
+  counts: { scenarios: number; facets: number; questions: number } | null
+  version: number
+  pinned_commit: string
+  pinned_sha256: string
+  download_url: string
+  source: string
+  license: string
+  attribution: string
+  /** DFIQ files baked into the image (they take precedence over an import). */
+  vendored_files: boolean
+  can_import: boolean
+}

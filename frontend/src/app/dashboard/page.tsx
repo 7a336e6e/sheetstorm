@@ -163,7 +163,7 @@ export default function DashboardPage() {
               value={analytics?.open || 0}
               description="Non-closed"
               icon={<Activity className="h-5 w-5" />}
-              trend={analytics?.open && analytics.open > 0 ? { value: analytics.open, label: 'active', positive: false } : undefined}
+              trend={analytics?.open && analytics.total ? { value: Math.round((analytics.open / analytics.total) * 100), label: 'active', positive: false } : undefined}
             />
             <StatCard
               title="Closed"

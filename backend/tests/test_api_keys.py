@@ -378,6 +378,24 @@ def test_password_change_restriction_applies_to_keys(app, db, make_user, key_org
     assert resp.status_code == 403 and resp.get_json()['error'] == 'password_change_required'
 
 
+def test_restricted_owner_can_exchange_but_token_stays_gated(app, db, make_user, key_org, make_api_key,
+                                                             key_client, exchange_key):
+    owner = make_user(key_org, roles=['Analyst'])
+    _, full = make_api_key(owner, ['incidents:read'])
+    owner.must_change_password = True
+    db.session.commit()
+    # /auth/token is on the account_state allowlist, even with a (restricted)
+    # bearer token on the request ...
+    stale = key_client(full)
+    resp = exchange_key(full, headers={'Authorization': f'Bearer {stale.token}'})
+    assert resp.status_code == 200, resp.get_json()
+    # ... but the issued token is still refused everywhere else.
+    kc = key_client(full)
+    for path in ('/api/v1/incidents', '/api/v1/users'):
+        r = kc.get(path)
+        assert r.status_code == 403 and r.get_json()['error'] == 'password_change_required', path
+
+
 # ── Interactive-only routes / websocket ─────────────────────────────
 
 @pytest.mark.parametrize('method, path', [
@@ -605,7 +623,7 @@ def test_schema_at_head(app, db):
 def test_migration_round_trip_with_data(scratch_db):
     import uuid
     from sqlalchemy import create_engine
-    from test_migrations import _current, _flask_db
+    from test_migrations import EXPECTED_HEAD, _current, _flask_db
 
     r = _flask_db(scratch_db, 'upgrade')
     assert r.returncode == 0, r.stderr[-3000:]
@@ -644,7 +662,7 @@ def test_migration_round_trip_with_data(scratch_db):
 
     r = _flask_db(scratch_db, 'upgrade')
     assert r.returncode == 0, r.stderr[-3000:]
-    assert _current(scratch_db) == 'add_api_keys'
+    assert _current(scratch_db) == EXPECTED_HEAD
 
 
 from test_migrations import scratch_db  # noqa: E402,F401  (fixture reuse)

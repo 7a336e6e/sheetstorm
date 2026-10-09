@@ -102,6 +102,15 @@ describe('Settings page', () => {
     expect(tabNames()).not.toContain('Security')
   })
 
+  it('lists Security (W3-SEC) and API Keys (W3-APIK-UI) together for an administrator', async () => {
+    mockSearch = 'tab=mitre-patterns'
+    signIn(['organizations:manage', 'api_keys:manage', 'incidents:read'])
+    await act(async () => {
+      render(<SettingsPage />)
+    })
+    expect(tabNames()).toEqual(['General', 'Security', 'MITRE Patterns', 'Audit Retention', 'API Keys'])
+  })
+
   it('falls back to the first visible tab when the requested one is hidden', async () => {
     mockSearch = 'tab=general'
     signIn(['incidents:read', 'integrations:read'])

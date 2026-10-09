@@ -50,6 +50,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import type { SecurityStatus, User } from '@/types'
+import { MyApiKeysCard } from '@/components/api-keys/MyApiKeysCard'
 
 type ProfileUser = User & { mfa_enabled?: boolean; security?: SecurityStatus }
 
@@ -593,6 +594,8 @@ export default function ProfilePage() {
       </div>
 
       {user && !enrollmentRequired && <SessionsCard userId={user.id} self />}
+
+      {!enrollmentRequired && <MyApiKeysCard />}
 
       {/* MFA Setup Dialog */}
       <Dialog open={showSetupDialog} onOpenChange={setShowSetupDialog}>

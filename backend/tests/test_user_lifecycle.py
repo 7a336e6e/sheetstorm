@@ -596,6 +596,25 @@ def test_delete_user_with_records_409_with_counts(app, db, auth, org_admin, make
     assert anon.status_code == 409
 
 
+def test_delete_user_referenced_by_evidence_item_409(app, db, auth, org_admin, make_user, make_incident):
+    """The evidence register's NO ACTION FKs to users (W1-EVD-CORE) are read
+    from the live schema: a user referenced only by an evidence item is not
+    hard-deleted."""
+    from app.models import EvidenceItem, User
+    org, admin = org_admin
+    holder = make_user(org, roles=['Analyst'])
+    inc = make_incident(org=org, creator=admin)
+    db.session.add(EvidenceItem(incident_id=inc.id, organization_id=org.id, evidence_type='disk_image',
+                                title='laptop', created_by=admin.id, acquired_by_user_id=holder.id,
+                                sequence_number=1))
+    db.session.commit()
+    resp = auth(admin).delete(f'/api/v1/users/{holder.id}')
+    body = resp.get_json()
+    assert resp.status_code == 409 and body['error'] == 'user_has_records'
+    assert body['counts'] == {'evidence_items': 1}
+    assert _fresh(db, User, holder.id) is not None
+
+
 def test_delete_user_without_records_hard_deletes(app, db, auth, org_admin, make_user):
     import sqlalchemy as sa
     from app.models import AuditLog, User
@@ -776,6 +795,13 @@ def test_user_activity_scopes(app, db, auth, org_admin, make_user, users):
     assert client.get(f'/api/v1/users/{victim.id}/activity?scope=x').status_code == 400
     analyst = make_user(org, roles=['Analyst'])
     assert auth(analyst).get(f'/api/v1/users/{victim.id}/activity').status_code == 403
+    # Built on audit_service.build_audit_query: its filters and deep-page cap apply.
+    filtered = client.get(f'/api/v1/users/{victim.id}/activity?scope=target&action=unlock_user').get_json()
+    assert {i['action'] for i in filtered['items']} == {'unlock_user'}
+    bad = client.get(f'/api/v1/users/{victim.id}/activity?event_type=bogus')
+    assert bad.status_code == 400 and bad.get_json()['error'] == 'invalid_filter'
+    deep = client.get(f'/api/v1/users/{victim.id}/activity?page=1001&per_page=100')
+    assert deep.status_code == 400 and deep.get_json()['error'] == 'invalid_filter'
 
 
 def test_user_stats_and_overview_counts(app, db, auth, org_admin, make_user):
@@ -791,6 +817,8 @@ def test_user_stats_and_overview_counts(app, db, auth, org_admin, make_user):
     assert stats['locked'] == 1 and stats['pending_invites'] == 1
     assert stats['by_role']['Administrator'] == 2
     assert overview_counts(org.id) == {'locked': 1, 'pending_invites': 1}
+    overview = auth(admin).get('/api/v1/admin/overview').get_json()['users']
+    assert overview['locked'] == 1 and overview['pending_invites'] == 1
 
 
 def test_users_list_lifecycle_filters(app, db, auth, org_admin, make_user):

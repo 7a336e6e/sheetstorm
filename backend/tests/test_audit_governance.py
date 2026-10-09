@@ -454,10 +454,21 @@ def test_legal_hold_requires_reason_and_emits_security_events(app, db, auth, mak
 # Purge (CLI) + verify (CLI)
 # ---------------------------------------------------------------------------
 
+def _evidence_item(db, inc, user, **fields):
+    """An evidence item inserted directly (no ledger entry, no audit row)."""
+    from app.models import EvidenceItem
+    item = EvidenceItem(incident_id=inc.id, organization_id=inc.organization_id, evidence_type='digital_file',
+                        title='a.bin', created_by=user.id, sequence_number=1, **fields)
+    db.session.add(item)
+    db.session.flush()
+    return item
+
+
 def _locked_artifact_incident(db, make_incident, org, user):
     from app.models import Artifact
     inc = make_incident(org=org, creator=user)
-    db.session.add(Artifact(incident_id=inc.id, filename='a.bin', original_filename='a.bin',
+    item = _evidence_item(db, inc, user)
+    db.session.add(Artifact(incident_id=inc.id, evidence_item_id=item.id, filename='a.bin', original_filename='a.bin',
                             storage_path='x/a.bin', file_size=1, md5='0' * 32, sha256='0' * 64,
                             sha512='0' * 128, uploaded_by=user.id, is_locked=True))
     db.session.commit()
@@ -513,6 +524,36 @@ def test_purge_deletes_old_prefix_and_keeps_chain_verifiable(app, db, make_user,
     assert verify_chain(org.id)['ok'] is True
     res = _cli(app, 'verify-audit-chain', '--org', org.slug)
     assert res.exit_code == 0, res.output
+
+
+def test_evidence_item_legal_hold_keeps_incident_audit_rows(app, db, make_user, make_incident, audit_org,
+                                                             write_audit_rows):
+    """Evidence-register holds (W1-EVD-CORE) are a held-incidents source of the
+    audit purge, like artifact holds: the held incident's old rows survive."""
+    from app.services.audit_service import held_incident_ids
+    org = audit_org(audit_retention_days=365)
+    user = _admin(make_user, org)
+    held = make_incident(org=org, creator=user)
+    item = _evidence_item(db, held, user, legal_hold_until=datetime.now(timezone.utc) + timedelta(days=30))
+    locked = make_incident(org=org, creator=user)
+    _evidence_item(db, locked, user, is_locked=True)
+    free = make_incident(org=org, creator=user)
+    _evidence_item(db, free, user, legal_hold_until=datetime.now(timezone.utc) - timedelta(days=1))  # expired
+    db.session.commit()
+    assert held_incident_ids(org.id) == {held.id, locked.id}
+
+    old = datetime.now(timezone.utc) - timedelta(days=400)
+    write_audit_rows(org, 1, at=old, action='old_free', incident_id=free.id)
+    write_audit_rows(org, 1, at=old, action='old_held', incident_id=held.id)
+    write_audit_rows(org, 1, at=old, action='old_after')
+    res = _cli(app, 'purge-audit-logs', '--org', org.slug)
+    assert res.exit_code == 0, res.output
+    actions = [r.action for r in _rows(db, org)]
+    assert 'old_free' not in actions and 'old_held' in actions and 'old_after' in actions
+
+    item.legal_hold_until = None
+    db.session.commit()
+    assert held_incident_ids(org.id) == {locked.id}
 
 
 def test_purge_skips_under_legal_hold(app, db, audit_org, write_audit_rows):
@@ -596,7 +637,7 @@ def test_overview_counts_and_last_admin_warning(app, auth, make_user, audit_org)
     users = body['users']
     assert users['total'] == 2 and users['active'] == 2 and users['disabled'] == 0
     assert users['by_role'] == {'Administrator': 1, 'Analyst': 1}
-    assert users['locked'] is None and users['pending_invites'] is None
+    assert users['locked'] == 0 and users['pending_invites'] == 0  # user_lifecycle.overview_counts
     assert users['admins_without_mfa'] == 1
     assert body['active_admin_count'] == 1 and body['last_admin_warning'] is True
 

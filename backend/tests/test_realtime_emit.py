@@ -64,6 +64,8 @@ class CommitCheckingEmitter:
             cols = 'version' if env['entity'] in VERSIONED else 'id'
             if env['entity'] == 'case_note':
                 cols += ', is_archived'
+            if env['entity'] == 'artifact':
+                cols += ', deleted_at'
             row = conn.execute(text(f'SELECT {cols} FROM {table} WHERE id = :i'), {'i': env['id']}).first()
             conn.rollback()
         return row
@@ -159,8 +161,15 @@ def make_playbook(c, inc):
 
 
 def make_artifact(db, inc, user):
-    from app.models import Artifact
-    a = Artifact(incident_id=inc.id, filename='f', original_filename='disk.e01', storage_path='none',
+    from app.models import Artifact, EvidenceItem
+    # Every artifact belongs to an evidence item (W1-EVD-CORE). Inserted
+    # directly (no ledger entry) so the factory itself emits nothing.
+    item = EvidenceItem(incident_id=inc.id, organization_id=inc.organization_id, evidence_type='digital_file',
+                        title='disk.e01', created_by=user.id, sequence_number=1)
+    db.session.add(item)
+    db.session.flush()
+    a = Artifact(incident_id=inc.id, evidence_item_id=item.id, filename='f', original_filename='disk.e01',
+                 storage_path='none',
                  storage_type='google_drive', file_size=1, md5='1' * 32, sha256='1' * 64,
                  sha512='1' * 128, uploaded_by=user.id)
     db.session.add(a)
@@ -250,6 +259,8 @@ def _check_committed(entity, op, env, committed):
     if op == 'deleted':
         if entity == 'case_note':   # soft delete
             assert committed is not None and committed.is_archived is True
+        elif entity == 'artifact':  # tombstone (W1-EVD-CORE): the row stays, deleted_at is set
+            assert committed is not None and committed.deleted_at is not None
         else:
             assert committed is None, f'{entity} still present when the delete was emitted'
         assert 'data' not in env
@@ -606,34 +617,34 @@ def test_incident_team_changes_evict_users_who_lost_access(rt, db, users, admin,
         realtime.presence_remove(str(inc.id), 'pid-out')
 
 
-def test_purge_step_revokes_and_closes_rooms(rt, db, make_incident):
-    """The post-commit step works on a deleted + committed instance (only
-    its identity is left)."""
-    from app.api.v1.endpoints.incidents import _purge_access_revoked
+def test_purge_runs_access_revoked_after_commit(rt, db, admin, make_incident, monkeypatch):
+    """DELETE /permanent -> incident_purge runs the `access_revoked` post-commit
+    step: the broadcast happens once the incident row is gone, then the rooms
+    are closed."""
     inc = make_incident()
     iid = str(inc.id)
-    db.session.delete(inc)
-    db.session.commit()
-    _purge_access_revoked(inc, None)
+    _ok(admin.post(f'{API}/incidents/{iid}/archive'))
+    rows_at_emit = []
+    real_emit = rt.emit
+
+    def emit(event, data=None, to=None, **kw):
+        if event == 'incident:access_revoked':
+            with db.engine.connect() as conn:
+                rows_at_emit.append(conn.execute(text('SELECT count(*) FROM incidents WHERE id = :i'),
+                                                 {'i': iid}).scalar())
+        real_emit(event, data, to, **kw)
+
+    monkeypatch.setattr(rt, 'emit', emit)
+    rt.clear()
+    _ok(admin.delete(f'{API}/incidents/{iid}/permanent'))
     assert ('incident:access_revoked', {'incident_id': iid, 'reason': 'purged'}, f'incident_{iid}') in rt.emits
+    assert rows_at_emit == [0]
     assert {c[1] for c in rt.server.calls if c[0] == 'close_room'} == set(realtime.all_rooms(iid))
 
 
-def test_purge_step_accepts_a_context_dict(rt):
-    from app.api.v1.endpoints.incidents import _purge_access_revoked
-    iid = str(uuid.uuid4())
-    _purge_access_revoked({'incident_id': iid})
-    assert ('incident:access_revoked', {'incident_id': iid, 'reason': 'purged'}, f'incident_{iid}') in rt.emits
-
-
-def test_purge_step_registered_when_purge_service_exists():
-    try:
-        from app.services import incident_purge
-    except ImportError:
-        pytest.skip('incident_purge (W1-EVD-CORE) not merged yet')
-    import app.api.v1.endpoints.incidents as incidents_ep
-    steps = repr(vars(incident_purge))
-    assert 'access_revoked' in steps and incidents_ep._purge_access_revoked.__name__ in steps
+def test_purge_step_registered():
+    from app.services import incident_purge
+    assert 'access_revoked' in incident_purge.registered_steps('post_commit')
 
 
 # ---------------------------------------------------------------------------
@@ -651,4 +662,5 @@ def test_no_legacy_socket_emits(name):
     with open(path, encoding='utf-8') as fh:
         src = fh.read()
     assert 'socketio.emit(' not in src
-    assert not re.search(r"'\w+_(added|updated|deleted|created)'", src)
+    # Legacy event names ('host_added', ...); the `include_deleted` query param is not one.
+    assert not re.search(r"'(?!include_deleted')\w+_(added|updated|deleted|created)'", src)

@@ -85,6 +85,34 @@ def test_seed_is_idempotent(app, monkeypatch, seed_env):
     assert count == 1
 
 
+def test_seed_rerun_never_touches_an_existing_admin(app, db, monkeypatch, seed_env):
+    """start.sh re-runs the seed on every start: on an existing install it must
+    leave the admin's password, flags and roles exactly as the operator set them."""
+    from app.models import User
+    seed, slug, email, announced, _ = seed_env
+    monkeypatch.delenv('ADMIN_PASSWORD', raising=False)
+    admin = seed._run_seed(org_slug=slug)
+    admin_id = admin.id
+    # The operator has since changed the password and cleared the flag.
+    admin.set_password('Operat0r-Own-Pass!')
+    admin.must_change_password = False
+    db.session.commit()
+    before = (admin.password_hash, admin.must_change_password, admin.is_active, sorted(admin.role_names))
+
+    for env_password in (None, 'An0ther-Valid-Pass!'):
+        if env_password:
+            monkeypatch.setenv('ADMIN_PASSWORD', env_password)
+        assert seed._run_seed(org_slug=slug) is None
+        db.session.expire_all()
+        u = db.session.get(User, admin_id)
+        after = (u.password_hash, u.must_change_password, u.is_active, sorted(u.role_names))
+        unchanged, own_password_works = after == before, u.check_password('Operat0r-Own-Pass!')
+        assert unchanged and own_password_works  # booleans only: no hash in a failure message
+    count = len(announced)
+    assert count == 1  # only the first (creating) run generated a password
+    assert User.query.filter_by(email=email).count() == 1
+
+
 def test_no_literal_default_admin_password():
     with open(os.path.join(BACKEND_DIR, 'app', 'seed.py'), encoding='utf-8') as fh:
         source = fh.read()

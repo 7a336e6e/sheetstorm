@@ -159,6 +159,49 @@ async def test_update_user_does_not_send_ignored_fields(client, backend):
     assert backend.find("PUT", "/users/u1")["json"] == {"name": "New"}
 
 
+async def test_delete_user_409_shows_counts(client, backend):
+    backend.set("DELETE", "/users/u1", {"error": "user_has_records", "message": "deactivate instead",
+                                        "counts": {"incidents": 2, "timeline_events": 5}, "hint": "deactivate"},
+                status=409)
+    out = await admin.sheetstorm_delete_user("u1")
+    assert out.startswith("✗") and "incidents: 2" in out and "timeline_events: 5" in out
+    assert "sheetstorm_disable_user" in out
+
+
+async def test_invite_user_resolves_role_and_builds_absolute_link(client, backend):
+    backend.set("GET", "/roles", {"items": [{"id": "r-analyst", "name": "Analyst"}]})
+    backend.set("POST", "/users/invites", {"id": "i1", "invite": {"id": "i1", "email": "a@b.c"},
+                                           "token": "tok", "accept_path": "/auth/invite#token=tok"}, status=201)
+    out = await admin.sheetstorm_invite_user("a@b.c", role="analyst", team_ids=["t1"])
+    body = backend.find("POST", "/users/invites")["json"]
+    assert body["role_ids"] == ["r-analyst"] and body["team_ids"] == ["t1"]
+    assert "http://backend.test/auth/invite#token=tok" in out
+
+
+async def test_invite_user_prefers_server_accept_url_and_rejects_unknown_role(client, backend):
+    backend.set("POST", "/users/invites", {"invite": {"id": "i1"}, "accept_path": "/auth/invite#token=t",
+                                           "accept_url": "https://ui.example/auth/invite#token=t"}, status=201)
+    assert "https://ui.example/auth/invite#token=t" in await admin.sheetstorm_invite_user("a@b.c")
+    out = await admin.sheetstorm_invite_user("a@b.c", role="nope")
+    assert out.startswith("✗ Unknown role")
+
+
+def test_reset_tools_not_exposed_over_mcp():
+    assert not hasattr(admin, "sheetstorm_reset_user_password")
+    assert not hasattr(admin, "sheetstorm_reset_user_mfa")
+    doc = admin.sheetstorm_invite_user.__doc__ or ""
+    assert "credential" in doc
+
+
+async def test_list_users_lifecycle_flags_and_status_validation(client, backend):
+    backend.set("GET", "/users", {"items": [{"id": "u1", "name": "A", "is_locked": True,
+                                             "locked_until": "2026-10-09T10:00:00Z",
+                                             "must_change_password": True}], "total": 1})
+    out = await admin.sheetstorm_list_users(status="locked")
+    assert "Locked until 2026-10-09T10:00:00Z" in out and "Must change password" in out
+    assert (await admin.sheetstorm_list_users(status="weird")).startswith("✗")
+
+
 # -- defang / d3fend --------------------------------------------------------------
 
 async def test_defang_parses_items_and_text(client, backend):

@@ -1,7 +1,7 @@
 // Admin guardrails (W1-RBAC-UI): permission-driven admin UI, role cloning,
 // grant ceilings, self/last-admin guards and the live permissions_changed refresh.
 // Run: npx playwright test e2e/admin-guardrails.spec.ts   (against a running stack)
-import type { Browser, BrowserContext } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { seedPassword } from './auth'
 import { api, apiLogin, expect, expectOk, test, useRole } from './fixtures'
 
@@ -33,6 +33,14 @@ async function createUser(
   const context = await browser.newContext()
   await apiLogin(context, email, password!)
   return { id, email, context }
+}
+
+/** The users page (W2-LIFE-UI: server-paged DataTable) narrowed to one email; returns its row. */
+async function userRow(page: Page, email: string) {
+  await page.goto(`/dashboard/admin/users?users.q=${encodeURIComponent(email)}`)
+  const row = page.getByRole('row').filter({ hasText: email })
+  await expect(row).toBeVisible()
+  return row
 }
 
 test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
@@ -91,10 +99,9 @@ test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
     const target = await createUser(browser, context, 'E2E Target Admin', ['Administrator'])
     try {
       const page = await deputy.context.newPage()
-      await page.goto('/dashboard/admin/users')
-      const row = page.getByRole('row').filter({ hasText: target.email })
-      await row.getByRole('button', { name: 'Open menu' }).click()
-      await page.getByRole('menuitem', { name: /edit/i }).click()
+      const row = await userRow(page, target.email)
+      await row.getByRole('button', { name: /actions for/i }).click()
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
       const dialog = page.getByRole('dialog')
       // The modal knows the target outranks the deputy.
       await expect(dialog.getByText("This user holds permissions you don't have")).toBeVisible()
@@ -108,9 +115,8 @@ test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
       // On a peer, the Administrator role is offered but disabled.
       const peer = await createUser(browser, context, 'E2E Peer', ['Viewer'])
       try {
-        await page.goto('/dashboard/admin/users')
-        await page.getByRole('row').filter({ hasText: peer.email }).getByRole('button', { name: 'Open menu' }).click()
-        await page.getByRole('menuitem', { name: /edit/i }).click()
+        await (await userRow(page, peer.email)).getByRole('button', { name: /actions for/i }).click()
+        await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
         await page.getByRole('combobox', { name: 'Add role' }).click()
         await expect(page.getByRole('option', { name: /Administrator \(exceeds your permissions\)/ })).toHaveAttribute(
           'aria-disabled',
@@ -143,9 +149,8 @@ test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
       const viewer = (await rolesByName(context)).get('Viewer')!
       await expectOk(await api.post(context, `/users/${admin.id}/roles`, { role_id: viewer.id }), 'add viewer')
       const page = await admin.context.newPage()
-      await page.goto('/dashboard/admin/users')
-      await page.getByRole('row').filter({ hasText: admin.email }).getByRole('button', { name: 'Open menu' }).click()
-      await page.getByRole('menuitem', { name: /edit/i }).click()
+      await (await userRow(page, admin.email)).getByRole('button', { name: /actions for/i }).click()
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
       const dialog = page.getByRole('dialog')
       await expect(dialog.getByRole('switch')).toHaveCount(0) // no self-disable
       await expect(dialog.getByLabel(/Reset Password/)).toHaveCount(0) // no self password reset

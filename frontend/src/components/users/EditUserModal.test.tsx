@@ -69,17 +69,24 @@ describe('EditUserModal', () => {
     expect(admin).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('hides the Active switch and password reset on your own account', async () => {
+  it('has no account-state controls (they are row actions) and never sends is_active / password', async () => {
     renderEdit({ ...target, id: 'u-deputy', name: 'Deputy' })
     await screen.findByText(/Your own account/)
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByLabelText(/Reset Password/)).toBeNull()
+    expect(screen.queryByText(/row actions/)).toBeNull() // not on yourself
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(putSpy).toHaveBeenCalled())
     const body = putSpy.mock.calls[0][1] as Record<string, unknown>
     expect(body).not.toHaveProperty('is_active')
     expect(body).not.toHaveProperty('password')
+  })
+
+  it('points to the row actions for someone else', async () => {
+    renderEdit(target)
+    expect(await screen.findByText(/are in this user's row actions/)).toBeInTheDocument()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
   it('locks the form for a user holding permissions you lack', async () => {
@@ -90,20 +97,27 @@ describe('EditUserModal', () => {
   })
 
   it('shows the server message for last_admin', async () => {
-    putSpy.mockImplementation(async () => {
+    const deleteSpy = jest.spyOn(api, 'delete').mockImplementation(async () => {
       throw new ApiError(409, 'This change would leave the organization without an administrator', {
         code: 'last_admin',
         details: { error: 'last_admin', message: 'This change would leave the organization without an administrator' },
       })
     })
+    jest.spyOn(api, 'get').mockImplementation((async (endpoint: string) => {
+      if (endpoint === '/roles') return { items: roles }
+      if (endpoint === '/teams') return { items: [] }
+      if (endpoint === '/permissions') return { groups: [], items: [] }
+      if (endpoint.endsWith('/roles'))
+        return { roles: [{ id: 'r-viewer', name: 'Viewer' }, { id: 'r-admin', name: 'Administrator' }] }
+      if (endpoint.startsWith('/users/')) return { ...target, permissions: targetPermissions }
+      throw new ApiError(404, 'not found')
+    }) as unknown as typeof api.get)
     renderEdit(target)
-    await screen.findByRole('switch')
-    fireEvent.click(screen.getByRole('switch'))
-    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove role Administrator' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Last administrator')
     expect(alert).toHaveTextContent('This change would leave the organization without an administrator')
-    expect(putSpy.mock.calls[0][1]).toMatchObject({ is_active: false })
+    expect(deleteSpy).toHaveBeenCalledWith('/users/u-target/roles/r-admin')
   })
 })
 

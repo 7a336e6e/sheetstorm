@@ -34,6 +34,11 @@ function PasswordCheck({ met, label }: { met: boolean; label: string }) {
   )
 }
 
+/** Muted notices for `/login?reason=…` (e.g. after the socket `session:revoked` event). */
+const LOGIN_NOTICES: Record<string, string> = {
+  session_revoked: 'Your session was ended by an administrator. Sign in again to continue.',
+}
+
 function LoginPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -51,6 +56,7 @@ function LoginPageInner() {
   }, [])
 
   const initialTab = searchParams.get('tab') === 'register' && registrationEnabled ? 'register' : 'login'
+  const notice = LOGIN_NOTICES[searchParams.get('reason') ?? '']
 
   // Login state
   const [isLoading, setIsLoading] = useState(false)
@@ -233,6 +239,12 @@ function LoginPageInner() {
             <SheetStormLogo size={32} />
             <span className="text-2xl font-bold">SheetStorm</span>
           </div>
+
+          {notice && (
+            <p role="status" className="rounded-md border border-white/10 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              {notice}
+            </p>
+          )}
 
           <Tabs defaultValue={initialTab} className="w-full">
             {registrationEnabled ? (

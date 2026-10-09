@@ -83,3 +83,46 @@ describe('route guards', () => {
     expect(replace).toHaveBeenCalledWith('/dashboard')
   })
 })
+
+describe('account restrictions (W2-LIFE-UI)', () => {
+  it('routes a 403 password_change_required to /auth/change-password', async () => {
+    const { default: api, ApiError } = await import('@/lib/api')
+    // jsdom has no Response: a minimal stand-in for what the client reads.
+    const fetchMock = jest.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'password_change_required', message: 'Change it' }),
+    }))
+    const realFetch = global.fetch
+    global.fetch = fetchMock as unknown as typeof fetch
+    try {
+      renderAt('/dashboard/incidents', user(['Viewer'], ['incidents:read']))
+      await expect(api.get('/incidents')).rejects.toBeInstanceOf(ApiError)
+      expect(replace).toHaveBeenCalledWith('/auth/change-password')
+    } finally {
+      global.fetch = realFetch
+    }
+  })
+
+  it('ignores codes without a route and unregisters on unmount', async () => {
+    const { default: api } = await import('@/lib/api')
+    const spy = jest.spyOn(api, 'setRestrictionHandler')
+    renderAt('/dashboard', user(['Viewer'], ['incidents:read']))
+    const handler = spy.mock.calls.find(([h]) => typeof h === 'function')?.[0] as (code: string) => void
+    handler('mfa_enrollment_required')
+    expect(replace).not.toHaveBeenCalled()
+    cleanup()
+    expect(spy).toHaveBeenLastCalledWith(null)
+    spy.mockRestore()
+  })
+
+  it('sends a user who must change their password to /auth/change-password', () => {
+    renderAt('/dashboard', { ...user(['Viewer'], ['incidents:read']), must_change_password: true } as User)
+    expect(replace).toHaveBeenCalledWith('/auth/change-password')
+  })
+
+  it('does not loop on the change-password page itself', () => {
+    renderAt('/auth/change-password', { ...user(['Viewer'], ['incidents:read']), must_change_password: true } as User)
+    expect(replace).not.toHaveBeenCalled()
+  })
+})

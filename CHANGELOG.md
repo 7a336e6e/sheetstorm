@@ -187,6 +187,24 @@
 
 ### New
 
+- **Decision & response-action log:** a "Decisions & Actions" incident tab
+  records decisions (D-NNN) and response actions (A-NNN) with lifecycle steps,
+  approvals/authorizations by name, and optional host/account state changes with
+  rollback. Every change is a hash-chained, signed revision (append-only in the
+  database). Privileged decisions need `decisions:read_privileged` and never
+  reach reports, AI or MCP. Export (CSV/JSON/PDF) needs `incidents:export`; full
+  PDF reports include a decision-log appendix. Five MCP tools (none can approve,
+  authorize or mark a decision privileged).
+- **Investigative questions UI:** an incident "Questions" tab (answer with
+  status and confidence, add from the library, apply a case template with a dry
+  run preview), progress and custom fields on the Overview, a case-template
+  picker on the new-incident form, built-in playbooks on the Playbook tab (the AI
+  summary action honours the AI TLP policy), and Admin → Case Templates
+  (clone built-ins, edit organization templates as checked JSON).
+- **RFC 3161 anchoring (optional):** with `TSA_URL` set, the incident custody
+  ledger head can be timestamped by a trusted timestamp authority
+  (`POST …/evidence/custody/anchor`); verification reports `anchor_status`, and
+  the incident bundle README explains offline `openssl ts -verify`. Off by default.
 - **Audit governance:** filtered audit search, CSV/JSONL export
   (`audit_logs:export`, capped by `AUDIT_EXPORT_MAX_ROWS`), retention and legal
   hold (`/admin/audit-settings`), chain integrity check

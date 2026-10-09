@@ -3,8 +3,18 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/store'
+import { toast } from '@/components/ui/use-toast'
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || ''
+
+/** Copy for `session:revoked` reasons (backend services/token_revocation.py). */
+const SESSION_REVOKED_COPY: Record<string, string> = {
+  disabled: 'Your account was disabled.',
+  deleted: 'Your account was removed.',
+  force_logout: 'An administrator signed you out.',
+  password_reset: 'Your password was reset. Sign in again.',
+  mfa_reset: 'Your MFA was reset. Sign in again.',
+}
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -60,6 +70,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     s.on('permissions_changed', () => {
       reconnectAfterServerDisconnect = true
       void useAuthStore.getState().refreshUser()
+    })
+
+    // session:revoked: every session of this user was revoked server-side
+    // (the sockets are dropped next). Sign out locally; AuthProvider routes to
+    // /login. The single handler for this event (W2-RT-FE / W2-LIFE-UI).
+    s.on('session:revoked', (data?: { reason?: string }) => {
+      reconnectAfterServerDisconnect = false
+      const reason = typeof data?.reason === 'string' ? data.reason : ''
+      toast({
+        title: 'Signed out',
+        description: SESSION_REVOKED_COPY[reason] ?? 'Your session was ended. Sign in again.',
+      })
+      void useAuthStore.getState().logout()
     })
 
     s.on('disconnect', (reason: string) => {

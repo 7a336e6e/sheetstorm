@@ -63,32 +63,3 @@ export function useSocketEmit(event?: string) {
 
   return emit
 }
-
-/**
- * Manage joining/leaving an incident room for real-time collaboration.
- *
- * @param incidentId - The incident UUID to join (null to skip)
- * @param userId - Current user's ID
- * @param userName - Current user's display name
- */
-export function useIncidentRoom(
-  incidentId: string | null,
-  userId: string | undefined,
-  userName: string | undefined
-) {
-  const { socket, isConnected } = useSocketContext()
-
-  useEffect(() => {
-    if (!socket || !isConnected || !incidentId || !userId) return
-
-    socket.emit('join_incident', {
-      incident_id: incidentId,
-      user_id: userId,
-      user_name: userName,
-    })
-
-    return () => {
-      socket.emit('leave_incident', { incident_id: incidentId })
-    }
-  }, [socket, isConnected, incidentId, userId, userName])
-}

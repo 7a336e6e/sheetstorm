@@ -192,6 +192,24 @@ export interface WriteOptions {
   signal?: AbortSignal
 }
 
+/**
+ * A versioned write (`ifMatch`) answered 409 `conflict`. A registered
+ * conflict handler (ConflictProvider) settles it: resolve with `retry(v)` to
+ * overwrite with the server's current version, or reject to give up.
+ */
+export interface ConflictRequest {
+  method: 'PUT' | 'PATCH' | 'DELETE'
+  endpoint: string
+  /** The body that was sent (undefined for most deletes). */
+  data: unknown
+  ifMatch: number
+  error: ApiError
+  /** Re-send the same write with `If-Match: <version>` (or none when undefined). */
+  retry: (version: number | undefined) => Promise<unknown>
+}
+
+export type ConflictHandler = (conflict: ConflictRequest) => Promise<unknown>
+
 export interface DownloadOptions {
   fallbackName: string
   method?: 'GET' | 'POST'
@@ -212,6 +230,7 @@ class ApiClient {
   private refreshPromise: Promise<boolean> | null = null
   private unauthorizedHandler: (() => void) | null = null
   private restrictionHandler: ((code: string) => void) | null = null
+  private conflictHandler: ConflictHandler | null = null
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl
@@ -235,6 +254,11 @@ class ApiClient {
   /** Called with the code when a request hits an account restriction (403). */
   setRestrictionHandler(handler: ((code: string) => void) | null) {
     this.restrictionHandler = handler
+  }
+
+  /** Settles 409 `conflict` answers to `put/patch/delete(..., {ifMatch})` (ConflictProvider). */
+  setConflictHandler(handler: ConflictHandler | null) {
+    this.conflictHandler = handler
   }
 
   /** Exchange the refresh cookie for a new access cookie. Deduplicated. */
@@ -393,16 +417,48 @@ class ApiClient {
     return this.request<T>(endpoint, this.writeInit('POST', data, opts))
   }
 
+  /** PUT/PATCH/DELETE; a versioned write's 409 `conflict` goes to the conflict handler. */
+  private async write<T>(
+    method: 'PUT' | 'PATCH' | 'DELETE',
+    endpoint: string,
+    data: unknown,
+    opts?: WriteOptions
+  ): Promise<T> {
+    try {
+      return await this.request<T>(endpoint, this.writeInit(method, data, opts))
+    } catch (err) {
+      const ifMatch = opts?.ifMatch
+      const handler = this.conflictHandler
+      if (
+        handler &&
+        typeof ifMatch === 'number' &&
+        isApiError(err) &&
+        err.status === 409 &&
+        err.code === 'conflict'
+      ) {
+        return (await handler({
+          method,
+          endpoint,
+          data,
+          ifMatch,
+          error: err,
+          retry: (version) => this.write<T>(method, endpoint, data, { ...opts, ifMatch: version }),
+        })) as T
+      }
+      throw err
+    }
+  }
+
   async put<T>(endpoint: string, data?: unknown, opts?: WriteOptions): Promise<T> {
-    return this.request<T>(endpoint, this.writeInit('PUT', data, opts))
+    return this.write<T>('PUT', endpoint, data, opts)
   }
 
   async patch<T>(endpoint: string, data?: unknown, opts?: WriteOptions): Promise<T> {
-    return this.request<T>(endpoint, this.writeInit('PATCH', data, opts))
+    return this.write<T>('PATCH', endpoint, data, opts)
   }
 
   async delete<T>(endpoint: string, data?: unknown, opts?: WriteOptions): Promise<T> {
-    return this.request<T>(endpoint, this.writeInit('DELETE', data, opts))
+    return this.write<T>('DELETE', endpoint, data, opts)
   }
 
   async uploadFile<T>(endpoint: string, fileOrFormData: File | FormData, data?: Record<string, string>): Promise<T> {

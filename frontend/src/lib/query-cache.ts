@@ -1,3 +1,6 @@
+import { mergeIntoList, type ListLike } from './realtime/merge'
+import type { EntityChange } from './realtime/types'
+
 /**
  * Tiny module-level cache for GET responses (no dependencies).
  *
@@ -19,6 +22,8 @@ export interface CacheEntry<T = unknown> {
 export type CacheEvent =
   | { type: 'invalidate'; prefix: string }
   | { type: 'set'; key: string }
+  /** One entry was dropped because a live change could not be placed in it. */
+  | { type: 'stale'; key: string }
 
 type Listener = (event: CacheEvent) => void
 
@@ -76,6 +81,16 @@ export function invalidate(prefix: string): void {
     if (matchesPrefix(key, prefix)) store.delete(key)
   })
   emit({ type: 'invalidate', prefix })
+}
+
+/**
+ * Drop every entry under `prefix` without notifying readers (access to an
+ * incident ended: nothing may refetch it, and nothing cached may be shown).
+ */
+export function forget(prefix: string): void {
+  Array.from(store.keys()).forEach((key) => {
+    if (matchesPrefix(key, prefix)) store.delete(key)
+  })
 }
 
 /** Drop everything without notifying (session change: login / logout). */
@@ -139,4 +154,37 @@ export function removeItem(prefix: string, id: string | number): void {
     store.set(key, { data: { ...entry.data, items, total }, ts: entry.ts })
     emit({ type: 'set', key })
   })
+}
+
+/**
+ * Drop one entry and tell its readers to refetch it (only readers showing
+ * exactly `key` react; others refetch when they next need it).
+ */
+export function markStale(key: string): void {
+  store.delete(key)
+  emit({ type: 'stale', key })
+}
+
+/**
+ * Merge a realtime change into every cached list whose path is exactly
+ * `path` (all pages, sorts and filters of that list). See
+ * `realtime/merge.mergeIntoList` for the placement rules. Entries the change
+ * can't be placed in are marked stale. Returns the number of entries touched.
+ */
+export function mergeChange(path: string, change: EntityChange): number {
+  const target = trimSlash(path)
+  let touched = 0
+  Array.from(store.entries()).forEach(([key, entry]) => {
+    if (trimSlash(pathOf(key)) !== target || !isList(entry.data)) return
+    const result = mergeIntoList(entry.data as ListLike, change, key)
+    if (result.stale) {
+      touched++
+      markStale(key)
+    } else if (result.changed) {
+      touched++
+      store.set(key, { data: result.data, ts: entry.ts })
+      emit({ type: 'set', key })
+    }
+  })
+  return touched
 }

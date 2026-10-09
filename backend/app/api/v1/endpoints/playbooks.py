@@ -8,6 +8,12 @@ from app.models import Playbook, IncidentPlaybook
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.playbook_service import PlaybookService
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
+
+# Scopes an auto/manual playbook action may change (refetched via resync).
+_ACTION_SCOPES = {'enrich_iocs': ['network_iocs'], 'generate_summary': ['incident'],
+                  'suggest_mitre': ['timeline'], 'create_task': ['tasks']}
 
 
 def _validate_definition(definition):
@@ -86,6 +92,9 @@ def _run_auto_actions(inst, incident, phase, user):
             # session back) cannot discard earlier run records.
             db.session.commit()
             runs.append({'key': act.get('key'), 'type': act.get('type'), 'result': result})
+    scopes = [s for r in runs for s in _ACTION_SCOPES.get(r['type'], [])]
+    if scopes:
+        realtime.emit_resync(incident.id, scopes, 'playbook_action')
     return runs
 
 
@@ -214,6 +223,7 @@ def activate_playbook(incident_id, playbook_id):
     db.session.commit()
 
     runs = _run_auto_actions(inst, incident, start_phase, user)
+    realtime.emit_change(incident.id, 'playbook', 'created', obj=inst)
     return jsonify({'incident_playbook': inst.to_dict(), 'actions_executed': runs}), 201
 
 
@@ -223,7 +233,7 @@ def activate_playbook(incident_id, playbook_id):
 def get_incident_playbook(incident_id):
     incident = g.incident
     inst = IncidentPlaybook.query.filter_by(incident_id=incident.id).order_by(IncidentPlaybook.created_at.desc()).first()
-    return jsonify({'incident_playbook': inst.to_dict() if inst else None}), 200
+    return set_etag(jsonify({'incident_playbook': inst.to_dict() if inst else None}), inst), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/playbook/advance', methods=['PUT'])
@@ -236,10 +246,16 @@ def advance_playbook(incident_id):
     inst = IncidentPlaybook.query.filter_by(incident_id=incident.id).order_by(IncidentPlaybook.created_at.desc()).first()
     if not inst:
         return jsonify({'error': 'not_found', 'message': 'No active playbook'}), 404
+    conflict = precondition(inst)
+    if conflict:
+        return conflict, conflict.status_code
     inst.current_phase = min((inst.current_phase or 1) + 1, 6)
-    db.session.commit()
+    conflict = commit_or_conflict(inst)
+    if conflict:
+        return conflict, conflict.status_code
     runs = _run_auto_actions(inst, incident, inst.current_phase, user)
-    return jsonify({'incident_playbook': inst.to_dict(), 'actions_executed': runs}), 200
+    realtime.emit_change(incident.id, 'playbook', 'updated', obj=inst)
+    return set_etag(jsonify({'incident_playbook': inst.to_dict(), 'actions_executed': runs}), inst), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/playbook/execute', methods=['POST'])
@@ -265,7 +281,10 @@ def execute_playbook_action(incident_id):
     result = PlaybookService.execute_action(incident, action, user)
     _record_run(inst, action, result)
     db.session.commit()
-    return jsonify({'result': result, 'incident_playbook': inst.to_dict()}), 200
+    realtime.emit_change(incident.id, 'playbook', 'updated', obj=inst)
+    if _ACTION_SCOPES.get(action.get('type')):
+        realtime.emit_resync(incident.id, _ACTION_SCOPES[action.get('type')], 'playbook_action')
+    return set_etag(jsonify({'result': result, 'incident_playbook': inst.to_dict()}), inst), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/playbook/task', methods=['PUT'])
@@ -283,10 +302,16 @@ def toggle_playbook_task(incident_id):
     inst = IncidentPlaybook.query.filter_by(incident_id=incident.id).order_by(IncidentPlaybook.created_at.desc()).first()
     if not inst:
         return jsonify({'error': 'not_found', 'message': 'No active playbook'}), 404
+    conflict = precondition(inst)
+    if conflict:
+        return conflict, conflict.status_code
     state = dict(inst.state or {})
     tasks = dict(state.get('tasks', {}))
     tasks[task_key] = bool(data.get('done', True))
     state['tasks'] = tasks
     inst.state = state
-    db.session.commit()
-    return jsonify({'incident_playbook': inst.to_dict()}), 200
+    conflict = commit_or_conflict(inst)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'playbook', 'updated', obj=inst)
+    return set_etag(jsonify({'incident_playbook': inst.to_dict()}), inst), 200

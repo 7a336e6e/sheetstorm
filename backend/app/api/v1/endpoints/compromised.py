@@ -3,13 +3,15 @@ from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import CompromisedHost, CompromisedAccount, TimelineEvent
 from app.models.compromised import PASSWORD_MASK
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
 from app.utils.pagination import list_response
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.validation import parse_datetime, check_choice, json_body
 
 
@@ -91,8 +93,7 @@ def create_compromised_host(incident_id):
 
     db.session.add(host)
     db.session.commit()
-
-    socketio.emit('host_added', host.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'host', 'created', obj=host)
 
     return jsonify(host.to_dict()), 201
 
@@ -109,6 +110,9 @@ def update_compromised_host(incident_id, host_id):
     host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
     if not host:
         return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+    conflict = precondition(host)
+    if conflict:
+        return conflict, conflict.status_code
 
     if 'hostname' in data and (not isinstance(data['hostname'], str) or not data['hostname'].strip()):
         return jsonify({'error': 'bad_request', 'message': 'hostname must be a non-empty string'}), 400
@@ -141,9 +145,12 @@ def update_compromised_host(incident_id, host_id):
     if 'last_seen' in data:
         host.last_seen = data['last_seen']
 
-    db.session.commit()
+    conflict = commit_or_conflict(host)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host', 'updated', obj=host)
 
-    return jsonify(host.to_dict()), 200
+    return set_etag(jsonify(host.to_dict()), host), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/hosts/<uuid:host_id>', methods=['DELETE'])
@@ -157,9 +164,15 @@ def delete_compromised_host(incident_id, host_id):
     host = CompromisedHost.query.filter_by(id=host_id, incident_id=incident.id).first()
     if not host:
         return jsonify({'error': 'not_found', 'message': 'Host not found'}), 404
+    conflict = precondition(host)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(host)
-    db.session.commit()
+    conflict = commit_or_conflict(host)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host', 'deleted', id=host_id)
 
     return jsonify({'message': 'Host deleted'}), 200
 
@@ -259,7 +272,8 @@ def get_compromised_account(incident_id, account_id):
             details={'account_name': account.account_name}
         )
 
-    return jsonify(account.to_dict(reveal_password=reveal, decrypted_password=decrypted_password)), 200
+    return set_etag(jsonify(account.to_dict(reveal_password=reveal, decrypted_password=decrypted_password)),
+                    account), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/accounts', methods=['POST'])
@@ -331,6 +345,7 @@ def create_compromised_account(incident_id):
 
     db.session.add(account)
     db.session.commit()
+    realtime.emit_change(incident.id, 'account', 'created', obj=account)
 
     return jsonify(account.to_dict()), 201
 
@@ -347,6 +362,9 @@ def update_compromised_account(incident_id, account_id):
     account = CompromisedAccount.query.filter_by(id=account_id, incident_id=incident.id).first()
     if not account:
         return jsonify({'error': 'not_found', 'message': 'Account not found'}), 404
+    conflict = precondition(account)
+    if conflict:
+        return conflict, conflict.status_code
 
     # Update fields
     for field in ['account_name', 'host_system', 'sid', 'account_type', 'domain',
@@ -389,9 +407,12 @@ def update_compromised_account(incident_id, account_id):
         except Exception:
             return jsonify({'error': 'server_error', 'message': 'Failed to encrypt password'}), 500
 
-    db.session.commit()
+    conflict = commit_or_conflict(account)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'account', 'updated', obj=account)
 
-    return jsonify(account.to_dict()), 200
+    return set_etag(jsonify(account.to_dict()), account), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/accounts/<uuid:account_id>', methods=['DELETE'])
@@ -405,8 +426,14 @@ def delete_compromised_account(incident_id, account_id):
     account = CompromisedAccount.query.filter_by(id=account_id, incident_id=incident.id).first()
     if not account:
         return jsonify({'error': 'not_found', 'message': 'Account not found'}), 404
+    conflict = precondition(account)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(account)
-    db.session.commit()
+    conflict = commit_or_conflict(account)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'account', 'deleted', id=account_id)
 
     return jsonify({'message': 'Account deleted'}), 200

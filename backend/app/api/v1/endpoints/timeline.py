@@ -4,11 +4,13 @@ from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
 
@@ -155,8 +157,9 @@ def create_timeline_event(incident_id):
         # Don't fail the request if graph update fails, just log it
         print(f"Error updating attack graph: {e}")
 
-    # Broadcast to incident room
-    socketio.emit('timeline_event_added', event.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'timeline_event', 'created', obj=event)
+    if event.host_id:  # the graph automation above may have added nodes/edges
+        realtime.emit_resync(incident.id, ['attack_graph'], 'timeline_automation')
 
     return jsonify(event.to_dict()), 201
 
@@ -173,6 +176,9 @@ def update_timeline_event(incident_id, event_id):
     event = TimelineEvent.query.filter_by(id=event_id, incident_id=incident.id).first()
     if not event:
         return jsonify({'error': 'not_found', 'message': 'Timeline event not found'}), 404
+    conflict = precondition(event)
+    if conflict:
+        return conflict, conflict.status_code
 
     # Validate before mutating anything.
     if 'timestamp' in data:
@@ -265,12 +271,12 @@ def update_timeline_event(incident_id, event_id):
     if 'extra_data' in data:
         event.extra_data = data['extra_data']
 
-    db.session.commit()
+    conflict = commit_or_conflict(event)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'timeline_event', 'updated', obj=event)
 
-    # Broadcast update
-    socketio.emit('timeline_event_updated', event.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(event.to_dict()), 200
+    return set_etag(jsonify(event.to_dict()), event), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline/<uuid:event_id>', methods=['DELETE'])
@@ -284,12 +290,15 @@ def delete_timeline_event(incident_id, event_id):
     event = TimelineEvent.query.filter_by(id=event_id, incident_id=incident.id).first()
     if not event:
         return jsonify({'error': 'not_found', 'message': 'Timeline event not found'}), 404
+    conflict = precondition(event)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(event)
-    db.session.commit()
-
-    # Broadcast deletion
-    socketio.emit('timeline_event_deleted', {'id': str(event_id)}, room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(event)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'timeline_event', 'deleted', id=event_id)
 
     return jsonify({'message': 'Timeline event deleted'}), 200
 
@@ -331,6 +340,8 @@ def mark_event_as_ioc(incident_id, event_id):
 
     db.session.add(ioc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'timeline_event', 'updated', obj=event)
+    realtime.emit_change(incident.id, 'host_ioc', 'created', obj=ioc)
 
     return jsonify({
         'message': 'Event marked as IOC',

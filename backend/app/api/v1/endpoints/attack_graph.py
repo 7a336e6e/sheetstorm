@@ -3,11 +3,13 @@ from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import AttackGraphNode, AttackGraphEdge, CompromisedHost, CompromisedAccount, TimelineEvent
 from app.models.ioc import NetworkIndicator
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/attack-graph', methods=['GET'])
@@ -63,6 +65,7 @@ def auto_generate_attack_graph(incident_id):
     incident = g.incident
 
     nodes_created, edges_created = GraphAutomationService.auto_generate(incident, user.id)
+    realtime.emit_resync(incident.id, ['attack_graph'], 'auto_generate')
 
     if not nodes_created and not edges_created:
         return jsonify({
@@ -140,7 +143,7 @@ def create_graph_node(incident_id):
     db.session.add(node)
     db.session.commit()
 
-    socketio.emit('graph_node_added', node.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'graph_node', 'created', obj=node)
 
     return jsonify(node.to_dict()), 201
 
@@ -157,6 +160,9 @@ def update_graph_node(incident_id, node_id):
     node = AttackGraphNode.query.filter_by(id=node_id, incident_id=incident.id).first()
     if not node:
         return jsonify({'error': 'not_found', 'message': 'Node not found'}), 404
+    conflict = precondition(node)
+    if conflict:
+        return conflict, conflict.status_code
 
     for field in ['node_type', 'label', 'compromised_host_id', 'compromised_account_id',
                   'position_x', 'position_y', 'is_initial_access', 'is_objective', 'extra_data']:
@@ -165,11 +171,12 @@ def update_graph_node(incident_id, node_id):
                 return jsonify({'error': 'bad_request', 'message': 'Invalid node_type'}), 400
             setattr(node, field, data[field])
 
-    db.session.commit()
+    conflict = commit_or_conflict(node)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'graph_node', 'updated', obj=node)
 
-    socketio.emit('graph_node_updated', node.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(node.to_dict()), 200
+    return set_etag(jsonify(node.to_dict()), node), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/attack-graph/nodes/<uuid:node_id>', methods=['DELETE'])
@@ -183,11 +190,15 @@ def delete_graph_node(incident_id, node_id):
     node = AttackGraphNode.query.filter_by(id=node_id, incident_id=incident.id).first()
     if not node:
         return jsonify({'error': 'not_found', 'message': 'Node not found'}), 404
+    conflict = precondition(node)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(node)
-    db.session.commit()
-
-    socketio.emit('graph_node_deleted', {'id': str(node_id)}, room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(node)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'graph_node', 'deleted', id=node_id)
 
     return jsonify({'message': 'Node deleted'}), 200
 
@@ -278,7 +289,7 @@ def create_graph_edge(incident_id):
     db.session.add(edge)
     db.session.commit()
 
-    socketio.emit('graph_edge_added', edge.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'graph_edge', 'created', obj=edge)
 
     return jsonify(edge.to_dict()), 201
 
@@ -295,6 +306,9 @@ def update_graph_edge(incident_id, edge_id):
     edge = AttackGraphEdge.query.filter_by(id=edge_id, incident_id=incident.id).first()
     if not edge:
         return jsonify({'error': 'not_found', 'message': 'Edge not found'}), 404
+    conflict = precondition(edge)
+    if conflict:
+        return conflict, conflict.status_code
 
     for field in ['edge_type', 'label', 'mitre_tactic', 'mitre_technique', 'description', 'extra_data']:
         if field in data:
@@ -305,11 +319,12 @@ def update_graph_edge(incident_id, edge_id):
     if 'timestamp' in data:
         edge.timestamp = parse_datetime(data['timestamp'], 'timestamp')
 
-    db.session.commit()
+    conflict = commit_or_conflict(edge)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'graph_edge', 'updated', obj=edge)
 
-    socketio.emit('graph_edge_updated', edge.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(edge.to_dict()), 200
+    return set_etag(jsonify(edge.to_dict()), edge), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/attack-graph/edges/<uuid:edge_id>', methods=['DELETE'])
@@ -323,11 +338,15 @@ def delete_graph_edge(incident_id, edge_id):
     edge = AttackGraphEdge.query.filter_by(id=edge_id, incident_id=incident.id).first()
     if not edge:
         return jsonify({'error': 'not_found', 'message': 'Edge not found'}), 404
+    conflict = precondition(edge)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(edge)
-    db.session.commit()
-
-    socketio.emit('graph_edge_deleted', {'id': str(edge_id)}, room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(edge)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'graph_edge', 'deleted', id=edge_id)
 
     return jsonify({'message': 'Edge deleted'}), 200
 

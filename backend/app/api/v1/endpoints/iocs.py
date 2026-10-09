@@ -8,6 +8,8 @@ from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool, Compro
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.utils.pagination import list_response
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 
 
 # =============================================================================
@@ -118,6 +120,7 @@ def create_network_ioc(incident_id):
     db.session.add(ioc)
 
     # Auto-create attack graph node for the IOC if requested
+    node = None
     if data.get('add_to_attack_graph', False):
         from app.models import AttackGraphNode
         node = AttackGraphNode(
@@ -130,6 +133,9 @@ def create_network_ioc(incident_id):
         db.session.add(node)
 
     db.session.commit()
+    realtime.emit_change(incident.id, 'network_ioc', 'created', obj=ioc)
+    if node is not None:
+        realtime.emit_change(incident.id, 'graph_node', 'created', obj=node)
 
     # IR-augmenting automation: enrich the indicator on creation. Opt-in (org
     # setting `auto_enrich_iocs`, else the IOC_AUTO_ENRICH global default —
@@ -179,6 +185,7 @@ def _enrich_network_ioc(app, ioc_id, value, organization_id):
                     ed['enrichment'] = enrichment
                     ioc.extra_data = ed
                     db.session.commit()
+                    realtime.emit_change(ioc.incident_id, 'network_ioc', 'updated', obj=ioc)
         except Exception:
             db.session.rollback()
             app.logger.warning('IOC auto-enrichment failed for %s', ioc_id, exc_info=True)
@@ -198,6 +205,9 @@ def update_network_ioc(incident_id, ioc_id):
     ioc = NetworkIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Network indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     for field in ['protocol', 'port', 'dns_ip', 'source_host', 'destination_host',
                   'direction', 'description', 'is_malicious', 'threat_intel_source', 'extra_data']:
@@ -238,9 +248,12 @@ def update_network_ioc(incident_id, ioc_id):
         else:
             ioc.destination_host_id = None
 
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'network_ioc', 'updated', obj=ioc)
 
-    return jsonify(ioc.to_dict()), 200
+    return set_etag(jsonify(ioc.to_dict()), ioc), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/network-iocs/<uuid:ioc_id>', methods=['DELETE'])
@@ -254,9 +267,15 @@ def delete_network_ioc(incident_id, ioc_id):
     ioc = NetworkIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Network indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(ioc)
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'network_ioc', 'deleted', id=ioc_id)
 
     return jsonify({'message': 'Network indicator deleted'}), 200
 
@@ -350,6 +369,7 @@ def create_host_ioc(incident_id):
 
     db.session.add(ioc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'host_ioc', 'created', obj=ioc)
 
     return jsonify(ioc.to_dict()), 201
 
@@ -366,6 +386,9 @@ def update_host_ioc(incident_id, ioc_id):
     ioc = HostBasedIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Host indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     for field in ['artifact_type', 'artifact_value', 'host', 'notes',
                   'is_malicious', 'remediated', 'extra_data']:
@@ -386,9 +409,12 @@ def update_host_ioc(incident_id, ioc_id):
         else:
             ioc.host_id = None
 
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host_ioc', 'updated', obj=ioc)
 
-    return jsonify(ioc.to_dict()), 200
+    return set_etag(jsonify(ioc.to_dict()), ioc), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/host-iocs/<uuid:ioc_id>', methods=['DELETE'])
@@ -402,9 +428,15 @@ def delete_host_ioc(incident_id, ioc_id):
     ioc = HostBasedIndicator.query.filter_by(id=ioc_id, incident_id=incident.id).first()
     if not ioc:
         return jsonify({'error': 'not_found', 'message': 'Host indicator not found'}), 404
+    conflict = precondition(ioc)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(ioc)
-    db.session.commit()
+    conflict = commit_or_conflict(ioc)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'host_ioc', 'deleted', id=ioc_id)
 
     return jsonify({'message': 'Host indicator deleted'}), 200
 
@@ -491,6 +523,7 @@ def create_malware(incident_id):
 
     db.session.add(malware)
     db.session.commit()
+    realtime.emit_change(incident.id, 'malware', 'created', obj=malware)
 
     return jsonify(malware.to_dict()), 201
 
@@ -507,6 +540,9 @@ def update_malware(incident_id, malware_id):
     malware = MalwareTool.query.filter_by(id=malware_id, incident_id=incident.id).first()
     if not malware:
         return jsonify({'error': 'not_found', 'message': 'Malware entry not found'}), 404
+    conflict = precondition(malware)
+    if conflict:
+        return conflict, conflict.status_code
 
     for field in ['file_name', 'file_path', 'md5', 'sha256', 'sha512', 'file_size',
                   'host', 'description', 'malware_family', 'threat_actor',
@@ -529,9 +565,12 @@ def update_malware(incident_id, malware_id):
         else:
             malware.host_id = None
 
-    db.session.commit()
+    conflict = commit_or_conflict(malware)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'malware', 'updated', obj=malware)
 
-    return jsonify(malware.to_dict()), 200
+    return set_etag(jsonify(malware.to_dict()), malware), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/malware/<uuid:malware_id>', methods=['DELETE'])
@@ -545,8 +584,14 @@ def delete_malware(incident_id, malware_id):
     malware = MalwareTool.query.filter_by(id=malware_id, incident_id=incident.id).first()
     if not malware:
         return jsonify({'error': 'not_found', 'message': 'Malware entry not found'}), 404
+    conflict = precondition(malware)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(malware)
-    db.session.commit()
+    conflict = commit_or_conflict(malware)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'malware', 'deleted', id=malware_id)
 
     return jsonify({'message': 'Malware entry deleted'}), 200

@@ -11,7 +11,7 @@
 #   mcp       mcp-server and mcp-bridge pytest suites in throwaway, digest-pinned
 #             python containers from their hash-locked requirements-dev.lock
 #   frontend  npm ci --ignore-scripts --legacy-peer-deps, tsc --noEmit, lint,
-#             jest --ci, next build
+#             jest --ci (TZ=UTC, deterministic time tests), next build
 #   e2e       playwright --grep @smoke against an ALREADY-RUNNING stack
 #             (E2E_BASE_URL; integrator only, never selected automatically)
 #   deps      fails when package.json / requirements*.txt changed vs the base
@@ -104,7 +104,7 @@ frontend_gates() {
   (cd frontend && npm ci --ignore-scripts --legacy-peer-deps --no-fund --no-audit) &&
   (cd frontend && npx tsc --noEmit) &&
   (cd frontend && npm run lint) &&
-  (cd frontend && npm test -- --ci) &&
+  (cd frontend && TZ=UTC npm test -- --ci) &&
   (cd frontend && npm run build)
 }
 

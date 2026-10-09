@@ -102,6 +102,12 @@ class User(BaseModel):
     deactivation_reason = Column(String(500))
     # ── end account lifecycle ────────────────────────────────────────────
 
+    # ── API keys (W2-APIK, migration add_api_keys) ────────────────────────
+    # Non-human owner of API keys: never logs in interactively (no password,
+    # synthetic svc-…@service.invalid email, auth_provider 'service').
+    is_service_account = Column(Boolean, nullable=False, default=False, server_default='false')
+    # ── end API keys ─────────────────────────────────────────────────────
+
     # Relationships
     organization = relationship('Organization', back_populates='users')
     user_roles = relationship('UserRole', back_populates='user', lazy='joined', cascade='all, delete-orphan', foreign_keys='UserRole.user_id')
@@ -140,16 +146,31 @@ class User(BaseModel):
         return [ur.role.name for ur in self.user_roles]
 
     @property
-    def permissions(self):
+    def role_permissions(self):
         """Union of the permissions of all roles (additive; no role restricts
-        another). Roles of a foreign org are ignored even if a stray
-        user_roles row exists."""
+        another), ignoring any API-key scope limit. Roles of a foreign org are
+        ignored even if a stray user_roles row exists. Use `permissions` for
+        authorization; this is for the owner's incident visibility and for
+        API-key scope validation."""
         perms = set()
         for user_role in self.user_roles:
             role = user_role.role
             if role and role.permissions and role.applies_to_org(self.organization_id):
                 perms.update(role.permissions)
         return sorted(perms)
+
+    @property
+    def permissions(self):
+        """Effective permissions: `role_permissions`, intersected with the
+        key's scopes when the current request is authenticated by an API-key
+        token for this user (evaluated per request, so an owner downgrade
+        shrinks the key at once and scopes can never grow)."""
+        perms = self.role_permissions
+        from app.utils.token_scopes import current_scope_limit
+        limit = current_scope_limit(self.id)
+        if limit is None:
+            return perms
+        return [p for p in perms if p in limit]
 
     def has_permission(self, permission):
         """Check if user has a specific permission."""
@@ -208,6 +229,7 @@ class User(BaseModel):
             'is_locked': self.is_locked,
             'locked_until': self.locked_until.isoformat() if self.is_locked else None,
             'must_change_password': bool(self.must_change_password),
+            'is_service_account': bool(self.is_service_account),
             'deactivated_at': self.deactivated_at.isoformat() if self.deactivated_at else None,
         }
         if include_permissions:

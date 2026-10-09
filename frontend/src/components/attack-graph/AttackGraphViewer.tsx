@@ -52,6 +52,7 @@ import { notifyError } from '@/lib/errors'
 import { useToast } from '@/components/ui/use-toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { usePermission } from '@/components/auth/permission-gate'
+import { useAllPages } from '@/hooks/use-paginated-query'
 import type {
   AttackGraphNode as BaseGraphNode,
   AttackGraphEdge as BaseGraphEdge,
@@ -257,8 +258,11 @@ function GraphInner({ incidentId }: { incidentId: string }) {
     description: '',
     timeline_event_id: '',
   })
-  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
-  const [isLoadingEvents, setIsLoadingEvents] = useState(false)
+  // Every timeline event (all pages) is linkable; loaded while the dialog is open.
+  const { items: timelineEvents, isLoading: isLoadingEvents } = useAllPages<TimelineEvent>(
+    `/incidents/${incidentId}/timeline`,
+    { enabled: isEdgeModalOpen, live: 'timeline_event' }
+  )
 
   // Manual Node Creation
   const [isAddNodeModalOpen, setIsAddNodeModalOpen] = useState(false)
@@ -492,7 +496,6 @@ function GraphInner({ incidentId }: { incidentId: string }) {
       setIsEdgeModalOpen(false)
       setSourceNodeId(null)
       setEdgeFormData({ targetId: '', type: 'lateral_movement', label: '', description: '', timeline_event_id: '' })
-      setTimelineEvents([])
       fetchGraph()
     } catch (error) {
       notifyError(error, 'create the connection')
@@ -511,12 +514,6 @@ function GraphInner({ incidentId }: { incidentId: string }) {
             return
           }
           setEdgeFormData((prev) => ({ ...prev, targetId: node.id }))
-          // Fetch timeline events for the incident so user can select one
-          setIsLoadingEvents(true)
-          api.get<{ items: TimelineEvent[] }>(`/incidents/${incidentId}/timeline`)
-            .then((res) => setTimelineEvents(res.items || []))
-            .catch(() => setTimelineEvents([]))
-            .finally(() => setIsLoadingEvents(false))
           setIsEdgeModalOpen(true)
         }
       } else {
@@ -784,7 +781,6 @@ function GraphInner({ incidentId }: { incidentId: string }) {
           setIsEdgeModalOpen(open)
           if (!open) {
             setSourceNodeId(null)
-            setTimelineEvents([])
           }
         }}
       >

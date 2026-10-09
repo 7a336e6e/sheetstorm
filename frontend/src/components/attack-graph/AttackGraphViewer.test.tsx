@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { mockApi, renderTab, resetTabTest, setRole } from '@/components/incidents/test-utils'
+import { getCalls, mockApi, renderTab, resetTabTest, setRole } from '@/components/incidents/test-utils'
 import { AttackGraphViewer, graphAbilities, isManualNode } from './AttackGraphViewer'
 
 beforeEach(() => resetTabTest())
@@ -104,5 +104,37 @@ describe('AttackGraphViewer gating', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(api.post).not.toHaveBeenCalled()
+  })
+})
+
+describe('AttackGraphViewer draw-edge dialog', () => {
+  it('offers timeline events from every page, not just the first', async () => {
+    setRole('responder')
+    const event = (id: string, activity: string) => ({ id, incident_id: 'i1', timestamp: '2026-01-01T00:00:00Z', activity })
+    const api = mockApi({
+      '/incidents/i1/attack-graph': { nodes: [autoNode, manualNode], edges: [] },
+      '/incidents/i1/timeline': (endpoint: string) => {
+        const page = Number(new URL(endpoint, 'http://x').searchParams.get('page') || 1)
+        const items = page === 1 ? [event('e1', 'first page logon')] : [event('e2', 'second page beacon')]
+        return { items, total: 2, page, per_page: 1, pages: 2 }
+      },
+    })
+    const { container } = renderTab(<AttackGraphViewer incidentId="i1" />)
+    await screen.findByTitle('Zoom In')
+    expect(getCalls(api.get).some((c) => c.startsWith('/incidents/i1/timeline'))).toBe(false)
+
+    fireEvent.click(screen.getByTitle('Draw Connection'))
+    await waitFor(() => expect(container.querySelector('.react-flow__node[data-id="n2"]')).not.toBeNull())
+    fireEvent.click(container.querySelector('.react-flow__node[data-id="n1"]') as Element)
+    fireEvent.click(container.querySelector('.react-flow__node[data-id="n2"]') as Element)
+
+    await screen.findByRole('dialog')
+    await waitFor(() => {
+      const pages = getCalls(api.get)
+        .filter((c) => c.startsWith('/incidents/i1/timeline'))
+        .map((c) => new URL(c, 'http://x').searchParams.get('page'))
+      expect(pages).toEqual(expect.arrayContaining(['1', '2']))
+    })
+    await waitFor(() => expect(screen.queryByText('Loading events...')).toBeNull())
   })
 })

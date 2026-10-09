@@ -101,11 +101,15 @@ def _auth_cookies(resp, access_token=None, refresh_token=None):
 
 
 def _is_registration_enabled() -> bool:
-    """Check if registration is enabled in the default organization settings."""
+    """Whether self-registration / first SSO sign-in may create accounts.
+
+    Closed unless the default organization explicitly enables it (fresh
+    installs are closed; the admin_guardrails_rbac migration kept existing
+    installs open)."""
     org = Organization.query.filter_by(slug='default').first()
     if not org or not org.settings:
-        return True  # Default: registration is enabled
-    return org.settings.get('registration_enabled', True)
+        return False
+    return org.settings.get('registration_enabled', False) is True
 
 
 @api_bp.route('/auth/registration-status', methods=['GET'])
@@ -153,7 +157,7 @@ def register():
     db.session.flush()
 
     # Assign default Viewer role
-    viewer_role = Role.query.filter_by(name='Viewer').first()
+    viewer_role = Role.resolve('Viewer', org.id)
     if viewer_role:
         user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
         db.session.add(user_role)
@@ -445,7 +449,7 @@ def supabase_auth():
             if sb_roles:
                 assign_roles_from_list(user, sb_roles, organization_id=org.id)
             else:
-                viewer_role = Role.query.filter_by(name='Viewer').first()
+                viewer_role = Role.resolve('Viewer', org.id)
                 if viewer_role:
                     user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
                     db.session.add(user_role)
@@ -686,7 +690,7 @@ def github_auth_callback():
             db.session.flush()
 
             # Assign default Viewer role
-            viewer_role = Role.query.filter_by(name='Viewer').first()
+            viewer_role = Role.resolve('Viewer', org.id)
             if viewer_role:
                 user_role = UserRole(user_id=user.id, role_id=viewer_role.id, organization_id=org.id)
                 db.session.add(user_role)

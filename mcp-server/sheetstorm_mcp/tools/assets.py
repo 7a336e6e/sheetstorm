@@ -72,21 +72,37 @@ def _format_account(a: dict) -> str:
 
 
 @mcp.tool()
-async def sheetstorm_list_hosts(incident_id: str) -> str:
-    """List compromised hosts for an incident.
+async def sheetstorm_list_hosts(
+    incident_id: str,
+    triage_status: Optional[str] = None,
+    acquisition: Optional[str] = None,
+    containment_status: Optional[str] = None,
+) -> str:
+    """List compromised hosts for an incident (with triage verdict and acquisition status).
 
     Args:
         incident_id: UUID of the incident
+        triage_status: Only these verdicts, comma-separated (clean, compromised, under_analysis, suspicious)
+        acquisition: Acquisition flags that must be true, comma-separated (disk_imaged, memory_captured,
+            logs_collected, forensically_sound); prefix a flag with ! for "not done",
+            e.g. "memory_captured,!disk_imaged"
+        containment_status: Only this containment status
     """
     client = get_client()
     try:
-        data = await client.get(f"/incidents/{incident_id}/hosts")
+        params: dict = {"per_page": 200}
+        for key, value in (("triage_status", triage_status), ("acquisition", acquisition),
+                           ("containment_status", containment_status)):
+            if value:
+                params[key] = value
+        data = await client.get(f"/incidents/{incident_id}/hosts", params=params)
         items = data if isinstance(data, list) else data.get("items", data.get("hosts", []))
+        total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
 
         if not items:
             return "No compromised hosts found."
 
-        lines = [f"**Compromised Hosts** ({len(items)})\n"]
+        lines = [f"**Compromised Hosts** ({total}{', showing ' + str(len(items)) if total > len(items) else ''})\n"]
         for h in items:
             lines.append(_format_host(h))
             lines.append("")
@@ -207,7 +223,8 @@ async def sheetstorm_update_host(
         if acq:
             # The backend replaces acquisition_status wholesale — merge with current values.
             current: dict = {}
-            data = await client.get(f"/incidents/{incident_id}/hosts", params={"per_page": 200})
+            # `focus` returns the page holding this host; per_page=1 makes it exactly that host.
+            data = await client.get(f"/incidents/{incident_id}/hosts", params={"focus": host_id, "per_page": 1})
             for h in data.get("items", []) if isinstance(data, dict) else data:
                 if str(h.get("id")) == host_id and isinstance(h.get("acquisition_status"), dict):
                     current = dict(h["acquisition_status"])
@@ -220,6 +237,40 @@ async def sheetstorm_update_host(
 
         host = await client.put(f"/incidents/{incident_id}/hosts/{host_id}", json=payload)
         return f"✓ Host updated:\n{_format_host(host)}"
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
+@mcp.tool()
+async def sheetstorm_bulk_update_hosts(
+    incident_id: str,
+    host_ids: list[str],
+    triage_status: Optional[str] = None,
+    containment_status: Optional[str] = None,
+) -> str:
+    """Set the triage verdict and/or containment status of many hosts at once (max 500).
+    All hosts must belong to the incident; otherwise nothing is changed.
+
+    Args:
+        incident_id: UUID of the incident
+        host_ids: Host UUIDs to update
+        triage_status: New verdict — one of: clean, compromised, under_analysis, suspicious
+        containment_status: New status — one of: active, compromised, isolated, contained, reimaged, cleaned, decommissioned
+    """
+    client = get_client()
+    payload: dict = {"host_ids": list(host_ids)}
+    if triage_status:
+        payload["triage_status"] = triage_status
+    if containment_status:
+        payload["containment_status"] = containment_status
+    if len(payload) == 1:
+        return "Nothing to update: give triage_status and/or containment_status."
+    try:
+        data = await client.patch(f"/incidents/{incident_id}/hosts/bulk", json=payload)
+        updated = data.get("updated", 0) if isinstance(data, dict) else 0
+        names = ", ".join(h.get("hostname", "?") for h in (data.get("items") or [])[:20]) \
+            if isinstance(data, dict) else ""
+        return f"✓ {updated} host(s) updated" + (f": {names}" if names else "")
     except SheetStormAPIError as exc:
         return f"✗ Error: {exc}"
 

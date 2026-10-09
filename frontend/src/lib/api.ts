@@ -1,4 +1,3 @@
-import type { AuditLog } from '@/types'
 import { clearCache } from './query-cache'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1'
@@ -543,41 +542,6 @@ class ApiClient {
     }
     return name
   }
-}
-
-// Audit Logs API
-interface AuditLogStats {
-  by_event_type: Record<string, number>
-  by_day: Record<string, number>
-  total: number
-}
-
-interface AuditLogsResponse {
-  items: AuditLog[]
-  total: number
-  page: number
-  per_page: number
-  pages: number
-}
-
-export const auditLogs = {
-  list: (params?: {
-    page?: number
-    per_page?: number
-    user_id?: string
-    event_type?: string
-    action?: string
-    resource_type?: string
-    incident_id?: string
-    start_date?: string
-    end_date?: string
-  }) => {
-    return api.get<AuditLogsResponse>(`/audit-logs${buildQuery(params ?? {})}`)
-  },
-
-  getStats: () => {
-    return api.get<AuditLogStats>('/audit-logs/stats')
-  },
 }
 
 export const api = new ApiClient(API_URL)

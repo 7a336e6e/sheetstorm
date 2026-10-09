@@ -9,7 +9,7 @@ import type { TLPLevel } from './index'
 /** IR milestones editable on the Overview, in the order they must occur. */
 export type MilestoneField = 'detected_at' | 'contained_at' | 'eradicated_at' | 'recovered_at' | 'closed_at'
 
-export interface LeadCounts {
+export interface SummaryLeadCounts {
   total: number
   open: number
   /** `open` plus every lead outcome present. */
@@ -27,7 +27,7 @@ export interface IncidentSummary {
   first_event_at: string | null
   last_event_at: string | null
   earliest_detection_at: string | null
-  leads: LeadCounts | null
+  leads: SummaryLeadCounts | null
   hosts_by_triage: Record<string, number> | null
   acquisition: AcquisitionCounts | null
 }

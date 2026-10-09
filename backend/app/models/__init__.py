@@ -7,6 +7,7 @@ from app.models.timeline import TimelineEvent
 from app.models.compromised import CompromisedHost, CompromisedAccount
 from app.models.ioc import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.models.artifact import Artifact, ChainOfCustody
+from app.models.evidence import EvidenceItem, CustodyParty, CustodyAnchor
 from app.models.task import Task, TaskComment
 from app.models.attack_graph import AttackGraphNode, AttackGraphEdge
 from app.models.integration import Integration
@@ -29,6 +30,7 @@ __all__ = [
     'CompromisedHost', 'CompromisedAccount',
     'NetworkIndicator', 'HostBasedIndicator', 'MalwareTool',
     'Artifact', 'ChainOfCustody',
+    'EvidenceItem', 'CustodyParty', 'CustodyAnchor',
     'Task', 'TaskComment',
     'AttackGraphNode', 'AttackGraphEdge',
     'Integration',

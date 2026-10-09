@@ -4,19 +4,23 @@ import json
 import os
 import html
 import mimetypes
+import uuid
 from datetime import datetime, timezone
 from flask import jsonify, request, g, send_file, current_app
 from flask_jwt_extended import jwt_required
+from sqlalchemy.orm import selectinload
 from werkzeug.exceptions import BadRequest
 from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db
-from app.models import Artifact, Incident, Integration, ChainOfCustody
+from app.models import Artifact, Incident, Integration, ChainOfCustody, EvidenceItem
+from app.models.evidence import EVIDENCE_TYPES
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.hash_service import HashService
 from app.services.storage_service import storage_service
 from app.services.chain_of_custody_service import ChainOfCustodyService
+from app.services.custody_ledger import CustodyError, CustodyLedger
 from app.services.pdf_render import html_to_pdf
 from app.utils.csv_safe import csv_safe
 from app.utils.pagination import list_response
@@ -35,12 +39,24 @@ ARTIFACT_SORTABLE = {
 @require_incident_access('artifacts:read')
 def list_artifacts(incident_id):
     """List artifacts (utils/pagination.py contract; q/search over filename
-    and hashes; filter verified)."""
+    and hashes; filters verified, purpose, evidence_item_id).
+
+    Tombstoned (deleted) artifacts and custody receipts are hidden unless
+    ``include_deleted=true`` or an explicit ``purpose=`` is given.
+    """
     incident = g.incident
-    query = Artifact.query.filter_by(incident_id=incident.id)
+    # to_dict() reads the evidence item (summary + inherited legal hold).
+    query = Artifact.query.options(selectinload(Artifact.evidence_item)).filter_by(incident_id=incident.id)
+    include_deleted = request.args.get('include_deleted', '').lower() in ('1', 'true', 'yes')
+    if not include_deleted:
+        query = query.filter(Artifact.deleted_at.is_(None))
+        if not request.args.get('purpose'):
+            query = query.filter(Artifact.purpose == 'evidence')
     return jsonify(list_response(
         query, sortable=ARTIFACT_SORTABLE, default_sort='-created_at', id_col=Artifact.id,
-        filters={'verified': (Artifact.is_verified, 'bool')},
+        filters={'verified': (Artifact.is_verified, 'bool'),
+                 'purpose': (Artifact.purpose, ('enum', Artifact.PURPOSES)),
+                 'evidence_item_id': (Artifact.evidence_item_id, 'uuid')},
         search_columns=(Artifact.original_filename, Artifact.sha256, Artifact.md5),
         serialize=lambda a: a.to_dict(),
     )), 200
@@ -55,9 +71,20 @@ def upload_artifact(incident_id):
     When Google Drive is connected and a case folder structure exists,
     the file is uploaded directly to Google Drive as primary storage.
     Otherwise it falls back to local storage.
+
+    Evidence register: optional form fields ``evidence_item_id`` (attach to an
+    existing, non-voided item of this incident), ``evidence_type`` / ``title``
+    (for the auto-created item) and ``purpose`` (``evidence`` |
+    ``custody_receipt``; a receipt must name its item). Without an item id a
+    ``digital_file`` item is created. The item, the artifact and the
+    ``register`` + ``upload`` ledger entries are committed in ONE transaction.
     """
     user = get_current_user()
     incident = g.incident
+
+    form_error, item, item_fields = _upload_item_fields(incident)
+    if form_error:
+        return form_error
 
     if 'file' not in request.files:
         return jsonify({'error': 'bad_request', 'message': 'No file provided'}), 400
@@ -104,9 +131,88 @@ def upload_artifact(incident_id):
         if not success:
             return jsonify({'error': 'server_error', 'message': 'Failed to store file'}), 500
 
-    # Create artifact record
-    artifact = Artifact(
+    # One transaction: (new item + register) + artifact + upload entry.
+    try:
+        if item is None:
+            item = EvidenceItem(
+                incident_id=incident.id,
+                organization_id=incident.organization_id,
+                evidence_type=item_fields['evidence_type'],
+                title=item_fields['title'] or original_filename[:255],
+                description=request.form.get('description'),
+                acquired_at=acquired_at or collected_at,
+                acquisition_method=request.form.get('acquisition_method'),
+                acquisition_tool=request.form.get('acquisition_tool'),
+                source_host_label=(request.form.get('source_host') or None),
+                storage_location=f'SheetStorm ({storage_type})',
+                acquisition_hashes=[
+                    {'algorithm': alg, 'value': hashes[alg], 'source': 'computed_on_upload',
+                     'recorded_at': datetime.now(timezone.utc).isoformat(timespec='microseconds'),
+                     'recorded_by': str(user.id)}
+                    for alg in ('md5', 'sha256', 'sha512')
+                ],
+                created_by=user.id,
+            )
+            CustodyLedger.register_item(item, actor=user, extra={'origin': 'artifact_upload'})
+        artifact = _new_artifact(
+            incident, item, user, stored_filename, original_filename, storage_path, storage_type,
+            mime_type, file_size, hashes, collected_at, acquired_at, extra_data, item_fields['purpose'])
+        db.session.add(artifact)
+        db.session.flush()
+        ChainOfCustodyService.log_upload(artifact, user, request.form.get('source'), commit=False)
+        db.session.commit()
+    except CustodyError as exc:
+        db.session.rollback()
+        _discard_stored_file(storage_type, storage_path, extra_data, user)
+        return exc.to_response()
+    except Exception:
+        db.session.rollback()
+        _discard_stored_file(storage_type, storage_path, extra_data, user)
+        current_app.logger.exception('Artifact upload transaction failed')
+        return jsonify({'error': 'server_error', 'message': 'Failed to record the upload'}), 500
+
+    ChainOfCustodyService.audit_upload(artifact)
+    return jsonify(artifact.to_dict()), 201
+
+
+def _upload_item_fields(incident):
+    """Validate the evidence-register form fields of an upload (before any
+    bytes are stored). Returns (error_response, item_or_None, fields)."""
+    def bad(msg):
+        return (jsonify({'error': 'bad_request', 'message': msg}), 400), None, None
+
+    purpose = (request.form.get('purpose') or 'evidence').strip()
+    if purpose not in Artifact.PURPOSES:
+        return bad(f"purpose must be one of {', '.join(Artifact.PURPOSES)}")
+    evidence_type = (request.form.get('evidence_type') or 'digital_file').strip()
+    if evidence_type not in EVIDENCE_TYPES:
+        return bad('Invalid evidence_type')
+    title = (request.form.get('title') or '').strip() or None
+    if title and len(title) > 255:
+        return bad('title must be at most 255 characters')
+    item = None
+    raw_item = (request.form.get('evidence_item_id') or '').strip()
+    if raw_item:
+        try:
+            item_id = uuid.UUID(raw_item)
+        except ValueError:
+            return bad('evidence_item_id must be a UUID')
+        item = EvidenceItem.query.filter_by(id=item_id, incident_id=incident.id).first()
+        if item is None:
+            return (jsonify({'error': 'not_found', 'message': 'Evidence item not found'}), 404), None, None
+        if item.is_voided:
+            return (jsonify({'error': 'conflict', 'message': 'Evidence item is voided'}), 409), None, None
+    elif purpose == 'custody_receipt':
+        return bad('A custody receipt must be attached to an evidence item (evidence_item_id)')
+    return None, item, {'purpose': purpose, 'evidence_type': evidence_type, 'title': title}
+
+
+def _new_artifact(incident, item, user, stored_filename, original_filename, storage_path, storage_type,
+                  mime_type, file_size, hashes, collected_at, acquired_at, extra_data, purpose):
+    return Artifact(
         incident_id=incident.id,
+        evidence_item_id=item.id,
+        purpose=purpose,
         filename=stored_filename,
         original_filename=original_filename,
         storage_path=storage_path,
@@ -127,13 +233,21 @@ def upload_artifact(incident_id):
         extra_data=extra_data,
     )
 
-    db.session.add(artifact)
-    db.session.commit()
 
-    # Log chain of custody
-    ChainOfCustodyService.log_upload(artifact, str(user.id), request.form.get('source'))
-
-    return jsonify(artifact.to_dict()), 201
+def _discard_stored_file(storage_type, storage_path, extra_data, user):
+    """Best-effort removal of bytes stored for an upload whose DB transaction
+    failed (no artifact row references them)."""
+    try:
+        drive_file_id = (extra_data or {}).get('google_drive_file_id')
+        if drive_file_id:
+            access_token = _get_drive_access_token(user)
+            if access_token:
+                from app.services.google_drive_service import google_drive_service
+                google_drive_service.delete_file(access_token, drive_file_id)
+        elif storage_type in ('local', 's3'):
+            storage_service.delete_file(storage_path, storage_type)
+    except Exception:
+        current_app.logger.warning('Could not remove stored bytes of a failed upload (%s)', storage_path)
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>', methods=['GET'])
@@ -165,6 +279,8 @@ def download_artifact(incident_id, artifact_id):
     artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
     if not artifact:
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
+    if artifact.is_deleted:
+        return _gone(artifact)
 
     # Retrieve file — from Google Drive or local/S3
     file_obj = _retrieve_artifact_file(artifact, user)
@@ -213,6 +329,8 @@ def verify_artifact(incident_id, artifact_id):
     artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
     if not artifact:
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
+    if artifact.is_deleted:
+        return _gone(artifact)
 
     # Retrieve file — from Google Drive or local/S3
     file_obj = _retrieve_artifact_file(artifact, user)
@@ -246,21 +364,29 @@ def verify_artifact(incident_id, artifact_id):
     }), 200
 
 
+def _gone(artifact):
+    return jsonify({'error': 'gone', 'message': 'Artifact was deleted; its stored content was purged',
+                    'deleted_at': artifact.deleted_at.isoformat() if artifact.deleted_at else None}), 410
+
+
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>/custody', methods=['GET'])
 @jwt_required()
 @require_incident_access('artifacts:read')
 def get_custody_chain(incident_id, artifact_id):
-    """Get chain of custody for an artifact."""
+    """Chain of custody of an artifact (alias: the entries of its evidence
+    item's ledger that reference this artifact)."""
     incident = g.incident
 
     artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
     if not artifact:
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
 
-    custody_chain = ChainOfCustodyService.get_custody_chain(str(artifact.id))
+    custody_chain = ChainOfCustodyService.get_custody_chain(artifact.id)
 
     return jsonify({
         'artifact_id': str(artifact.id),
+        'evidence_item_id': str(artifact.evidence_item_id),
+        'evidence_number': artifact.evidence_item.evidence_number if artifact.evidence_item else None,
         'original_filename': artifact.original_filename,
         'chain_of_custody': custody_chain
     }), 200
@@ -341,6 +467,7 @@ def _render_custody_html(report: dict) -> str:
         'intact': 'INTACT',
         'intact_with_unsigned_legacy': 'INTACT (includes unsigned entries that pre-date signing)',
         'unverifiable': 'UNVERIFIABLE (entries signed with a different key)',
+        'broken': 'BROKEN (entries missing, reordered or altered)',
     }.get(report.get('chain_integrity_status'), 'COMPROMISED')
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body{{font-family:Arial,sans-serif;font-size:12px;color:#111}}
@@ -377,25 +504,21 @@ def export_custody(incident_id, artifact_id):
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
 
     fmt = request.args.get('format', 'json').lower()
+    if fmt not in ('json', 'csv', 'pdf'):
+        return jsonify({'error': 'bad_request', 'message': 'format must be json, csv, or pdf'}), 400
     from app.models.artifact import custody_signing_key, custody_key_id
     secret = custody_signing_key()
-    legacy_secret = current_app.config.get('SECRET_KEY', '')
-    entries = ChainOfCustody.query.filter_by(artifact_id=artifact.id).order_by(ChainOfCustody.created_at.asc()).all()
+    # Integrity = verification of the evidence item's whole ledger (hash
+    # chain + signatures); the rows listed are the ones for this artifact.
+    verification = CustodyLedger.verify(item=artifact.evidence_item)
+    statuses_by_id = verification['signature_status_by_id']
     rows = []
-    for ent in entries:
+    for ent in CustodyLedger.entries(artifact_id=artifact.id):
         d = ent.to_dict()
-        d['signature_status'] = ent.signature_status(secret, legacy_secret=legacy_secret)
+        d['signature_status'] = statuses_by_id.get(str(ent.id))
         d['signature_valid'] = d['signature_status'] == ChainOfCustody.SIG_VALID
         rows.append(d)
-    statuses = {r['signature_status'] for r in rows}
-    if ChainOfCustody.SIG_INVALID in statuses:
-        integrity_status = 'compromised'
-    elif ChainOfCustody.SIG_KEY_MISMATCH in statuses:
-        integrity_status = 'unverifiable'
-    elif ChainOfCustody.SIG_UNSIGNED_LEGACY in statuses:
-        integrity_status = 'intact_with_unsigned_legacy'
-    else:
-        integrity_status = 'intact'
+    integrity_status = verification['status']
 
     report = {
         'artifact': {
@@ -411,11 +534,15 @@ def export_custody(incident_id, artifact_id):
             'under_legal_hold': artifact.under_legal_hold,
         },
         'incident_id': str(incident.id),
+        'evidence_item': artifact.evidence_item.summary(),
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'custody_entries': rows,
+        'chain': {'item_chain': verification['item_chain'], 'breaks': verification['breaks'],
+                  'legacy': verification['legacy'], 'notes': verification['notes']},
         # True unless some entry is provably altered (legacy unsigned rows
         # cannot be verified but are not evidence of tampering).
         'chain_integrity': integrity_status in ('intact', 'intact_with_unsigned_legacy'),
+        'deleted_at': artifact.deleted_at.isoformat() if artifact.deleted_at else None,
         'chain_integrity_status': integrity_status,
         'signing_key_id': custody_key_id(secret),
     }
@@ -448,7 +575,7 @@ def export_custody(incident_id, artifact_id):
         except Exception:
             current_app.logger.exception('Custody PDF generation failed')
             return jsonify({'error': 'server_error', 'message': 'PDF generation failed'}), 500
-    return jsonify({'error': 'bad_request', 'message': 'format must be json, csv, or pdf'}), 400
+    return jsonify({'error': 'bad_request', 'message': 'format must be json, csv, or pdf'}), 400  # pragma: no cover
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts/<uuid:artifact_id>', methods=['DELETE'])
@@ -456,24 +583,46 @@ def export_custody(incident_id, artifact_id):
 @require_incident_access('artifacts:delete')
 @audit_log('data_modification', 'delete', 'artifact')
 def delete_artifact(incident_id, artifact_id):
-    """Delete an artifact."""
+    """Delete an artifact: a tombstone, never a row delete.
+
+    The stored bytes are purged (Drive / local / S3); the row, its hashes and
+    its custody history are kept (``deleted_*``, ``content_purged``), and a
+    ``delete`` ledger entry is appended. Optional ``reason`` (JSON body or
+    query string).
+    """
     incident = g.incident
     user = get_current_user()
 
     artifact = Artifact.query.filter_by(id=artifact_id, incident_id=incident.id).first()
-    if not artifact:
+    if not artifact or artifact.is_deleted:
         return jsonify({'error': 'not_found', 'message': 'Artifact not found'}), 404
 
-    # Forensic preservation: refuse to delete evidence under legal hold.
+    # Forensic preservation: refuse to delete evidence under legal hold
+    # (the artifact's own hold or its evidence item's / an ancestor's).
     if artifact.under_legal_hold:
         return jsonify({
             'error': 'forbidden',
             'message': 'Artifact is under legal hold and cannot be deleted'
         }), 403
 
-    # Record an immutable deletion record BEFORE removing the artifact. The
-    # chain_of_custody rows cascade-delete with the artifact, so the defensible
-    # record lives in the (non-cascading) security audit log.
+    body = request.get_json(silent=True) or {}
+    reason = body.get('reason') if isinstance(body, dict) else None
+    reason = reason if isinstance(reason, str) else request.args.get('reason')
+    reason = (reason or '').strip()[:2000] or None
+
+    # 1) Tombstone + ledger entry, committed BEFORE the bytes are purged so a
+    #    storage failure can never lose the record.
+    artifact.deleted_at = datetime.now(timezone.utc)
+    artifact.deleted_by = user.id
+    artifact.deletion_reason = reason
+    try:
+        ChainOfCustodyService.log_delete(artifact, user, reason, commit=False)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Artifact tombstone failed for %s', artifact_id)
+        return jsonify({'error': 'server_error', 'message': 'Failed to record the deletion'}), 500
+
     from app.middleware.audit import log_security_event
     log_security_event(
         action='artifact_delete',
@@ -486,10 +635,13 @@ def delete_artifact(incident_id, artifact_id):
             'hashes': {'md5': artifact.md5, 'sha256': artifact.sha256, 'sha512': artifact.sha512},
             'storage_type': artifact.storage_type,
             'deleted_by': str(user.id),
+            'evidence_item_id': str(artifact.evidence_item_id),
+            'reason': reason,
         }
     )
 
-    # Delete from Google Drive if stored there
+    # 2) Purge the stored bytes.
+    purged = True
     extra = artifact.extra_data or {}
     drive_file_id = extra.get('google_drive_file_id')
     if drive_file_id:
@@ -499,18 +651,21 @@ def delete_artifact(incident_id, artifact_id):
                 from app.services.google_drive_service import google_drive_service
                 google_drive_service.delete_file(access_token, drive_file_id)
                 current_app.logger.info(f"Deleted artifact {artifact.id} from Google Drive (file_id={drive_file_id})")
+            else:
+                purged = False
         except Exception as e:
+            purged = False
             current_app.logger.warning(f"Failed to delete artifact from Google Drive: {e}")
 
     # Delete from local/S3 storage (may not exist if Drive-primary, but safe to call)
     if artifact.storage_type in ('local', 's3'):
         storage_service.delete_file(artifact.storage_path, artifact.storage_type)
 
-    # Delete record
-    db.session.delete(artifact)
+    # 3) Record that the content is gone.
+    artifact.content_purged = purged
     db.session.commit()
 
-    return jsonify({'message': 'Artifact deleted'}), 200
+    return jsonify({'message': 'Artifact deleted', 'artifact': artifact.to_dict()}), 200
 
 
 def _get_drive_credentials(user):
@@ -546,7 +701,7 @@ def _get_drive_credentials(user):
 @api_bp.route('/storage/stats', methods=['GET'])
 @jwt_required()
 def storage_stats():
-    """Return aggregate storage statistics across all artifacts."""
+    """Return aggregate storage statistics across all stored (not deleted) artifacts."""
     import shutil
     from sqlalchemy import func
 
@@ -560,7 +715,7 @@ def storage_stats():
             func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
         )
         .join(Incident, Artifact.incident_id == Incident.id)
-        .filter(Incident.organization_id == user.organization_id)
+        .filter(Incident.organization_id == user.organization_id, Artifact.deleted_at.is_(None))
         .group_by(Artifact.storage_type)
         .all()
     )
@@ -581,7 +736,7 @@ def storage_stats():
             func.coalesce(func.sum(Artifact.file_size), 0).label('size'),
         )
         .join(Incident, Artifact.incident_id == Incident.id)
-        .filter(Incident.organization_id == user.organization_id)
+        .filter(Incident.organization_id == user.organization_id, Artifact.deleted_at.is_(None))
         .group_by(Artifact.mime_type)
         .all()
     )

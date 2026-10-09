@@ -43,6 +43,8 @@ _PRIVATE_DETAIL_KEYS = {
     'reason', 'args', 'purpose',
     # Before/after diffs (utils/audit_diff.py): admins fetch the full row.
     'changes',
+    # Evidence register / custody ledger (hashes, acknowledgment names, party PII).
+    'acquisition_hashes', 'observed_hash', 'expected_hash', 'entry_hash', 'typed_name', 'email', 'phone',
 }
 
 

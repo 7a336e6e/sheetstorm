@@ -159,9 +159,9 @@ def _now():
 
 
 @pytest.fixture
-def populated(app, db, users, make_incident):
+def populated(app, db, users, make_incident, make_artifact):
     """One incident with one row of every incident-scoped entity."""
-    from app.models import (Artifact, CaseNote, CompromisedAccount, CompromisedHost, HostBasedIndicator,
+    from app.models import (CaseNote, CompromisedAccount, CompromisedHost, HostBasedIndicator,
                             MalwareTool, NetworkIndicator, Notification, Report, Task, TimelineEvent)
     admin = users['Administrator']
     inc = make_incident(title=f'Populated {uuid.uuid4().hex[:6]}')
@@ -179,12 +179,12 @@ def populated(app, db, users, make_incident):
         MalwareTool(incident_id=inc.id, file_name='evil.exe', created_by=admin.id),
         CaseNote(incident_id=inc.id, title='note', content='body', created_by=admin.id),
         Task(incident_id=inc.id, title='task', created_by=admin.id),
-        Artifact(incident_id=inc.id, filename='f', original_filename='f.bin', storage_path='x', file_size=1,
-                 md5='0' * 32, sha256='0' * 64, sha512='0' * 128, uploaded_by=admin.id),
         Report(incident_id=inc.id, title='r', report_type='full', generated_by=admin.id),
         Notification(user_id=admin.id, incident_id=inc.id, type='incident_assigned', title='n'),
     ])
     db.session.commit()
+    # Artifacts belong to an evidence item and are logged in the custody ledger.
+    make_artifact(inc, filename='f', original_filename='f.bin', file_size=1)
     return inc
 
 

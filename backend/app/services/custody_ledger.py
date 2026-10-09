@@ -662,12 +662,23 @@ def _serialize_custody_entry(entry):
     return data
 
 
+def _evidence_item_holds(org_id, now):
+    """Incidents with an evidence item under legal hold: their audit rows are
+    kept by the audit purge (audit_service.held_incident_ids). A hold on a
+    parent item covers its children, which belong to the same incident."""
+    from sqlalchemy import or_, select
+    return (select(EvidenceItem.incident_id)
+            .where(EvidenceItem.organization_id == org_id,
+                   or_(EvidenceItem.is_locked.is_(True), EvidenceItem.legal_hold_until > now)))
+
+
 def _register():
-    from app.services import realtime
+    from app.services import audit_service, realtime
     from app.services.evidence_refs import register_ref_type
     register_ref_type('evidence_item', EvidenceItem, label=_evidence_label, permission='artifacts:read')
     realtime.register_entity('evidence_item', 'artifacts', 'artifacts:read', _serialize_evidence_item)
     realtime.register_entity('custody_entry', 'artifacts', 'artifacts:read', _serialize_custody_entry)
+    audit_service.register_held_incidents_source(_evidence_item_holds)
 
 
 _register()

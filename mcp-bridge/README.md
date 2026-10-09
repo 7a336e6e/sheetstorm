@@ -177,6 +177,7 @@ mcp-bridge/
         ├── questions.py
         ├── case_templates.py
         ├── metrics.py
+        ├── decisions.py  # decision log & response actions (no approve/authorize)
         ├── admin.py
         ├── threat_intel.py
         ├── knowledge_base.py

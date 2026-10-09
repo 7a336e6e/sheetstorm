@@ -167,6 +167,54 @@ The org list shows an action when its incident is visible to you, it has no inci
 `status`, `priority` (comma lists), `incident_id`, `owner_id` (`me`), `overdue=true`, `q`; default sort by due date.
 Writes honour `If-Match` and emit `review` / `improvement_action` realtime changes.
 
+## Decision log and response actions
+
+| Method | Endpoint                                                  | Permission |
+|--------|-----------------------------------------------------------|------------|
+| GET    | `/incidents/{id}/decisions`                               | `decisions:read` |
+| POST   | `/incidents/{id}/decisions`                               | `decisions:create` |
+| GET    | `/incidents/{id}/decisions/{did}`                         | `decisions:read` |
+| PUT    | `/incidents/{id}/decisions/{did}`                         | `decisions:update` (If-Match, `reason`) |
+| POST   | `/incidents/{id}/decisions/{did}/approve`                 | `decisions:approve` (in-app) or `decisions:update` (`approved_by_name`) |
+| POST   | `/incidents/{id}/decisions/{did}/reject`                  | `decisions:approve` (`reason`) |
+| POST   | `/incidents/{id}/decisions/{did}/reopen` / `supersede`    | `decisions:update` |
+| GET    | `/incidents/{id}/decisions/{did}/revisions`               | `decisions:read` |
+| GET    | `/incidents/{id}/response-actions`                        | `response_actions:read` |
+| POST   | `/incidents/{id}/response-actions`                        | `response_actions:create` |
+| GET    | `/incidents/{id}/response-actions/{aid}`                  | `response_actions:read` |
+| PUT    | `/incidents/{id}/response-actions/{aid}`                  | `response_actions:update` (If-Match, `reason`) |
+| POST   | `/incidents/{id}/response-actions/{aid}/authorize`        | `response_actions:authorize` (in-app) or `:update` (`authorized_by_name`) |
+| POST   | `/incidents/{id}/response-actions/{aid}/start` · `execute` · `fail` · `verify` · `rollback` · `cancel` | `response_actions:update` |
+| GET    | `/incidents/{id}/response-actions/{aid}/revisions`        | `response_actions:read` |
+| GET    | `/incidents/{id}/response-timeline`                       | `timeline:read` (+ the read permission of each kind) |
+| GET    | `/incidents/{id}/decision-log/export`                     | `incidents:export` + read permissions (30/min) |
+
+Decisions (`D-007`) are `proposed → approved | rejected | superseded` (`rejected → proposed` on reopen). Response
+actions (`A-012`) are `requested → authorized → in_progress → executed → verified`, with `failed`, `rolled_back`
+and `cancelled`; an invalid move is 409 `invalid_transition`. There is no DELETE. Writes to an existing record need
+`If-Match` or body `expected_version` (428 `precondition_required` without one, 409 `conflict` when stale); a PUT
+needs a `reason` and changes descriptive fields only. Retroactive logging: create accepts later-stage fields
+(`approved_by_name`, `authorized_by_name`, `executed_at`, `verified_at` + `verification_result`) and derives the
+status. An in-app approver/authorizer/executor/verifier is always the acting user; anyone else is recorded by name
+(`*_by_name`, shown as "recorded"). `self_approved` / `self_verified` flag approver = requester and verifier =
+executor. `links` use `[{evidence_type, evidence_id}]` (same incident; `decision` and `response_action` are
+registered evidence-ref types). `execute` with `apply_target_state: true` sets the host `containment_status` /
+account `status` (needs `hosts:update` / `accounts:update`); `rollback` restores it only if unchanged since
+(409 `target_state_changed`, or `restore_target_state: false`).
+
+Every change appends an INSERT-only revision (snapshot, `{field: {from, to}}` diff, reason, actor) chained per
+record with `hash_chain` domain `decision-v1` and HMAC-signed with the custody key. `GET …/revisions` returns each
+revision's `signature_status` and a `verification.status` of `intact`, `broken` (missing/reordered revisions or a
+head row edited outside the log), `compromised` (a signature mismatch) or `unverifiable` (key rotated).
+
+**Privileged decisions** (`is_privileged`, set only with `decisions:read_privileged`) are 404 without that
+permission and are excluded from lists, the response timeline, report appendices, exports (unless
+`include_privileged=1` by a holder) and MCP. Their realtime changes go only to scope `decisions_privileged`.
+Decision-log data is never sent to AI providers. The export takes `format=json|csv|pdf`,
+`kind=decisions|actions|all`, `include_revisions=0|1`; CSV cells are formula-escaped. Full PDF reports include a
+"Decisions & Response Actions" appendix (non-privileged only) inside the issued snapshot. The JSON custody export of
+an evidence item lists `referenced_by` (events/IOCs citing it, decisions/actions linking it).
+
 ## Timeline Events
 
 | Method | Endpoint                                  | Description                    |

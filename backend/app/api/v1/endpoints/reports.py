@@ -25,7 +25,7 @@ REPORT_TYPES = {
     },
     'full': {
         'title': 'Full Incident Report',
-        'sections': ['summary', 'timeline', 'iocs', 'recommendations'],
+        'sections': ['summary', 'timeline', 'iocs', 'recommendations', 'decisions'],
     },
     'metrics': {
         'title': 'Incident Metrics',
@@ -162,6 +162,10 @@ def generate_pdf_report(incident_id):
                   f'for TLP:{incident.tlp.upper()} incidents. This is a data-only report.'
                   if ai_blocked else None),
         )
+
+    # Decision-log appendix (W4-DEC): deterministic, appended BEFORE the PDF
+    # is rendered and its snapshot hashed (C34); never part of the AI input.
+    html_content = _append_decision_log(html_content, incident, user, sections)
 
     # ── Step 3: HTML → PDF via WeasyPrint (external fetching disabled) ─
     try:
@@ -375,6 +379,8 @@ def download_report(incident_id, report_id):
             report_title=report_title,
         )
 
+    html_content = _append_decision_log(html_content, incident, get_current_user(), sections)
+
     try:
         pdf_bytes = html_to_pdf(html_content)
     except Exception:
@@ -405,6 +411,35 @@ def delete_report(incident_id, report_id):
     db.session.commit()
 
     return jsonify({'message': 'Report deleted'}), 200
+
+
+# ── Decision-log appendix (W4-DEC) ──────────────────────────────────────
+
+_REPORT_FOOTER = '<div class="report-footer">'
+
+
+def _append_decision_log(html_content: str, incident, user, sections) -> str:
+    """Insert the "Decisions & Response Actions" appendix before the footer.
+
+    Only for reports whose sections include ``decisions`` and users who can
+    read decisions or response actions. Built from
+    ``decision_log_service.export_payload(include_privileged=False)`` (a
+    privileged decision never appears in a report) and rendered through the
+    autoescaped Jinja template ``decisions/_appendix.html``. Decision data is
+    never passed to ``ai_service``.
+    """
+    if not isinstance(sections, (list, tuple)) or 'decisions' not in sections or user is None:
+        return html_content
+    if not (user.has_permission('decisions:read') or user.has_permission('response_actions:read')):
+        return html_content
+    from flask import render_template
+    from app.services import decision_log_service
+    payload = decision_log_service.export_payload(incident, user, include_privileged=False)
+    fragment = render_template('decisions/_appendix.html', payload=payload)
+    idx = html_content.rfind(_REPORT_FOOTER)
+    if idx == -1:
+        return html_content + fragment
+    return html_content[:idx] + fragment + '\n' + html_content[idx:]
 
 
 # ── Markdown → HTML conversion ──────────────────────────────────────────

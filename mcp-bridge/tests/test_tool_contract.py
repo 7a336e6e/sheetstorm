@@ -316,6 +316,29 @@ CASES: dict[str, tuple] = {
         "POST", f"/incidents/{I}/improvement-actions",
         {"title": "Enable MFA", "owner_id": "u1", "due_date": "2026-04-01", "priority": "high",
          "category": "technology", "control_framework": "d3fend", "control_ref": "D3-MFA"}, None),
+    # decision log (W4-DEC)
+    "sheetstorm_log_decision": (
+        {"incident_id": I, "title": "No ransom", "decision": "Do not pay", "category": "ransom_legal",
+         "alternatives": '[{"option": "Pay", "reason_not_chosen": "Policy"}]', "approved_by_name": "General Counsel",
+         "links": '[{"evidence_type": "timeline_event", "evidence_id": "e1"}]'},
+        "POST", f"/incidents/{I}/decisions",
+        {"title": "No ransom", "decision": "Do not pay", "category": "ransom_legal",
+         "alternatives": [{"option": "Pay", "reason_not_chosen": "Policy"}], "approved_by_name": "General Counsel",
+         "links": [{"evidence_type": "timeline_event", "evidence_id": "e1"}]}, None),
+    "sheetstorm_list_decisions": ({"incident_id": I, "status": "approved", "per_page": 500}, "GET",
+                                  f"/incidents/{I}/decisions", None, {"status": "approved", "per_page": "100"}),
+    "sheetstorm_log_response_action": (
+        {"incident_id": I, "action_type": "isolate_host", "title": "Isolate", "target_type": "host",
+         "target_id": "h1", "executed_at": "2026-01-01T00:00:00Z", "executed_by_name": "MSSP"},
+        "POST", f"/incidents/{I}/response-actions",
+        {"action_type": "isolate_host", "title": "Isolate", "target_type": "host", "target_id": "h1",
+         "executed_at": "2026-01-01T00:00:00Z", "executed_by_name": "MSSP"}, None),
+    "sheetstorm_list_response_actions": ({"incident_id": I, "status": "executed"}, "GET",
+                                         f"/incidents/{I}/response-actions", None, {"status": "executed"}),
+    "sheetstorm_update_action_verification": (
+        {"incident_id": I, "action_id": "a1", "result": "success", "method": "EDR console"},
+        "POST", f"/incidents/{I}/response-actions/a1/verify",
+        {"verification_result": "success", "verification_method": "EDR console"}, None),
     # defang
     "sheetstorm_defang_iocs": ({"values": ["evil.com"]}, "POST", "/tools/defang", {"values": ["evil.com"]}, None),
     "sheetstorm_refang_iocs": ({"text": "evil[.]com"}, "POST", "/tools/refang", {"text": "evil[.]com"}, None),
@@ -342,7 +365,7 @@ def _tool_fn(name: str):
     for mod in ("auth", "incidents", "assignments", "timeline", "tasks", "assets", "iocs", "artifacts",
                 "attack_graph", "case_notes", "playbooks", "reports", "admin", "threat_intel",
                 "knowledge_base", "advanced_analysis", "defang", "evidence", "questions", "case_templates",
-                "metrics"):
+                "metrics", "decisions"):
         m = importlib.import_module(f"{PKG}.tools.{mod}")
         if hasattr(m, name):
             return getattr(m, name)

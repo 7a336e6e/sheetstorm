@@ -55,6 +55,7 @@ import {
     useProvenanceRowActions,
 } from './provenance'
 import { ProvenanceDetails } from './provenance/ProvenanceDetails'
+import { ResponseTimelineToggle } from './decisions/ResponseTimelineToggle'
 
 type EventRow = VersionedRow<TimelineEvent>
 
@@ -653,6 +654,7 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
     return (
         <div className="space-y-4">
             <FocusNotice focusRowId={focusRowId} focusFound={query.focusFound} noun="event" />
+            <ResponseTimelineToggle incidentId={incidentId} />
             <DataTable
                 query={query}
                 columns={columns}

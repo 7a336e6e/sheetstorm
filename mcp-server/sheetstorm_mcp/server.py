@@ -157,6 +157,7 @@ def _register_all_tools() -> None:
         auth,  # noqa: F401
         case_notes,  # noqa: F401
         case_templates,  # noqa: F401
+        decisions,  # noqa: F401
         defang,  # noqa: F401
         evidence,  # noqa: F401
         incidents,  # noqa: F401

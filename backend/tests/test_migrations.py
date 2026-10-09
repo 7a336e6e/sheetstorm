@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'post_incident_metrics'
+EXPECTED_HEAD = 'add_decision_log'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -729,5 +729,49 @@ def test_post_incident_metrics_round_trip_and_idempotent(scratch_db):
         assert _current(scratch_db) == EXPECTED_HEAD
         with eng.connect() as conn:
             assert conn.execute(text("SELECT to_regclass('public.improvement_actions')")).scalar() is not None
+    finally:
+        eng.dispose()
+
+
+# ── add_decision_log (W4-DEC) ───────────────────────────────────────
+
+def test_decision_log_schema_at_head(app, db):
+    from sqlalchemy import inspect
+    insp = inspect(db.engine)
+    for table in ('incident_decisions', 'response_actions', 'decision_log_revisions'):
+        assert insp.has_table(table)
+    assert 'version' in {c['name'] for c in insp.get_columns('incident_decisions')}
+    assert 'version' in {c['name'] for c in insp.get_columns('response_actions')}
+    assert 'version' not in {c['name'] for c in insp.get_columns('decision_log_revisions')}
+    fks = {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+           for fk in insp.get_foreign_keys('decision_log_revisions')}
+    assert fks['actor_id'] is None                                  # C3: NO ACTION, never SET NULL
+    triggers = db.session.execute(text(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid = 'decision_log_revisions'::regclass "
+        "AND NOT tgisinternal")).scalars().all()
+    assert set(triggers) == {'decision_log_revisions_no_update', 'decision_log_revisions_no_truncate'}
+
+
+def test_decision_log_round_trip_and_idempotent(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        r = _flask_db(scratch_db, 'downgrade', 'post_incident_metrics')
+        assert r.returncode == 0, r.stderr[-3000:]
+        with eng.connect() as conn:
+            for table in ('incident_decisions', 'response_actions', 'decision_log_revisions'):
+                assert conn.execute(text(f"SELECT to_regclass('public.{table}')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM pg_proc WHERE proname = "
+                                     "'decision_log_revisions_immutable'")).scalar() == 0
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
+        # Re-running the upgrade body on an already-upgraded schema is a no-op.
+        with eng.begin() as conn:
+            conn.execute(text("UPDATE alembic_version SET version_num = 'post_incident_metrics'"))
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
     finally:
         eng.dispose()

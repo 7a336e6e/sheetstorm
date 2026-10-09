@@ -23,6 +23,7 @@ import {
   CheckSquare,
   ClipboardCheck,
   Fingerprint,
+  Gavel,
   Globe,
   Key,
   LayoutList,
@@ -43,6 +44,7 @@ import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { TasksTab } from '@/components/incidents/detail/TasksTab'
 import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
 import { PostIncidentReviewTab } from '@/components/incidents/detail/PostIncidentReviewTab'
+import { DecisionsActionsTab } from '@/components/incidents/decisions/DecisionsActionsTab'
 import { EventsPanel, GraphPanel, MitrePanel, OverviewPanel } from './panels'
 
 export interface IncidentTabProps extends IncidentTabBaseProps {
@@ -78,6 +80,7 @@ export const TAB_REGISTRY: IncidentTabDef[] = [
   { id: 'malware', label: 'Malware', icon: Bug, permission: 'malware:read', component: MalwareToolsTab, keepMounted: true },
   { id: 'evidence', label: 'Evidence', icon: Archive, permission: 'artifacts:read', component: EvidenceTab, keepMounted: true },
   { id: 'notes', label: 'Notes', icon: MessageSquare, permission: 'incidents:read', component: CaseNotesTab, keepMounted: true },
+  { id: 'decisions', label: 'Decisions & Actions', icon: Gavel, permission: 'decisions:read', component: DecisionsActionsTab, keepMounted: true },
   { id: 'review', label: 'Post-Incident Review', icon: ClipboardCheck, permission: 'incidents:read', component: PostIncidentReviewTab, keepMounted: true },
 ]
 

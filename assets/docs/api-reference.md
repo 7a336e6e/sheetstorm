@@ -4,6 +4,44 @@ All endpoints are prefixed with `/api/v1`. Authentication via `Authorization: Be
 
 ---
 
+## List endpoints: paging, sorting, filtering
+
+Every list endpoint (incidents, archived incidents, users, notifications and
+the per-incident timeline, hosts, accounts, network/host IOCs, malware, case
+notes, tasks, artifacts, reports) follows one contract
+(`backend/app/utils/pagination.py`):
+
+| Param      | Rule |
+|------------|------|
+| `page`     | Integer ≥ 1, default 1. A non-integer is 400. |
+| `per_page` | Clamped to 1..200, default 50. |
+| `sort`     | `field` or `-field` (descending), up to 2 comma-separated, from the endpoint's whitelist; otherwise 400 `invalid_sort`. The row id is always the final tie-breaker, so pages are stable. Legacy `order=asc\|desc` applies when the sort is a single bare field. |
+| `q`        | Free text (legacy alias `search`), ≤ 200 chars, `%`/`_`/`\` match literally, case-insensitive substring match over the endpoint's text columns. |
+| filters    | Endpoint-specific (e.g. incidents `status=open,investigating`, `severity`, `phase`, `classification`, `team_id`). Invalid values are 400 `invalid_filter`. |
+| `focus`    | Row UUID: returns the page containing that row under the current sort and filters, with `focus_found: true`; if the row is not in the filtered set, the requested page with `focus_found: false`. |
+
+Response: `{items, total, page, per_page, pages, sort, focus_found?}` plus any
+endpoint extras (notifications add `unread_count`).
+
+## Search
+
+| Method | Endpoint  | Description | Rate Limit |
+|--------|-----------|-------------|------------|
+| GET    | `/search` | Cross-incident search over incidents, timeline, hosts, accounts, network/host IOCs, malware and case notes | 60/minute |
+
+Params: `q` (2..200 chars), `types` (comma list), `incident_id` (404 unless
+accessible), `since`/`until`, `sort` = `relevance` (default: exact, then
+prefix match on the primary value, then newest) \| `-timestamp` \|
+`timestamp`, `page`, `per_page` (≤ 50). Only incidents the caller can see are
+searched, and types whose read permission (`timeline:read`, `hosts:read`,
+`accounts:read`, `network_iocs:read`, `host_iocs:read`, `malware:read`;
+incidents and notes need `incidents:read`) is missing are left out. Response:
+`{results, total, page, per_page, pages, facets: {type: count}, sort}`; each
+result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
+`timestamp` and `link: {incident_id, tab, row}` for deep links.
+
+---
+
 ## Authentication
 
 | Method | Endpoint           | Description          | Rate Limit |

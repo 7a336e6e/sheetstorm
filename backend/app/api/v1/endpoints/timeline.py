@@ -10,32 +10,36 @@ from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
+from app.utils.pagination import list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
+
+
+TIMELINE_SORTABLE = {
+    'timestamp': TimelineEvent.timestamp,
+    'created_at': TimelineEvent.created_at,
+    'hostname': TimelineEvent.hostname,
+    'phase': TimelineEvent.phase,
+}
+TIMELINE_FILTERS = {
+    'phase': (TimelineEvent.phase, 'int'),
+    'hostname': (TimelineEvent.hostname, 'ilike'),
+    'host_id': (TimelineEvent.host_id, 'uuid'),
+    'start_date': (TimelineEvent.timestamp, 'date_from'),
+    'end_date': (TimelineEvent.timestamp, 'date_to'),
+    'key_only': (TimelineEvent.is_key_event == True, 'flag'),  # noqa: E712
+    'ioc_only': (TimelineEvent.is_ioc == True, 'flag'),  # noqa: E712
+}
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline', methods=['GET'])
 @jwt_required()
 @require_incident_access('timeline:read')
 def list_timeline_events(incident_id):
-    """List timeline events for an incident."""
+    """List timeline events (utils/pagination.py contract; q/search over
+    activity+hostname; filters phase, hostname, host_id, mitre_tactic,
+    start_date, end_date, key_only, ioc_only)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = TimelineEvent.query.filter_by(incident_id=incident.id)
-
-    # Filters
-    phase = request.args.get('phase', type=int)
-    if phase:
-        query = query.filter(TimelineEvent.phase == phase)
-
-    hostname = request.args.get('hostname')
-    if hostname:
-        query = query.filter(TimelineEvent.hostname.ilike(f'%{hostname}%'))
-
-    host_id = request.args.get('host_id')
-    if host_id:
-        query = query.filter(TimelineEvent.host_id == host_id)
 
     mitre_tactic = request.args.get('mitre_tactic')
     if mitre_tactic and (len(mitre_tactic) > 64 or not re.fullmatch(r'[a-z0-9-]+', mitre_tactic)):
@@ -48,33 +52,11 @@ def list_timeline_events(incident_id):
             TimelineEvent.mitre_mappings.contains([{'tactic': mitre_tactic}])
         ))
 
-    start_date = parse_datetime(request.args.get('start_date'), 'start_date')
-    if start_date:
-        query = query.filter(TimelineEvent.timestamp >= start_date)
-
-    end_date = parse_datetime(request.args.get('end_date'), 'end_date')
-    if end_date:
-        query = query.filter(TimelineEvent.timestamp <= end_date)
-
-    key_only = request.args.get('key_only')
-    if key_only and key_only.lower() == 'true':
-        query = query.filter(TimelineEvent.is_key_event == True)
-
-    ioc_only = request.args.get('ioc_only')
-    if ioc_only and ioc_only.lower() == 'true':
-        query = query.filter(TimelineEvent.is_ioc == True)
-
-    pagination = query.order_by(TimelineEvent.timestamp.asc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [e.to_dict() for e in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=TIMELINE_SORTABLE, default_sort='timestamp', id_col=TimelineEvent.id,
+        filters=TIMELINE_FILTERS, search_columns=(TimelineEvent.activity, TimelineEvent.hostname),
+        serialize=lambda e: e.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/timeline', methods=['POST'])

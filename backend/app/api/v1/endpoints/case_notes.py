@@ -7,33 +7,30 @@ from app import db, socketio
 from app.models import CaseNote
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
+from app.utils.pagination import list_response
+
+
+CASE_NOTE_SORTABLE = {
+    'is_pinned': CaseNote.is_pinned,
+    'created_at': CaseNote.created_at,
+    'updated_at': CaseNote.updated_at,
+    'title': CaseNote.title,
+}
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/case-notes', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:read')
 def list_case_notes(incident_id):
-    """List case notes for an incident."""
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 100)
-    category = request.args.get('category')
-
+    """List case notes, pinned first by default (utils/pagination.py
+    contract; q/search over title+content; filter category)."""
     query = CaseNote.query.filter_by(incident_id=incident_id, is_archived=False)
-
-    if category:
-        query = query.filter(CaseNote.category == category)
-
-    # Pinned first, then by date
-    query = query.order_by(CaseNote.is_pinned.desc(), CaseNote.created_at.desc())
-
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-
-    return jsonify({
-        'items': [n.to_dict() for n in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-    }), 200
+    return jsonify(list_response(
+        query, sortable=CASE_NOTE_SORTABLE, default_sort='-is_pinned,-created_at', id_col=CaseNote.id,
+        filters={'category': (CaseNote.category, 'eq')},
+        search_columns=(CaseNote.title, CaseNote.content),
+        serialize=lambda n: n.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/case-notes', methods=['POST'])

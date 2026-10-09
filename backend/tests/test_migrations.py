@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'custody_key_id_admin_perm'
+EXPECTED_HEAD = 'add_search_trgm_indexes'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

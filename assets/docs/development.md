@@ -62,6 +62,15 @@ flask db migrate -m "..."  # Create new migration
 flask db downgrade        # Rollback last migration
 ```
 
+Search relies on the `pg_trgm` extension (enabled by `database/init/001_extensions.sql`
+on fresh installs and by migration `add_search_trgm_indexes` on upgrades) and
+one trigram GIN index per searchable table. The indexes are built with plain
+(non-`CONCURRENTLY`) `CREATE INDEX`, which blocks writes to those tables while
+it runs; on large existing databases run the upgrade in a maintenance window.
+A new searchable entity adds a `SearchType` in
+`backend/app/services/search_service.py` plus an index on
+`index_expression_sql(...)` in a migration (`tests/test_search.py` checks parity).
+
 ## Production WSGI
 
 ```bash

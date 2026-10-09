@@ -18,46 +18,31 @@ from app.services.storage_service import storage_service
 from app.services.chain_of_custody_service import ChainOfCustodyService
 from app.services.pdf_render import html_to_pdf
 from app.utils.csv_safe import csv_safe
+from app.utils.pagination import list_response
+
+
+ARTIFACT_SORTABLE = {
+    'created_at': Artifact.created_at,
+    'original_filename': Artifact.original_filename,
+    'file_size': Artifact.file_size,
+    'collected_at': Artifact.collected_at,
+}
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts', methods=['GET'])
 @jwt_required()
 @require_incident_access('artifacts:read')
 def list_artifacts(incident_id):
-    """List artifacts for an incident."""
+    """List artifacts (utils/pagination.py contract; q/search over filename
+    and hashes; filter verified)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = Artifact.query.filter_by(incident_id=incident.id)
-
-    # Search by filename or hash
-    search = request.args.get('search')
-    if search:
-        query = query.filter(
-            db.or_(
-                Artifact.original_filename.ilike(f'%{search}%'),
-                Artifact.sha256.ilike(f'%{search}%'),
-                Artifact.md5.ilike(f'%{search}%')
-            )
-        )
-
-    # Filter by verification status
-    verified = request.args.get('verified')
-    if verified is not None:
-        query = query.filter(Artifact.is_verified == (verified.lower() == 'true'))
-
-    pagination = query.order_by(Artifact.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [a.to_dict() for a in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=ARTIFACT_SORTABLE, default_sort='-created_at', id_col=Artifact.id,
+        filters={'verified': (Artifact.is_verified, 'bool')},
+        search_columns=(Artifact.original_filename, Artifact.sha256, Artifact.md5),
+        serialize=lambda a: a.to_dict(),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/artifacts', methods=['POST'])

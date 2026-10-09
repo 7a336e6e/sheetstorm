@@ -6,50 +6,38 @@ from app import db
 from app.models import User, Role, UserRole, Organization
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
+from app.utils.pagination import list_response
+
+
+USER_SORTABLE = {
+    'name': User.name,
+    'email': User.email,
+    'created_at': User.created_at,
+    'last_login': User.last_login,
+}
+USER_FILTERS = {'is_active': (User.is_active, 'bool')}
 
 
 @api_bp.route('/users', methods=['GET'])
 @jwt_required()
 @require_permission('users:read')
 def list_users():
-    """List all users in the organization."""
+    """List users in the organization (utils/pagination.py contract; q/search
+    over name+email, filters role (name) and is_active)."""
     user = get_current_user()
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 20, type=int), 100)
-
     query = User.query.filter_by(organization_id=user.organization_id)
 
-    # Filter by role
+    # Role filter is a subquery on the role name, outside the declarative FILTERS.
     role = request.args.get('role')
     if role:
-        query = query.join(UserRole).join(Role).filter(Role.name == role)
+        query = query.filter(User.id.in_(
+            db.session.query(UserRole.user_id).join(Role, Role.id == UserRole.role_id).filter(Role.name == role)))
 
-    # Filter by active status
-    is_active = request.args.get('is_active')
-    if is_active is not None:
-        query = query.filter(User.is_active == (is_active.lower() == 'true'))
-
-    # Search by name or email
-    search = request.args.get('search')
-    if search:
-        query = query.filter(
-            db.or_(
-                User.name.ilike(f'%{search}%'),
-                User.email.ilike(f'%{search}%')
-            )
-        )
-
-    pagination = query.order_by(User.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [u.to_dict() for u in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=USER_SORTABLE, default_sort='-created_at', id_col=User.id,
+        filters=USER_FILTERS, search_columns=(User.name, User.email),
+        serialize=lambda u: u.to_dict(),
+    )), 200
 
 
 @api_bp.route('/users', methods=['POST'])

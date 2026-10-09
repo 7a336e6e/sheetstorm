@@ -9,47 +9,38 @@ from app.models import Task, TaskComment
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_task_assigned
+from app.utils.pagination import list_response, severity_rank
 from app.utils.validation import parse_datetime, check_choice, json_body
+
+
+TASK_SORTABLE = {
+    'order_index': Task.order_index,
+    'created_at': Task.created_at,
+    'due_date': Task.due_date,
+    'priority': severity_rank(Task.priority),
+    'status': Task.status,
+}
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/tasks', methods=['GET'])
 @jwt_required()
 @require_incident_access('tasks:read')
 def list_tasks(incident_id):
-    """List tasks for an incident."""
+    """List top-level tasks (utils/pagination.py contract; q/search over
+    title+description; filters status, priority, assignee_id, phase)."""
     incident = g.incident
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
-
     query = Task.query.filter_by(incident_id=incident.id, parent_task_id=None)
-
-    status = request.args.get('status')
-    if status:
-        query = query.filter(Task.status == status)
-
-    priority = request.args.get('priority')
-    if priority:
-        query = query.filter(Task.priority == priority)
-
-    assignee_id = request.args.get('assignee_id')
-    if assignee_id:
-        query = query.filter(Task.assignee_id == assignee_id)
-
-    phase = request.args.get('phase', type=int)
-    if phase:
-        query = query.filter(Task.phase == phase)
-
-    pagination = query.order_by(Task.order_index.asc(), Task.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    return jsonify({
-        'items': [t.to_dict(include_comments=True) for t in pagination.items],
-        'total': pagination.total,
-        'page': page,
-        'per_page': per_page,
-        'pages': pagination.pages
-    }), 200
+    return jsonify(list_response(
+        query, sortable=TASK_SORTABLE, default_sort='order_index,-created_at', id_col=Task.id,
+        filters={
+            'status': (Task.status, 'eq'),
+            'priority': (Task.priority, 'eq'),
+            'assignee_id': (Task.assignee_id, 'uuid'),
+            'phase': (Task.phase, 'int'),
+        },
+        search_columns=(Task.title, Task.description),
+        serialize=lambda t: t.to_dict(include_comments=True),
+    )), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/tasks', methods=['POST'])

@@ -1,19 +1,18 @@
 """Cross-incident search and IOC correlation endpoints.
 
-Provides full-text search across all incident data (timeline events,
-IOCs, hosts, accounts, notes) and cross-incident IOC correlation.
+`/search` is implemented by services/search_service.py (one bounded SQL
+statement, per-type read permissions, pg_trgm-indexed ILIKE); this module
+also holds cross-incident IOC correlation, bulk enrichment and STIX export.
 """
 from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import or_, func, text, cast, String
+from sqlalchemy import func, cast, select, String
 from app.api.v1 import api_bp
-from app.middleware.rbac import require_permission
+from app.middleware.rbac import require_permission, get_current_user
 from app import db, limiter
 from app.models.incident import Incident
-from app.models.timeline import TimelineEvent
-from app.models.compromised import CompromisedHost, CompromisedAccount
+from app.models.compromised import CompromisedHost
 from app.models.ioc import NetworkIndicator, HostBasedIndicator, MalwareTool
-from app.models.case_note import CaseNote
 from app.models.user import User
 
 
@@ -34,216 +33,60 @@ def _user_incident_ids(user_id):
 # ---------------------------------------------------------------------------
 
 @api_bp.route('/search', methods=['GET'])
+@limiter.limit("60 per minute")  # rl-group: search
 @jwt_required()
 @require_permission('incidents:read')
 def search_across_incidents():
-    """Full-text search across all incident data.
+    """Search across every incident the caller can access.
 
     Query params:
-        q (str):        Search term (required, min 2 chars)
-        types (str):    Comma-separated entity types to search
-                        (incidents,timeline,hosts,accounts,network_iocs,
-                         host_iocs,malware,notes). Default: all.
-        page (int):     Page number (default 1)
-        per_page (int): Results per page (default 50, max 200)
+        q (str):           2..200 characters (required)
+        types (str):       comma-separated subset of incidents, timeline,
+                           hosts, accounts, network_iocs, host_iocs, malware,
+                           notes (result type names are accepted too). Types
+                           the caller lacks the read permission for are
+                           dropped silently.
+        incident_id (uuid): restrict to one accessible incident (else 404)
+        since, until:      ISO-8601 bounds on the result timestamp
+        sort:              relevance (default) | -timestamp | timestamp
+        page, per_page:    per_page 1..50 (default 50)
+
+    Response: {results, total, page, per_page, pages, facets: {type: n},
+    sort}; each result has id, type, incident_id, incident_title, title,
+    snippet, timestamp and link {incident_id, tab, row}.
     """
-    q = request.args.get('q', '').strip()
-    if len(q) < 2:
-        return jsonify({'error': 'Search term must be at least 2 characters'}), 400
+    from app.services import search_service
+    from app.utils.pagination import ListArgsError, parse_page_args, parse_q, parse_uuid
+    from app.utils.validation import parse_datetime
+    from app.api.v1.endpoints.incidents import accessible_incidents_query
 
-    types_param = request.args.get('types', '')
-    allowed_types = {'incidents', 'timeline', 'hosts', 'accounts',
-                     'network_iocs', 'host_iocs', 'malware', 'notes'}
-    if types_param:
-        search_types = set(types_param.split(',')) & allowed_types
-    else:
-        search_types = allowed_types
+    user = get_current_user()
+    args = request.args
+    q = parse_q(args, min_length=2)
+    page, per_page = parse_page_args(args, default_per_page=50, max_per_page=50)
 
-    page = max(1, request.args.get('page', 1, type=int))
-    per_page = min(200, max(1, request.args.get('per_page', 50, type=int)))
+    sort = (args.get('sort') or 'relevance').strip()
+    if sort not in search_service.SORTS:
+        raise ListArgsError(f"invalid sort {sort!r}; allowed: {', '.join(search_service.SORTS)}",
+                            'invalid_sort')
 
-    user_id = get_jwt_identity()
-    accessible_ids = _user_incident_ids(user_id)
-    if not accessible_ids:
-        return jsonify({'results': [], 'total': 0, 'page': page, 'per_page': per_page}), 200
+    incident_id = None
+    accessible = accessible_incidents_query(user)
+    if args.get('incident_id'):
+        incident_id = parse_uuid('incident_id', args['incident_id'])
+        if accessible.filter(Incident.id == incident_id).first() is None:
+            return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
 
-    search_term = f'%{q}%'
-    results = []
+    requested = [t.strip() for t in (args.get('types') or '').split(',') if t.strip()]
+    types = search_service.allowed_types(user, requested)
 
-    if 'incidents' in search_types:
-        rows = db.session.query(Incident).filter(
-            Incident.id.in_(accessible_ids),
-            or_(
-                Incident.title.ilike(search_term),
-                Incident.description.ilike(search_term),
-                Incident.executive_summary.ilike(search_term),
-                Incident.classification.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'incident',
-                'incident_id': str(r.id),
-                'incident_title': r.title,
-                'title': r.title,
-                'snippet': (r.description or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'timeline' in search_types:
-        rows = db.session.query(TimelineEvent).filter(
-            TimelineEvent.incident_id.in_(accessible_ids),
-            or_(
-                TimelineEvent.activity.ilike(search_term),
-                TimelineEvent.hostname.ilike(search_term),
-                TimelineEvent.mitre_tactic.ilike(search_term),
-                cast(TimelineEvent.mitre_mappings, String).ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'timeline_event',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.activity[:100] if r.activity else '',
-                'snippet': r.activity[:200] if r.activity else '',
-                'hostname': r.hostname,
-                'timestamp': r.timestamp.isoformat() if r.timestamp else None,
-            })
-
-    if 'hosts' in search_types:
-        rows = db.session.query(CompromisedHost).filter(
-            CompromisedHost.incident_id.in_(accessible_ids),
-            or_(
-                CompromisedHost.hostname.ilike(search_term),
-                cast(CompromisedHost.ip_address, String).ilike(search_term),
-                CompromisedHost.system_type.ilike(search_term),
-                CompromisedHost.notes.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'host',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"{r.hostname} ({str(r.ip_address)})" if r.ip_address else r.hostname,
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'accounts' in search_types:
-        rows = db.session.query(CompromisedAccount).filter(
-            CompromisedAccount.incident_id.in_(accessible_ids),
-            or_(
-                CompromisedAccount.account_name.ilike(search_term),
-                CompromisedAccount.domain.ilike(search_term),
-                CompromisedAccount.notes.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'account',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"{r.domain}\\{r.account_name}" if r.domain else r.account_name,
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'network_iocs' in search_types:
-        rows = db.session.query(NetworkIndicator).filter(
-            NetworkIndicator.incident_id.in_(accessible_ids),
-            or_(
-                NetworkIndicator.dns_ip.ilike(search_term),
-                NetworkIndicator.source_host.ilike(search_term),
-                NetworkIndicator.destination_host.ilike(search_term),
-                NetworkIndicator.description.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'network_ioc',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.dns_ip,
-                'snippet': (r.description or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'host_iocs' in search_types:
-        rows = db.session.query(HostBasedIndicator).filter(
-            HostBasedIndicator.incident_id.in_(accessible_ids),
-            or_(
-                HostBasedIndicator.artifact_value.ilike(search_term),
-                HostBasedIndicator.notes.ilike(search_term),
-                HostBasedIndicator.host.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'host_ioc',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': f"[{r.artifact_type}] {r.artifact_value[:80]}",
-                'snippet': (r.notes or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'malware' in search_types:
-        rows = db.session.query(MalwareTool).filter(
-            MalwareTool.incident_id.in_(accessible_ids),
-            or_(
-                MalwareTool.file_name.ilike(search_term),
-                MalwareTool.file_path.ilike(search_term),
-                MalwareTool.md5.ilike(search_term),
-                MalwareTool.sha256.ilike(search_term),
-                MalwareTool.malware_family.ilike(search_term),
-                MalwareTool.description.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'malware',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.file_name,
-                'snippet': f"MD5: {r.md5 or 'N/A'} | SHA256: {r.sha256 or 'N/A'}",
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    if 'notes' in search_types:
-        rows = db.session.query(CaseNote).filter(
-            CaseNote.incident_id.in_(accessible_ids),
-            or_(
-                CaseNote.title.ilike(search_term),
-                CaseNote.content.ilike(search_term),
-            )
-        ).all()
-        for r in rows:
-            results.append({
-                'type': 'case_note',
-                'incident_id': str(r.incident_id),
-                'incident_title': r.incident.title if r.incident else None,
-                'title': r.title,
-                'snippet': (r.content or '')[:200],
-                'timestamp': r.created_at.isoformat() if r.created_at else None,
-            })
-
-    # Sort by timestamp descending
-    results.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
-    total = len(results)
-
-    # Paginate
-    start = (page - 1) * per_page
-    end = start + per_page
-    paginated = results[start:end]
-
-    return jsonify({
-        'results': paginated,
-        'total': total,
-        'page': page,
-        'per_page': per_page,
-    }), 200
+    params = search_service.SearchParams(
+        q=q, page=page, per_page=per_page, sort=sort, incident_id=incident_id,
+        since=parse_datetime(args.get('since'), 'since'),
+        until=parse_datetime(args.get('until'), 'until'),
+    )
+    accessible_ids = select(accessible.with_entities(Incident.id).subquery().c.id)
+    return jsonify(search_service.run_search(types, accessible_ids, params)), 200
 
 
 # ---------------------------------------------------------------------------

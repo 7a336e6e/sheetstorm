@@ -6,14 +6,12 @@ from dateutil.parser import parse as parse_date
 from app.api.v1 import api_bp
 from app import db, socketio
 from app.models import CompromisedHost, CompromisedAccount, TimelineEvent
+from app.models.compromised import PASSWORD_MASK
 from app.middleware.rbac import require_permission, require_incident_access, get_current_user
 from app.middleware.audit import audit_log, log_security_event
 from app.services.encryption_service import encryption_service
 from app.utils.pagination import list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
-
-# Placeholder CompromisedAccount.to_dict() emits instead of the real password.
-PASSWORD_MASK = '********'
 
 
 # =============================================================================

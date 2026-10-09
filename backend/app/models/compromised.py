@@ -4,6 +4,11 @@ from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 
+# Placeholder to_dict() emits instead of the real password. Before the W0-PR0
+# fix, editing an account could store this literal as the "password"; a value
+# that decrypts to it is treated as no stored password.
+PASSWORD_MASK = '********'
+
 
 class CompromisedHost(BaseModel):
     """Compromised host model."""
@@ -113,12 +118,14 @@ class CompromisedAccount(BaseModel):
         if not data.get('host_system') and self.host:
             data['host_system'] = self.host.hostname
 
-        # Handle password field
-        if self.password_encrypted:
+        # Handle password field. A revealed value equal to the mask is legacy
+        # data (mask round-tripped by the old edit form): no real password.
+        legacy_mask = reveal_password and decrypted_password == PASSWORD_MASK
+        if self.password_encrypted and not legacy_mask:
             if reveal_password and decrypted_password:
                 data['password'] = decrypted_password
             else:
-                data['password'] = '********'
+                data['password'] = PASSWORD_MASK
             data['has_password'] = True
         else:
             data['password'] = None

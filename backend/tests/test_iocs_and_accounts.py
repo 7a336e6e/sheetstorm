@@ -137,3 +137,22 @@ def test_update_account_permission_and_org_scoping(app, users, auth, account):
     # Viewer cannot update
     assert _put(auth(users['Viewer']), inc, acct, clear_password=True).status_code == 403
     assert _stored_password(inc, acct) == 'Hunter2!'
+
+
+def test_legacy_stored_mask_is_reported_as_no_password(app, db, users, auth, account):
+    """Pre-PR0 edits could store the literal mask as the password: revealing it
+    must report "no stored password", never hand out the mask as a password."""
+    from app.models import CompromisedAccount
+    from app.services.encryption_service import encryption_service
+    inc, acct = account
+    row = CompromisedAccount.query.filter_by(id=acct['id'], incident_id=inc.id).first()
+    row.password_encrypted = encryption_service.encrypt('********')
+    db.session.commit()
+    client = auth(users['Administrator'])
+
+    one = client.get(f'/api/v1/incidents/{inc.id}/accounts/{acct["id"]}?reveal=true').get_json()
+    assert one['password'] is None and one['has_password'] is False
+
+    items = client.get(f'/api/v1/incidents/{inc.id}/accounts?reveal=true').get_json()['items']
+    listed = next(a for a in items if a['id'] == acct['id'])
+    assert listed['password'] is None and listed['has_password'] is False

@@ -76,6 +76,6 @@ describe('Sidebar admin section', () => {
     const all = visibleAdminItems([
       'audit_logs:read', 'incidents:archive', 'users:manage', 'roles:manage', 'teams:create', 'organizations:manage',
     ])
-    expect(all.map((i) => i.name)).toEqual(['Activity', 'Archived Incidents', 'Users', 'Roles', 'Teams', 'Settings'])
+    expect(all.map((i) => i.name)).toEqual(['Overview', 'Activity', 'Archived Incidents', 'Users', 'Roles', 'Teams', 'Settings'])
   })
 })

@@ -7,7 +7,7 @@
  * is cosmetic, the pages and the API enforce.
  */
 import type { LucideIcon } from 'lucide-react'
-import { Activity, Archive, Settings, Shield, Users, UsersRound } from 'lucide-react'
+import { Activity, Archive, LayoutGrid, Settings, Shield, Users, UsersRound } from 'lucide-react'
 
 export interface AdminNavItem {
   /** Stable id; the palette command is `nav-<id>`. */
@@ -21,6 +21,7 @@ export interface AdminNavItem {
 }
 
 export const adminNavigation: AdminNavItem[] = [
+  { id: 'overview', name: 'Overview', href: '/dashboard/admin/overview', icon: LayoutGrid, anyOf: ['organizations:manage'], keywords: 'admin status health' },
   { id: 'activity', name: 'Activity', href: '/dashboard/activity', icon: Activity, anyOf: ['audit_logs:read'], keywords: 'audit log' },
   { id: 'archived', name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive, anyOf: ['incidents:archive'] },
   { id: 'users', name: 'Users', href: '/dashboard/admin/users', icon: Users, anyOf: ['users:create', 'users:update', 'users:manage'], keywords: 'admin accounts' },
@@ -40,4 +41,9 @@ export const adminNavigation: AdminNavItem[] = [
 export function visibleAdminItems(permissions: readonly string[] | undefined) {
   const granted = permissions ?? []
   return adminNavigation.filter((item) => item.anyOf.some((p) => granted.includes(p)))
+}
+
+/** Where `/dashboard/admin` sends a user holding `permissions`: the first visible admin page. */
+export function adminLandingHref(permissions: readonly string[] | undefined): string {
+  return visibleAdminItems(permissions)[0]?.href ?? '/dashboard'
 }

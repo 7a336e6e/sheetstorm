@@ -112,7 +112,10 @@ Incident endpoints no longer emit the per-entity events `incident_updated`,
 Every create/update/delete of an incident entity emits one `entity:changed`
 (after the commit) instead, and bulk changes (spreadsheet import, attack-graph
 auto-generate, graph updates from a new timeline event on a host, playbook
-actions) emit `incident:resync` for the affected scopes. The old client events
+actions, the host bulk update `PATCH /hosts/bulk` with reason `bulk_update`)
+emit `incident:resync` for the affected scopes. `task` payloads include
+`evidence` refs with `missing` but `label: null`: labels depend on each
+reader's permissions, so clients read them over REST. The old client events
 `join_incident`, `leave_incident`, `cursor_move`, `typing_*` and
 `graph_node_moved` (and `user_joined`, `user_left`, `users_in_room`,
 `cursor_moved`, `user_typing`, `graph_node_position`) were removed earlier.

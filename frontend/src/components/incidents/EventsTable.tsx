@@ -28,9 +28,11 @@ import { useAllPages, usePaginatedQuery } from '@/hooks/use-paginated-query'
 import api from '@/lib/api'
 import { invalidate } from '@/lib/query-cache'
 import { notifyError, notifySuccess } from '@/lib/errors'
-import { PHASE_INFO } from '@/lib/design-tokens'
+import { PHASE_INFO, confidenceColors, type ConfidenceKey } from '@/lib/design-tokens'
+import { dwellMs, formatDuration } from '@/lib/time'
 import type { TimelineEvent, CompromisedHost, D3FENDTechnique, MitreMapping, VersionedRow } from '@/types'
 import {
+    AlertTriangle,
     Plus,
     Clock,
     Trash2,
@@ -88,6 +90,47 @@ const SHOW_OPTIONS = [
     { value: 'ioc', label: 'IOCs only' },
 ]
 
+const CONFIDENCE_KEYS = Object.keys(confidenceColors) as ConfidenceKey[]
+
+/** Server filter `confidence` takes a comma list; one combined option covers the common "high or better". */
+const CONFIDENCE_OPTIONS = [
+    ...CONFIDENCE_KEYS.map((k) => ({ value: k, label: confidenceColors[k].label })),
+    { value: 'high,certain', label: 'High or certain' },
+]
+
+const DETECTION_OPTIONS = [
+    { value: 'true', label: 'Detected' },
+    { value: 'false', label: 'Not yet detected' },
+]
+
+export function ConfidenceBadge({ level }: { level?: string | null }) {
+    const c = level ? confidenceColors[level as ConfidenceKey] : undefined
+    if (!c) return <span className="text-xs text-muted-foreground/60">—</span>
+    return (
+        <Badge variant="outline" className={`border px-1.5 py-0 text-[10px] ${c.bg} ${c.text} ${c.border}`}>
+            {c.label}
+        </Badge>
+    )
+}
+
+/** Detection minus occurrence; negative values are flagged (bad timestamps). */
+export function DwellCell({ event }: { event: Pick<TimelineEvent, 'timestamp' | 'detection_time'> }) {
+    const ms = dwellMs(event.timestamp, event.detection_time)
+    if (ms === null) return <span className="text-xs text-muted-foreground/60">—</span>
+    if (ms < 0) {
+        return (
+            <span
+                className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"
+                title="Detected before occurrence — check timestamps"
+            >
+                <AlertTriangle className="h-3 w-3" aria-label="Detected before occurrence — check timestamps" />
+                {formatDuration(ms)}
+            </span>
+        )
+    }
+    return <span className="text-xs tabular-nums text-muted-foreground">{formatDuration(ms)}</span>
+}
+
 /** MITRE mappings of an event, falling back to the legacy single tactic/technique. */
 function eventMappings(event: TimelineEvent): MitreMapping[] {
     if (event.mitre_mappings?.length) return event.mitre_mappings
@@ -125,9 +168,21 @@ function EventDetail({
                                                                         <div className="space-y-1">
                                                                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                                                                 <Clock className="h-3 w-3" />
-                                                                                <span className="font-medium">Timestamp</span>
+                                                                                <span className="font-medium">Event time</span>
                                                                             </div>
-                                                                            <p className="text-sm pl-5"><Timestamp value={event.timestamp} /></p>
+                                                                            <p className="text-sm pl-5"><Timestamp value={event.timestamp} mode="utc" /></p>
+                                                                            <p className="text-xs pl-5 text-muted-foreground"><Timestamp value={event.timestamp} mode="local" /></p>
+                                                                        </div>
+                                                                        <div className="space-y-1">
+                                                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                                <Clock className="h-3 w-3" />
+                                                                                <span className="font-medium">Detected</span>
+                                                                                <DwellCell event={event} />
+                                                                            </div>
+                                                                            <p className="text-sm pl-5"><Timestamp value={event.detection_time} mode="utc" fallback="Not recorded" /></p>
+                                                                            {event.detection_time && (
+                                                                                <p className="text-xs pl-5 text-muted-foreground"><Timestamp value={event.detection_time} mode="local" /></p>
+                                                                            )}
                                                                         </div>
                                                                         {(event.host || event.hostname) && (
                                                                             <div className="space-y-1">
@@ -512,8 +567,21 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
             ) : null,
         },
         {
-            id: 'timestamp', header: 'Time', sortKey: 'timestamp', className: 'whitespace-nowrap text-xs text-muted-foreground',
+            id: 'timestamp', header: 'Event time', sortKey: 'timestamp', className: 'whitespace-nowrap text-xs text-muted-foreground',
             cell: (event) => <Timestamp value={event.timestamp} />,
+        },
+        {
+            id: 'detection_time', header: 'Detected', sortKey: 'detection_time', hideBelow: 'md',
+            className: 'whitespace-nowrap text-xs text-muted-foreground',
+            cell: (event) => <Timestamp value={event.detection_time} fallback="—" />,
+        },
+        {
+            id: 'dwell', header: 'Dwell', sortKey: 'dwell', hideBelow: 'lg', className: 'whitespace-nowrap',
+            cell: (event) => <DwellCell event={event} />,
+        },
+        {
+            id: 'confidence', header: 'Confidence', sortKey: 'confidence', hideBelow: 'sm',
+            cell: (event) => <ConfidenceBadge level={event.confidence_level} />,
         },
         {
             id: 'host', header: 'Host', sortKey: 'hostname', hideBelow: 'md',
@@ -576,6 +644,20 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                             onChange={setShow}
                             options={SHOW_OPTIONS}
                         />
+                        <FilterSelect
+                            label="Confidence"
+                            allLabel="Any confidence"
+                            value={filters.confidence}
+                            onChange={(v) => query.setFilter('confidence', v)}
+                            options={CONFIDENCE_OPTIONS}
+                        />
+                        <FilterSelect
+                            label="Detection"
+                            allLabel="Detected or not"
+                            value={filters.has_detection}
+                            onChange={(v) => query.setFilter('has_detection', v)}
+                            options={DETECTION_OPTIONS}
+                        />
                     </>
                 }
                 primaryAction={{ label: 'Add Event', onSelect: handleAddClick, permission: 'timeline:create' }}
@@ -624,17 +706,18 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                             </div>
                             <div className="space-y-2">
                                 <Label>Confidence</Label>
-                                <select
-                                    value={form.confidence_level}
-                                    onChange={e => setForm({ ...form, confidence_level: e.target.value })}
-                                    className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                                <Select
+                                    value={form.confidence_level || 'none'}
+                                    onValueChange={v => setForm({ ...form, confidence_level: v === 'none' ? '' : v })}
                                 >
-                                    <option value="">—</option>
-                                    <option value="low">Low</option>
-                                    <option value="medium">Medium</option>
-                                    <option value="high">High</option>
-                                    <option value="certain">Certain</option>
-                                </select>
+                                    <SelectTrigger aria-label="Confidence"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">—</SelectItem>
+                                        {CONFIDENCE_KEYS.map(k => (
+                                            <SelectItem key={k} value={k}>{confidenceColors[k].label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
                         <div className="space-y-2">

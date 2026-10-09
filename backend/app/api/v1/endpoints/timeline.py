@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
+from sqlalchemy import case
 from app.api.v1 import api_bp
 from app import db
 from app.models import TimelineEvent, CompromisedHost, HostBasedIndicator
@@ -11,12 +12,21 @@ from app.middleware.audit import audit_log
 from app.services.graph_automation_service import GraphAutomationService
 from app.services import realtime
 from app.utils.concurrency import commit_or_conflict, precondition, set_etag
-from app.utils.pagination import list_response
+from app.utils.pagination import in_list, list_response
 from app.utils.validation import parse_datetime, check_choice, json_body
 
 
+# Confidence ranks low < medium < high < certain (unset ranks lowest).
+_CONFIDENCE_RANK = case({c: i + 1 for i, c in enumerate(TimelineEvent.CONFIDENCE_LEVELS)},
+                        value=TimelineEvent.confidence_level, else_=0)
+
 TIMELINE_SORTABLE = {
     'timestamp': TimelineEvent.timestamp,
+    # Dual time: events without a detection time sort last either way.
+    'detection_time': TimelineEvent.detection_time,
+    # Dwell = detection_time - timestamp (NULL without a detection time).
+    'dwell': TimelineEvent.detection_time - TimelineEvent.timestamp,
+    'confidence': _CONFIDENCE_RANK,
     'created_at': TimelineEvent.created_at,
     'hostname': TimelineEvent.hostname,
     'phase': TimelineEvent.phase,
@@ -29,6 +39,8 @@ TIMELINE_FILTERS = {
     'end_date': (TimelineEvent.timestamp, 'date_to'),
     'key_only': (TimelineEvent.is_key_event == True, 'flag'),  # noqa: E712
     'ioc_only': (TimelineEvent.is_ioc == True, 'flag'),  # noqa: E712
+    'confidence': (TimelineEvent.confidence_level, in_list(TimelineEvent.CONFIDENCE_LEVELS)),
+    'has_detection': (TimelineEvent.detection_time.isnot(None), 'bool'),
 }
 
 
@@ -38,7 +50,11 @@ TIMELINE_FILTERS = {
 def list_timeline_events(incident_id):
     """List timeline events (utils/pagination.py contract; q/search over
     activity+hostname; filters phase, hostname, host_id, mitre_tactic,
-    start_date, end_date, key_only, ioc_only)."""
+    start_date, end_date, key_only, ioc_only, confidence (comma list of
+    low|medium|high|certain), has_detection (true|false)).
+
+    Sort: timestamp (default), detection_time, dwell, confidence, created_at,
+    hostname, phase; NULLs (no detection time / confidence) sort last."""
     incident = g.incident
     query = TimelineEvent.query.filter_by(incident_id=incident.id)
 

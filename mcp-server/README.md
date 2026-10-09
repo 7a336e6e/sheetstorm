@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 
 ## Features
 
-- **119 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
+- **121 tools** covering the SheetStorm API surface (incidents, timeline, leads, evidence & custody, playbooks, IOCs, attack graph, threat intel)
 - **9 prompts** and **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels, graph types)
 - **stdio transport** for a single local user, **remote HTTP transport** (`/sse` + Streamable HTTP `/mcp`) with per-user OAuth
 - Async HTTP client with header-only JWT auth, refresh-token rotation, and retries
@@ -158,8 +158,8 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 - **Assignments (3)**: list/assign/remove responders
 - **Timeline (7)**: list/create/update/delete events (`detection_time`, `confidence_level`),
   `sheetstorm_mark_timeline_event_as_ioc`, `sheetstorm_list_timeline_mitre_tactics`, `sheetstorm_list_timeline_mitre_techniques`
-- **Tasks & leads (6)**: tasks with `task_type`, `lead_outcome`, `investigation_direction`, `evidence_refs`; comments
-- **Compromised assets (9)**: hosts (`triage_status`, acquisition flags), accounts incl. `sheetstorm_update_account`,
+- **Tasks & leads (7)**: tasks with `task_type`, `lead_outcome`, `investigation_direction`, `evidence_refs` (labels resolved by the server); lead queue `sheetstorm_list_leads`; comments
+- **Compromised assets (10)**: hosts (`triage_status`, acquisition flags, triage/acquisition filters, `sheetstorm_bulk_update_hosts`), accounts incl. `sheetstorm_update_account`,
   `sheetstorm_delete_account`, `sheetstorm_reveal_account_password` (one account; plaintext enters the model context)
 - **IOCs (12)**: network IOCs, host IOCs, malware
 - **Artifacts (7)**: list, upload (acquisition metadata), download, verify, chain of custody,

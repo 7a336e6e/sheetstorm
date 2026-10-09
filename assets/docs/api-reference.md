@@ -90,6 +90,12 @@ admin) gets `403 password_change_required` on every route except `/auth/me`, `/a
 | GET    | `/mitre/tactics`                          | List MITRE tactics             |
 | GET    | `/mitre/techniques/{tactic}`              | List techniques for tactic     |
 
+Timeline list (dual time): `sort` also accepts `detection_time`, `dwell`
+(detection minus occurrence) and `confidence`; events without a detection
+time or confidence sort last. Filters: `confidence=high,certain` (comma list
+of `low|medium|high|certain`, anything else is 400 `invalid_filter`) and
+`has_detection=true|false`.
+
 ## Compromised Assets
 
 | Method | Endpoint                                  | Description                    |
@@ -97,12 +103,29 @@ admin) gets `403 password_change_required` on every route except `/auth/me`, `/a
 | GET    | `/incidents/{id}/hosts`                   | List compromised hosts         |
 | POST   | `/incidents/{id}/hosts`                   | Add compromised host           |
 | PUT    | `/incidents/{id}/hosts/{hid}`             | Update host                    |
+| PATCH  | `/incidents/{id}/hosts/bulk`              | Set triage / containment on up to 500 hosts (`hosts:update`) |
 | DELETE | `/incidents/{id}/hosts/{hid}`             | Delete host                    |
 | GET    | `/incidents/{id}/accounts`                | List compromised accounts      |
 | POST   | `/incidents/{id}/accounts`                | Add account (password encrypted)|
 | PUT    | `/incidents/{id}/accounts/{aid}`          | Update account                 |
 | DELETE | `/incidents/{id}/accounts/{aid}`          | Delete account                 |
 | GET    | `/incidents/{id}/accounts/{aid}/reveal`   | Reveal decrypted password      |
+
+Hosts:
+- List filters: `triage_status` (comma list of
+  `clean|compromised|under_analysis|suspicious`), `acquisition` (comma list
+  of `disk_imaged|memory_captured|logs_collected|forensically_sound` that must
+  be true; prefix `!` for "not done", e.g. `memory_captured,!disk_imaged`),
+  `containment_status`. `sort` also accepts `triage_status`.
+- `acquisition_status` on create/update accepts only those four booleans plus
+  `acquired_at` (ISO-8601, naive = UTC, stored as UTC). Unknown keys or wrong
+  types return 400.
+- Bulk: body `{host_ids: [uuid], triage_status?, containment_status?}`, with
+  no other keys. 1..500 ids, de-duplicated. Every id must be a host of the
+  incident, otherwise 400 `invalid_host_ids` with `invalid: [...]` and nothing
+  changes. The response is `{updated, items}`, the update is audited as
+  `bulk_update`, and clients receive one `incident:resync` for the `hosts`
+  scope.
 
 ## IOCs
 
@@ -158,6 +181,28 @@ admin) gets `403 password_change_required` on every route except `/auth/me`, `/a
 | DELETE | `/incidents/{id}/tasks/{tid}`             | Delete task                    |
 | POST   | `/incidents/{id}/tasks/{tid}/comments`    | Add comment                    |
 | GET    | `/incidents/{id}/tasks/{tid}/comments`    | List comments                  |
+
+Tasks:
+- List filters: `task_type` (comma list), `lead_outcome` (comma list; `open`
+  = no outcome yet), plus `status`, `priority`, `assignee_id` and `phase`.
+  `sort` also accepts `updated_at`. `include_comments=false` omits the
+  embedded comments. `lead_counts=true` adds `lead_counts` (`{open,
+  false_positive, confirmed_malicious, inconclusive, resolved}` over the
+  incident's investigative leads).
+- `evidence_refs`: at most 50 `{evidence_type, evidence_id}` refs to
+  records of the same incident. Types: `timeline_event, host, account,
+  network_ioc, host_ioc, malware, artifact, evidence_item`. The aliases
+  `host_indicator` and `network_indicator` are stored canonically. Bad,
+  unknown or cross-incident refs return 400 `invalid_evidence_refs` with
+  `invalid: [{index, evidence_type, evidence_id, reason}]`. Refs already on
+  the task are kept on update even if their record was deleted.
+- Responses include `evidence: [{evidence_type, evidence_id, label, missing,
+  restricted?}]`, with labels resolved by the server. Socket payloads carry
+  the refs without labels.
+- `assignee_id` must be an active user of the incident's organization (400
+  `invalid_assignee`). `parent_task_id` must be a task of the same incident
+  and must not create a cycle (400 `invalid_parent_task`).
+  `investigation_direction` is capped at 5000 characters and `title` at 500.
 
 ## Reports
 

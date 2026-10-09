@@ -23,10 +23,22 @@ import {
 import { Combobox } from '@/components/ui/combobox'
 import { DataTable, FilterSelect, type DataTableColumn } from '@/components/ui/data-table'
 import { usePaginatedQuery } from '@/hooks/use-paginated-query'
+import { usePermission } from '@/components/auth/permission-gate'
+import { Switch } from '@/components/ui/switch'
 import api from '@/lib/api'
 import { invalidate } from '@/lib/query-cache'
-import { notifyError } from '@/lib/errors'
-import type { CompromisedHost, CustomFieldOption, VersionedRow } from '@/types'
+import { notifyError, notifySuccess } from '@/lib/errors'
+import { cn } from '@/lib/utils'
+import { acquisitionChip, triageColors, type TriageKey } from '@/lib/design-tokens'
+import type {
+    AcquisitionFlag,
+    AcquisitionStatus,
+    BulkHostUpdate,
+    BulkHostUpdateResult,
+    CompromisedHost,
+    CustomFieldOption,
+    VersionedRow,
+} from '@/types'
 import {
     Server,
     Monitor,
@@ -66,13 +78,89 @@ const DEFAULT_SYSTEM_TYPES = [
     { value: 'other', label: 'Other', icon: HardDrive },
 ]
 
+// Same values as the backend (CompromisedHost.CONTAINMENT_STATUSES); the
+// former 'monitoring' option was rejected by the API with a 400.
 const CONTAINMENT_STATUSES = [
     { value: 'active', label: 'Active', color: 'bg-red-500/20 text-red-400 border-red-400/30' },
-    { value: 'monitoring', label: 'Monitoring', color: 'bg-amber-500/20 text-amber-400 border-amber-400/30' },
+    { value: 'compromised', label: 'Compromised', color: 'bg-red-500/20 text-red-400 border-red-400/30' },
     { value: 'isolated', label: 'Isolated', color: 'bg-blue-500/20 text-blue-400 border-blue-400/30' },
+    { value: 'contained', label: 'Contained', color: 'bg-amber-500/20 text-amber-400 border-amber-400/30' },
     { value: 'reimaged', label: 'Reimaged', color: 'bg-green-500/20 text-green-400 border-green-400/30' },
+    { value: 'cleaned', label: 'Cleaned', color: 'bg-green-500/20 text-green-400 border-green-400/30' },
     { value: 'decommissioned', label: 'Decommissioned', color: 'bg-gray-500/20 text-gray-400 border-gray-400/30' },
 ]
+
+const TRIAGE_KEYS = Object.keys(triageColors) as TriageKey[]
+const TRIAGE_OPTIONS = TRIAGE_KEYS.map((k) => ({ value: k, label: triageColors[k].label }))
+
+const ACQUISITION_FLAGS: { key: AcquisitionFlag; short: string; label: string }[] = [
+    { key: 'disk_imaged', short: 'Disk', label: 'Disk imaged' },
+    { key: 'memory_captured', short: 'Mem', label: 'Memory captured' },
+    { key: 'logs_collected', short: 'Logs', label: 'Logs collected' },
+    { key: 'forensically_sound', short: '✓', label: 'Forensically sound' },
+]
+
+/** Server `acquisition` filter: flags must be true; `!flag` = not done. */
+const ACQUISITION_FILTER_OPTIONS = [
+    { value: 'disk_imaged', label: 'Disk imaged' },
+    { value: 'memory_captured', label: 'Memory captured' },
+    { value: 'logs_collected', label: 'Logs collected' },
+    { value: 'forensically_sound', label: 'Forensically sound' },
+    { value: 'memory_captured,!disk_imaged', label: 'Memory but no disk image' },
+    { value: '!disk_imaged', label: 'No disk image' },
+    { value: '!memory_captured', label: 'No memory capture' },
+]
+
+const BULK_MAX = 500
+
+export function TriageBadge({ status }: { status?: string | null }) {
+    const c = triageColors[(status || 'under_analysis') as TriageKey] ?? triageColors.under_analysis
+    return (
+        <Badge variant="outline" className={cn('border text-[10px]', c.bg, c.text, c.border)}>
+            {c.label}
+        </Badge>
+    )
+}
+
+export function AcquisitionChips({ status }: { status?: AcquisitionStatus | null }) {
+    return (
+        <div className="flex items-center gap-1">
+            {ACQUISITION_FLAGS.map((f) => {
+                const on = !!status?.[f.key]
+                return (
+                    <span
+                        key={f.key}
+                        title={`${f.label}: ${on ? 'yes' : 'no'}`}
+                        aria-label={`${f.label}: ${on ? 'yes' : 'no'}`}
+                        className={cn('rounded border px-1 py-0 text-[10px] leading-4', on ? acquisitionChip.on : acquisitionChip.off)}
+                    >
+                        {f.short}
+                    </span>
+                )
+            })}
+        </div>
+    )
+}
+
+type AcquisitionForm = Required<Pick<AcquisitionStatus, AcquisitionFlag>> & { acquired_at: string }
+
+const EMPTY_ACQUISITION: AcquisitionForm = {
+    disk_imaged: false, memory_captured: false, logs_collected: false, forensically_sound: false, acquired_at: '',
+}
+
+function toAcquisitionForm(a?: AcquisitionStatus | null): AcquisitionForm {
+    return {
+        disk_imaged: !!a?.disk_imaged,
+        memory_captured: !!a?.memory_captured,
+        logs_collected: !!a?.logs_collected,
+        forensically_sound: !!a?.forensically_sound,
+        acquired_at: a?.acquired_at || '',
+    }
+}
+
+function fromAcquisitionForm(a: AcquisitionForm): AcquisitionStatus & { acquired_at: string | null } {
+    return { ...a, acquired_at: a.acquired_at || null } as AcquisitionStatus & { acquired_at: string | null }
+}
 
 export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const confirm = useConfirm()
@@ -87,6 +175,28 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
     const [editingHost, setEditingHost] = useState<HostRow | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [customTypes, setCustomTypes] = useState<CustomFieldOption[]>([])
+    const canUpdate = usePermission('hosts:update')
+    const [acquisition, setAcquisition] = useState<AcquisitionForm>(EMPTY_ACQUISITION)
+    const [bulkBusy, setBulkBusy] = useState(false)
+
+    const bulkUpdate = async (ids: string[], update: Omit<BulkHostUpdate, 'host_ids'>, clear: () => void) => {
+        if (ids.length === 0) return
+        if (ids.length > BULK_MAX) {
+            notifyError(new Error(`Select at most ${BULK_MAX} hosts`), 'update the hosts')
+            return
+        }
+        setBulkBusy(true)
+        try {
+            const res = await api.patch<BulkHostUpdateResult>(`${endpoint}/bulk`, { host_ids: ids, ...update })
+            clear()
+            invalidate(endpoint)
+            notifySuccess('Hosts updated', `${res.updated} host${res.updated === 1 ? '' : 's'} updated.`)
+        } catch (error) {
+            notifyError(error, 'update the hosts')
+        } finally {
+            setBulkBusy(false)
+        }
+    }
 
     const [form, setForm] = useState({
         hostname: '',
@@ -122,6 +232,7 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
             os_version: '', containment_status: 'active', triage_status: 'under_analysis',
             first_seen: '', evidence: '',
         })
+        setAcquisition(EMPTY_ACQUISITION)
         setEditingHost(null)
     }
 
@@ -138,6 +249,7 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                 first_seen: host.first_seen || '',
                 evidence: host.evidence || '',
             })
+            setAcquisition(toAcquisitionForm(host.acquisition_status))
         } else {
             resetForm()
         }
@@ -148,10 +260,11 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
         if (!form.hostname) return
         setIsSubmitting(true)
         try {
+            const payload = { ...form, first_seen: form.first_seen || null, acquisition_status: fromAcquisitionForm(acquisition) }
             if (editingHost) {
-                await api.put(`${endpoint}/${editingHost.id}`, form, { ifMatch: editingHost.version })
+                await api.put(`${endpoint}/${editingHost.id}`, payload, { ifMatch: editingHost.version })
             } else {
-                await api.post(endpoint, form)
+                await api.post(endpoint, payload)
             }
             setShowModal(false)
             resetForm()
@@ -203,6 +316,8 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
             ),
         },
         { id: 'os', header: 'OS', hideBelow: 'lg', className: 'text-xs text-muted-foreground', cell: (h) => h.os_version || '-' },
+        { id: 'triage', header: 'Triage', sortKey: 'triage_status', cell: (h) => <TriageBadge status={h.triage_status} /> },
+        { id: 'acquisition', header: 'Acquisition', hideBelow: 'md', cell: (h) => <AcquisitionChips status={h.acquisition_status} /> },
         { id: 'containment', header: 'Containment', sortKey: 'containment_status', cell: (h) => getContainmentBadge(h.containment_status || 'active') },
         {
             id: 'first_seen', header: 'First Seen', sortKey: 'first_seen', hideBelow: 'sm', className: 'text-sm text-muted-foreground',
@@ -220,13 +335,47 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                 ariaLabel="Compromised hosts"
                 searchPlaceholder="Search hosts, IPs..."
                 toolbar={
-                    <FilterSelect
-                        label="Containment"
-                        value={query.state.filters.containment_status}
-                        onChange={(v) => query.setFilter('containment_status', v)}
-                        options={CONTAINMENT_STATUSES.map((c) => ({ value: c.value, label: c.label }))}
-                    />
+                    <>
+                        <FilterSelect
+                            label="Triage"
+                            allLabel="Any triage"
+                            value={query.state.filters.triage_status}
+                            onChange={(v) => query.setFilter('triage_status', v)}
+                            options={TRIAGE_OPTIONS}
+                        />
+                        <FilterSelect
+                            label="Acquisition"
+                            allLabel="Any acquisition"
+                            className="w-[200px]"
+                            value={query.state.filters.acquisition}
+                            onChange={(v) => query.setFilter('acquisition', v)}
+                            options={ACQUISITION_FILTER_OPTIONS}
+                        />
+                        <FilterSelect
+                            label="Containment"
+                            value={query.state.filters.containment_status}
+                            onChange={(v) => query.setFilter('containment_status', v)}
+                            options={CONTAINMENT_STATUSES.map((c) => ({ value: c.value, label: c.label }))}
+                        />
+                    </>
                 }
+                selectable={canUpdate}
+                bulkActions={(ids, clear) => (
+                    <>
+                        <Select disabled={bulkBusy} value="" onValueChange={(v) => void bulkUpdate(ids, { triage_status: v as TriageKey }, clear)}>
+                            <SelectTrigger aria-label="Set triage for selected hosts" className="h-8 w-[160px]"><SelectValue placeholder="Set triage…" /></SelectTrigger>
+                            <SelectContent>
+                                {TRIAGE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <Select disabled={bulkBusy} value="" onValueChange={(v) => void bulkUpdate(ids, { containment_status: v }, clear)}>
+                            <SelectTrigger aria-label="Set containment for selected hosts" className="h-8 w-[180px]"><SelectValue placeholder="Set containment…" /></SelectTrigger>
+                            <SelectContent>
+                                {CONTAINMENT_STATUSES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </>
+                )}
                 primaryAction={{ label: 'Add Host', onSelect: () => handleOpenModal(), permission: 'hosts:create' }}
                 rowActions={(h) => [
                     { label: 'Edit', icon: Pencil, onSelect: () => handleOpenModal(h), permission: 'hosts:update' },
@@ -303,6 +452,25 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                                 <DateTimeInput value={form.first_seen} onChange={iso => setForm({ ...form, first_seen: iso ?? '' })} variant="glass" />
                             </div>
                         </div>
+                        <fieldset className="space-y-3 rounded-md border border-white/10 p-3">
+                            <legend className="px-1 text-sm font-medium">Acquisition</legend>
+                            <div className="grid grid-cols-2 gap-3">
+                                {ACQUISITION_FLAGS.map((f) => (
+                                    <label key={f.key} className="flex items-center justify-between gap-2 text-sm">
+                                        <span>{f.label}</span>
+                                        <Switch
+                                            aria-label={f.label}
+                                            checked={acquisition[f.key]}
+                                            onCheckedChange={(checked) => setAcquisition({ ...acquisition, [f.key]: checked })}
+                                        />
+                                    </label>
+                                ))}
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Acquired At</Label>
+                                <DateTimeInput value={acquisition.acquired_at} onChange={iso => setAcquisition({ ...acquisition, acquired_at: iso ?? '' })} variant="glass" />
+                            </div>
+                        </fieldset>
                         <div className="space-y-2">
                             <Label>Evidence / Notes</Label>
                             <Textarea value={form.evidence} onChange={e => setForm({ ...form, evidence: e.target.value })} variant="glass" placeholder="Evidence, indicators, or notes about this host..." />

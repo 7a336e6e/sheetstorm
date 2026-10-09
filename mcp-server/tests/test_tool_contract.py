@@ -57,8 +57,12 @@ CASES: dict[str, tuple] = {
     "sheetstorm_list_timeline_mitre_techniques": ({"tactic": "execution"}, "GET", "/mitre/techniques",
                                                   None, {"tactic": "execution"}),
     # tasks
-    "sheetstorm_list_tasks": ({"incident_id": I, "status": "pending"}, "GET", f"/incidents/{I}/tasks",
-                              None, {"status": "pending"}),
+    "sheetstorm_list_tasks": ({"incident_id": I, "status": "pending", "task_type": "investigative_lead",
+                               "lead_outcome": "open"}, "GET", f"/incidents/{I}/tasks",
+                              None, {"status": "pending", "task_type": "investigative_lead", "lead_outcome": "open"}),
+    "sheetstorm_list_leads": ({"incident_id": I}, "GET", f"/incidents/{I}/tasks", None,
+                              {"task_type": "investigative_lead", "lead_outcome": "open", "lead_counts": "true",
+                               "include_comments": "false"}),
     "sheetstorm_create_task": (
         {"incident_id": I, "title": "Lead", "task_type": "investigative_lead",
          "investigation_direction": "check RDP", "evidence_refs": '[{"evidence_type": "artifact", "evidence_id": "a1"}]'},
@@ -73,7 +77,12 @@ CASES: dict[str, tuple] = {
     "sheetstorm_list_task_comments": ({"incident_id": I, "task_id": "t1"}, "GET",
                                       f"/incidents/{I}/tasks/t1/comments", None, None),
     # hosts & accounts
-    "sheetstorm_list_hosts": ({"incident_id": I}, "GET", f"/incidents/{I}/hosts", None, None),
+    "sheetstorm_list_hosts": ({"incident_id": I, "triage_status": "suspicious", "acquisition": "!disk_imaged"},
+                              "GET", f"/incidents/{I}/hosts", None,
+                              {"triage_status": "suspicious", "acquisition": "!disk_imaged"}),
+    "sheetstorm_bulk_update_hosts": ({"incident_id": I, "host_ids": ["h1", "h2"], "triage_status": "clean"},
+                                     "PATCH", f"/incidents/{I}/hosts/bulk",
+                                     {"host_ids": ["h1", "h2"], "triage_status": "clean"}, None),
     "sheetstorm_add_host": ({"incident_id": I, "hostname": "WS1", "triage_status": "suspicious",
                              "memory_captured": True}, "POST", f"/incidents/{I}/hosts",
                             {"hostname": "WS1", "triage_status": "suspicious",

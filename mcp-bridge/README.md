@@ -12,7 +12,7 @@ Claude Desktop ←→ stdio ←→ sheetstorm-bridge ←→ HTTPS ←→ SheetSt
 
 ## Features
 
-- **119 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
+- **121 tools** covering the full SheetStorm IR workflow (incl. playbooks, legal hold, custody export)
 - **9 structured prompts** for incident analysis, reporting, and threat intel
 - **7 MCP resources** for reference data (IR phases, MITRE ATT&CK, severity levels)
 - Auto-authenticates on startup (username/password or API token)
@@ -131,8 +131,8 @@ Restart Claude Desktop. You should see "sheetstorm" appear in the MCP server lis
 | Incidents | 9 | CRUD, status, archive / unarchive / list archived, permanent delete (admin, explicit confirmation) |
 | Assignments | 3 | Assign / unassign responders |
 | Timeline | 7 | Events (detection time, confidence), mark event as IOC, timeline MITRE lists |
-| Tasks | 6 | Tasks & investigative leads (type, outcome, direction, evidence refs), comments |
-| Assets | 9 | Hosts (triage / acquisition status), accounts (update, delete, single-account reveal) |
+| Tasks | 7 | Tasks & investigative leads (type, outcome, direction, evidence refs with server-resolved labels), lead queue (`sheetstorm_list_leads`), comments |
+| Assets | 10 | Hosts (triage / acquisition status and filters, bulk triage via `sheetstorm_bulk_update_hosts`), accounts (update, delete, single-account reveal) |
 | IOCs | 12 | Network IOCs, host IOCs, malware |
 | Artifacts | 7 | Upload (acquisition metadata), download, verify, chain of custody, legal hold, custody export |
 | Attack Graph | 10 | Nodes, edges (incl. update), auto-generation, node/edge types |

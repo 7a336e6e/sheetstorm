@@ -341,6 +341,18 @@ def upgrade():
     op.execute(BACKFILL_ITEMS)
     op.execute(BACKFILL_CUSTODY)
 
+    # Custody rows whose artifact no longer exists cannot be attached to an
+    # evidence item. They only exist when artifacts were deleted while
+    # foreign keys were bypassed; stop with a clear message instead of a
+    # NOT NULL violation (no data is guessed or dropped here).
+    orphans = op.get_bind().execute(sa.text(
+        'SELECT count(*) FROM chain_of_custody WHERE evidence_item_id IS NULL')).scalar()
+    if orphans:
+        raise RuntimeError(
+            f'{orphans} chain_of_custody row(s) reference artifacts that no longer exist. Back up the '
+            'database, then run `flask sheetstorm repair-orphans` (report) and '
+            '`flask sheetstorm repair-orphans --apply --report <file>` before upgrading.')
+
     # NOT NULL + FK swap
     op.alter_column('artifacts', 'evidence_item_id', nullable=False)
     op.alter_column('chain_of_custody', 'evidence_item_id', nullable=False)

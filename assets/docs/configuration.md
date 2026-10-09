@@ -162,6 +162,17 @@ The proxy publishes port `8080` on all interfaces by default. Bind it to a speci
 
 ## Database migrations
 
+### Upgrading a database with orphaned rows
+
+If records were ever deleted with foreign-key checks bypassed (manual SQL, `session_replication_role = replica`), rows can point at parents that no longer exist, and an upgrade migration that rebuilds those keys stops with a message naming `repair-orphans`. Back up the database, then, with the new image and **before** starting the backend:
+
+```bash
+docker compose run --rm --no-deps --entrypoint flask backend sheetstorm repair-orphans            # report only
+docker compose run --rm --no-deps --entrypoint flask backend sheetstorm repair-orphans --apply --report /tmp/repair.json
+```
+
+Nullable references are cleared; rows the schema deletes with their parent (`ON DELETE CASCADE`: role assignments, team members, notifications, custody rows of deleted artifacts) are deleted and written to the report; required authorship (`created_by`) is left as is unless `--reassign-to <email>` names a user to take it over; the audit log is never changed.
+
 The backend entrypoint runs `flask db upgrade` on every container start, so a fresh `docker compose up` creates the full schema. If the database is not reachable yet it retries up to 5 times with exponential backoff (`MIGRATION_MAX_ATTEMPTS` overrides) and then **exits with an error** - the container will restart and `docker compose logs backend` shows the failure. The API never starts against a half-migrated schema. The admin user is seeded by `start.sh` (or manually: `docker compose exec backend python -c "from app.seed import seed_all; seed_all()"`).
 
 ## Rate limiting

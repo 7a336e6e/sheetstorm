@@ -323,6 +323,12 @@
 
 ### Other fixes
 
+- **Upgrades of databases with orphaned rows:** `flask sheetstorm repair-orphans`
+  reports (and with `--apply` repairs) rows whose foreign keys point at missing
+  parents; the user-lifecycle migration clears orphaned `granted_by` values and
+  the evidence migration stops with a message naming the command instead of a
+  NOT NULL error. See configuration.md → Database migrations.
+
 - **Dependencies refreshed** (minor/patch only, every release at least 7 days
   old): Flask-Limiter 3.12, alembic 1.20, pydantic 2.13, openai 1.109,
   supabase 2.31, boto3 1.43, pandas 2.3 and others on the backend (SQLAlchemy is

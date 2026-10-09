@@ -36,6 +36,7 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OUTBOUND_URL_ALLOWLIST` | empty | Comma-separated hosts/CIDRs that admin-configured self-hosted integrations (MISP, Velociraptor, TheHive, Ollama, MinIO, ...) may target even though they resolve to private addresses, e.g. `ollama,misp.internal,10.0.0.0/8`. Private, loopback and metadata addresses are blocked otherwise (SSRF protection); link-local/cloud-metadata addresses are always blocked. |
+| `PLATFORM_ORG_SLUG` | `default` | Slug of the platform organization. Only holders of `system:manage` in this organization are platform administrators (instance-wide settings). Self-registration is closed by default; an organization manager of the `default` organization enables it in Settings → General (installs upgraded from before `admin_guardrails_rbac` keep it open). |
 | `IOC_AUTO_ENRICH` | `false` | Automatically send newly added IOCs to configured threat-intel integrations. Off by default because it discloses indicators to third parties. An organization-level setting overrides this default. |
 
 ### AI providers

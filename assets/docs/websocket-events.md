@@ -28,10 +28,12 @@ Connect via Socket.IO at `NEXT_PUBLIC_WS_URL` with `?token=<jwt>` query param.
 | `user_typing`          | `{ user_id, user_name, field, typing }`        | Other user typing          |
 | `graph_node_position`  | `{ node_id, position, user_id }`               | Other user moved node      |
 | `notification`         | `Notification`                                 | Real-time notification     |
+| `activity:new`         | audit row (public details)                     | Incident room, org room, or (admin actions) each holder of `audit_logs:read` |
 | `graph_node_added`     | `AttackGraphNode`                              | Node created via API       |
 | `graph_node_updated`   | `AttackGraphNode`                              | Node updated via API       |
 | `graph_node_deleted`   | `{ id }`                                       | Node deleted via API       |
 | `graph_edge_added`     | `AttackGraphEdge`                              | Edge created via API       |
 | `graph_edge_updated`   | `AttackGraphEdge`                              | Edge updated via API       |
 | `graph_edge_deleted`   | `{ id }`                                       | Edge deleted via API       |
+| `permissions_changed`  | `{}`                                           | Sent to `user_{id}` after a role assignment/revocation for that user or an edit of a role they hold (≤500 holders); refetch `/auth/me` |
 | `pong`                 | —                                              | Keep-alive response        |

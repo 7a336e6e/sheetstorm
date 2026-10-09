@@ -149,6 +149,25 @@ scripts/verify-wp.sh --e2e      # + Playwright @smoke against E2E_BASE_URL (inte
 
 Gates: backend docker suite (includes the single-Alembic-head check in `test_migrations.py`), MCP suites, then for the frontend `npm ci --ignore-scripts --legacy-peer-deps`, `tsc --noEmit`, `npm run lint`, `jest --ci` and `next build`. It also fails when a dependency manifest changed vs the base, because only W0-TH may add dependencies (`ALLOW_DEPS=1` acknowledges an approved change). `WP_ID` names the docker resources (default: from the branch name). Several WPs can run it at the same time.
 
+## Frontend lists, search and shortcuts
+
+- **Lists** use `usePaginatedQuery` + `DataTable` against the backend pagination contract (`page`, `per_page` ≤ 200, `sort=-field`, `q`, filters; envelope `{items, total, page, per_page, pages, sort}`). Pass `urlKey` to mirror list state in the URL (`<key>.page`, `.sort`, `.q`, `.f.<filter>`), e.g. the incidents list uses `inc.*` and the archived list `arch.*`. Pages that call it render inside `<Suspense>` (Next requires it for `useSearchParams`). Stores keep single records and mutations, not lists; after a mutation call `invalidate('<endpoint>')` from `lib/query-cache` so every reader refetches (`invalidate('/incidents?')` hits only the incident lists, not per-incident tabs).
+- **Global search**: the command palette (`components/layout/command-palette.tsx`) and `/dashboard/search` read `GET /search` (results grouped by type with `facets`). Hits deep-link to `/dashboard/incidents/<id>?tab=<tab>&row=<id>`. Recent queries (text only) are kept in `sessionStorage`.
+- **Notification links** go through `safeDashboardHref` (`lib/feature-stores.ts`): only same-origin `/dashboard/...` paths are followed; anything else falls back to the incident link or no link.
+- **Keyboard shortcuts** (help dialog on `?`):
+
+  | Keys | Action |
+  |------|--------|
+  | `Ctrl+K` / `⌘K` | Command palette (works while typing) |
+  | `g` then `i` | Go to incidents |
+  | `g` then `d` | Go to dashboard |
+  | `n` | New item in the visible list (its `primaryAction`, permission-gated) |
+  | `?` | Shortcuts help |
+  | `Esc` | Close dialogs and panels |
+
+  Register new global shortcuts with `useHotkey` (`hooks/use-hotkeys.ts`) and list them in `components/layout/shortcuts-help.tsx`.
+- Jest: with `jest` imported from `@jest/globals`, SWC does not hoist `jest.mock()` above static imports. Import modules that use a mocked module (for example `next/navigation`) dynamically in `beforeAll` (see `src/components/layout/command-palette.test.tsx`), and add `import '@testing-library/jest-dom/jest-globals'` to type the jest-dom matchers.
+
 ## Docker images
 
 | Service | Base image |

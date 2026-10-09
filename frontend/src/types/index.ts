@@ -703,3 +703,4 @@ export interface CustomFieldOption {
 
 export * from './preferences'
 export * from './search'
+export * from './incident-tables'

@@ -302,6 +302,7 @@ export interface PlaybookAction {
   type: 'enrich_iocs' | 'generate_summary' | 'suggest_mitre' | 'create_task' | string
   name: string
   auto_run?: boolean
+  config?: Record<string, unknown>
 }
 
 export interface PlaybookPhaseTask {
@@ -328,9 +329,13 @@ export interface Playbook {
   incident_type?: string
   definition: PlaybookDefinition
   is_template?: boolean
+  /** Built-ins are code-resident (`id: "builtin:<key>"`), read-only; clone to edit. */
+  is_builtin?: boolean
+  builtin_key?: string | null
+  cloned_from?: string | null
   creator?: { id: string; name: string } | null
-  created_at: string
-  updated_at?: string
+  created_at: string | null
+  updated_at?: string | null
 }
 
 export interface PlaybookActionRun {
@@ -345,6 +350,7 @@ export interface IncidentPlaybook {
   id: string
   incident_id: string
   playbook_id?: string | null
+  builtin_key?: string | null
   name: string
   definition: PlaybookDefinition
   current_phase: number
@@ -718,3 +724,4 @@ export * from './provenance'
 export * from './post-incident'
 export * from './exports'
 export * from './evidence'
+export * from './questions'

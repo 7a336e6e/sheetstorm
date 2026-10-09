@@ -35,6 +35,10 @@ class Incident(BaseModel):
     lessons_learned = Column(Text)
     created_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     updated_at = Column(DateTime(timezone=True))
+    # Optimistic concurrency: bumped by SQLAlchemy on every UPDATE
+    # (see app/utils/concurrency.py).
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col': version}
     is_archived = Column(Boolean, default=False, server_default='false')
     archived_at = Column(DateTime(timezone=True))
     archived_by = Column(UUID(as_uuid=True), ForeignKey('users.id'))

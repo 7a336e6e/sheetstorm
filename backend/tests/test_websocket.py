@@ -75,26 +75,43 @@ def test_join_incident_requires_access(app, users, auth, make_incident):
     ac = auth(users['Viewer'])
     c = _connect(app, auth={'token': ac.access_token})
     c.get_received()
-    c.emit('join_incident', {'incident_id': str(hidden.id)})
-    assert any(e['name'] == 'error' for e in c.get_received())
-    c.emit('join_incident', {'incident_id': 'not-a-uuid'})
-    assert any(e['name'] == 'error' for e in c.get_received())
-    c.emit('join_incident', {'incident_id': str(visible.id)})
+    c.emit('incident:join', {'incident_id': str(hidden.id)})
+    assert any(e['name'] == 'rt:error' for e in c.get_received())
+    c.emit('incident:join', {'incident_id': 'not-a-uuid'})
+    assert any(e['name'] == 'rt:error' for e in c.get_received())
+    c.emit('incident:join', {'incident_id': str(visible.id)})
     names = [e['name'] for e in c.get_received()]
-    assert 'users_in_room' in names and 'error' not in names
+    assert 'incident:joined' in names and 'rt:error' not in names
 
 
-def test_spoofed_identity_in_events_is_ignored(app, users, auth, make_incident):
+def test_spoofed_identity_in_events_is_ignored(app, users, auth, make_incident, monkeypatch):
+    from app.api import websocket as ws
+    monkeypatch.setattr(ws, 'PRESENCE_BROADCAST_INTERVAL', 0.0)
     inc = make_incident(tlp='white')
     a = _connect(app, auth={'token': auth(users['Viewer']).access_token})
     b = _connect(app, auth={'token': auth(users['Administrator']).access_token})
     for c in (a, b):
-        c.emit('join_incident', {'incident_id': str(inc.id)})
-        c.get_received()
-    a.emit('typing_start', {'incident_id': str(inc.id), 'field': 'x',
-                            'user_id': str(users['Administrator'].id), 'user_name': 'Admin'})
-    typing = [e for e in b.get_received() if e['name'] == 'user_typing']
-    assert typing and typing[0]['args'][0]['user_id'] == str(users['Viewer'].id)
+        c.emit('incident:join', {'incident_id': str(inc.id)})
+    a.get_received()
+    b.get_received()
+    a.emit('presence:update', {'incident_id': str(inc.id), 'mode': 'editing', 'focus': None,
+                               'user_id': str(users['Administrator'].id), 'name': 'Admin'})
+    states = [e['args'][0] for e in b.get_received() if e['name'] == 'presence:state']
+    assert states
+    editing = [u for u in states[-1]['users'] if u['mode'] == 'editing']
+    assert editing and editing[0]['user_id'] == str(users['Viewer'].id)
+    assert editing[0]['name'] == users['Viewer'].name
+
+
+def test_api_key_token_is_anonymous(app, users):
+    from flask_jwt_extended import create_access_token
+    from app.api.v1.endpoints.auth import _current_token_epoch
+    uid = str(users['Analyst'].id)
+    with app.app_context():
+        token = create_access_token(identity=uid, additional_claims={
+            'api_key_id': 'k-test', 'token_epoch': _current_token_epoch(uid)})
+    c = _connect(app, auth={'token': token})
+    assert _connected_event(c).get('anonymous') is True
 
 
 def test_permissions_changed_emitted_on_assign(app, db, users, auth, org_a):

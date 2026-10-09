@@ -222,14 +222,23 @@ def create_app(config_name=None):
         }
     })
 
-    # Initialize SocketIO with Redis message queue for scaling (no queue in
-    # tests: the in-process test client is used).
+    # Initialize SocketIO with the Redis message queue: emits, room changes
+    # (evictions) and disconnects then reach sockets on every worker, and the
+    # CLI can publish through a write-only emitter (services/realtime.py).
+    # No queue in tests: the in-process test client is used.
+    # max_http_buffer_size caps a single frame at 64 KB (no file data travels
+    # over the socket).
     socketio.init_app(
         app,
         cors_allowed_origins=_make_socketio_origin_check(cors_origins),
         message_queue=None if app.testing else app.config.get('REDIS_URL'),
         async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
+        max_http_buffer_size=64 * 1024,
     )
+
+    # Optimistic concurrency: a concurrent-update StaleDataError is a 409.
+    from app.utils.concurrency import register_conflict_handler
+    register_conflict_handler(app)
 
     # Initialize Redis client
     global redis_client

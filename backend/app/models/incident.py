@@ -56,7 +56,13 @@ class Incident(BaseModel):
     network_indicators = relationship('NetworkIndicator', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     host_indicators = relationship('HostBasedIndicator', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     malware_tools = relationship('MalwareTool', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
-    artifacts = relationship('Artifact', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
+    # Evidence and its custody ledger are removed only by the DB-level cascade
+    # of an audited purge (services/incident_purge.py sets the custody purge
+    # GUC first). passive_deletes='all': the ORM never loads, deletes or nulls
+    # these rows itself, so a row-by-row delete cannot hit the append-only
+    # ledger triggers or its NO ACTION foreign keys.
+    artifacts = relationship('Artifact', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    evidence_items = relationship('EvidenceItem', back_populates='incident', lazy='dynamic', passive_deletes='all')
     tasks = relationship('Task', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_nodes = relationship('AttackGraphNode', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_edges = relationship('AttackGraphEdge', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')

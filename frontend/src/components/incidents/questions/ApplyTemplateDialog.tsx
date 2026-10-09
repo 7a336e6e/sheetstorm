@@ -99,7 +99,7 @@ export function ApplyTemplateDialog({ incidentId, open, onOpenChange, onApplied 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Apply case template</DialogTitle>
         </DialogHeader>

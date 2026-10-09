@@ -14,9 +14,12 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/lib/store'
 import { PHASE_INFO } from '@/lib/design-tokens'
 import { useToast } from '@/components/ui/use-toast'
+import { AiGate } from '@/components/ai/AiGate'
+import { playbooksApi } from '@/lib/endpoints/questions'
+import { notifyError } from '@/lib/errors'
 import type { IncidentPlaybook, Playbook } from '@/types'
 
-type Template = Pick<Playbook, 'id' | 'name' | 'description' | 'incident_type'>
+type Template = Pick<Playbook, 'id' | 'name' | 'description' | 'incident_type' | 'is_builtin'>
 
 function phaseName(phase: number): string {
   return PHASE_INFO[phase as keyof typeof PHASE_INFO]?.name ?? ''
@@ -50,8 +53,9 @@ export function IncidentPlaybookTab({ incidentId }: { incidentId: string }) {
 
   const activate = async (id: string) => {
     setBusy(id)
-    try { await api.post(`/incidents/${incidentId}/playbooks/${id}/activate`); toast({ title: 'Playbook activated' }); load() }
-    catch { toast({ title: 'Error', description: 'Could not activate playbook', variant: 'destructive' }) }
+    // `builtin:<key>` ids route to the built-in activation endpoint.
+    try { await playbooksApi.activate(incidentId, id); toast({ title: 'Playbook activated' }); load() }
+    catch (err) { notifyError(err, 'activate the playbook') }
     finally { setBusy(null) }
   }
   const advance = async () => {
@@ -66,7 +70,7 @@ export function IncidentPlaybookTab({ incidentId }: { incidentId: string }) {
       const r = await api.post<{ result: { status?: string; message?: string }; incident_playbook: IncidentPlaybook }>(`/incidents/${incidentId}/playbook/execute`, { action_key: key })
       setPb(r.incident_playbook)
       toast({ title: r.result?.status === 'success' ? 'Action ran' : 'Action', description: r.result?.message })
-    } catch { toast({ title: 'Error', variant: 'destructive' }) }
+    } catch (err) { notifyError(err, 'run the playbook action') }
     finally { setBusy(null) }
   }
   const toggleTask = async (key: string, done: boolean) => {
@@ -86,14 +90,17 @@ export function IncidentPlaybookTab({ incidentId }: { incidentId: string }) {
             : 'No playbook is active for this incident.'}
         </div>
         {!canEdit ? null : templates.length === 0 ? (
-          <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground text-sm">No playbook templates yet. Create them via the API (or seed defaults).</CardContent></Card>
+          <Card className="border-dashed"><CardContent className="p-8 text-center text-muted-foreground text-sm">No playbooks available. Ask someone with template management rights to add one.</CardContent></Card>
         ) : (
           <div className="grid gap-3">
             {templates.map(t => (
               <Card key={t.id}>
                 <CardContent className="flex items-center justify-between p-4">
                   <div>
-                    <h4 className="font-medium">{t.name}</h4>
+                    <h4 className="font-medium">
+                      {t.name}
+                      {t.is_builtin && <Badge variant="outline" className="ml-2 text-[10px]">Built-in</Badge>}
+                    </h4>
                     <p className="text-xs text-muted-foreground">{t.description || t.incident_type || ''}</p>
                   </div>
                   <Button size="sm" onClick={() => activate(t.id)} disabled={busy === t.id}>
@@ -154,12 +161,18 @@ export function IncidentPlaybookTab({ incidentId }: { incidentId: string }) {
             )}
             {canEdit && (ph.actions || []).length > 0 && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {(ph.actions || []).map(a => (
-                  <Button key={a.key} variant="outline" size="sm" onClick={() => runAction(a.key)} disabled={busy === a.key}>
-                    {busy === a.key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
-                    {a.name}{a.auto_run ? <Badge variant="outline" className="ml-1.5 text-[10px]">auto</Badge> : null}
-                  </Button>
-                ))}
+                {(ph.actions || []).map(a => {
+                  const button = (
+                    <Button key={a.key} variant="outline" size="sm" onClick={() => runAction(a.key)} disabled={busy === a.key}>
+                      {busy === a.key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
+                      {a.name}{a.auto_run ? <Badge variant="outline" className="ml-1.5 text-[10px]">auto</Badge> : null}
+                    </Button>
+                  )
+                  // The AI summary honours the org's AI TLP policy (C23b).
+                  return a.type === 'generate_summary'
+                    ? <AiGate key={a.key} incidentId={incidentId}>{button}</AiGate>
+                    : button
+                })}
               </div>
             )}
           </CardContent>

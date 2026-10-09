@@ -93,7 +93,7 @@ export function QuestionDialog({ incidentId, open, onOpenChange, question, onSav
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{question ? 'Question' : 'Add question'}</DialogTitle>
         </DialogHeader>

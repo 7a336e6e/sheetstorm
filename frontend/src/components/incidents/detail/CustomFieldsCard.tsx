@@ -61,7 +61,7 @@ export function CustomFieldsCard({ incidentId }: { incidentId: string }) {
     return () => ctrl.abort()
   }, [incidentId, tick])
 
-  if (!data || data.definitions.length === 0) return null
+  if (!data?.definitions?.length) return null
 
   const startEdit = () => {
     const next: Record<string, string | boolean> = {}

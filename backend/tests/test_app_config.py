@@ -15,6 +15,12 @@ def test_cors_preflight_allows_csrf_header(app):
     assert resp.headers.get('Access-Control-Allow-Credentials') == 'true'
 
 
+def test_cors_exposes_download_and_integrity_headers(app):
+    resp = app.test_client().get('/api/v1/health', headers={'Origin': 'http://localhost:3000'})
+    exposed = {h.strip().lower() for h in resp.headers.get('Access-Control-Expose-Headers', '').split(',')}
+    assert {'content-disposition', 'x-report-sha256', 'x-report-id', 'etag'} <= exposed
+
+
 def test_cors_rejects_unknown_origin(app):
     resp = app.test_client().get('/api/v1/health', headers={'Origin': 'https://evil.example'})
     assert 'Access-Control-Allow-Origin' not in resp.headers

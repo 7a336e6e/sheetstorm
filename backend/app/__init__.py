@@ -246,6 +246,9 @@ def create_app(config_name=None):
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             # X-CSRF-TOKEN: double-submit header required by cookie (JWT) auth.
             "allow_headers": ["Content-Type", "Authorization", "X-CSRF-TOKEN"],
+            # Readable by a cross-origin frontend: download file names, report
+            # snapshot integrity (W3-DFIR-C) and optimistic-concurrency versions.
+            "expose_headers": ["Content-Disposition", "X-Report-SHA256", "X-Report-Id", "ETag"],
             "supports_credentials": True
         }
     })

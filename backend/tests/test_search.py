@@ -123,7 +123,8 @@ def test_viewer_sees_only_assigned_and_tlp_white(app, auth, users, make_incident
 
 def test_types_without_read_permission_are_dropped(auth, entities, make_user):
     tag, _ = entities
-    user = make_user(['incidents:read', 'hosts:read'])
+    # Visibility is a separate scope permission since admin_guardrails_rbac.
+    user = make_user(['incidents:read', 'incidents:read_team', 'hosts:read'])
     body = _search(auth(user), q=tag)
     # case notes ride on incidents:read, like the case-notes tab.
     assert {r['type'] for r in body['results']} == {'incident', 'host', 'case_note'}

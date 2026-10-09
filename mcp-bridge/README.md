@@ -55,11 +55,16 @@ Edit `.env`:
 # SheetStorm backend URL (no trailing slash)
 SHEETSTORM_API_URL=https://your-sheetstorm-instance.com/api/v1
 
-# Option A: Username/password (will auto-login)
-SHEETSTORM_USERNAME=admin@sheetstorm.local
-SHEETSTORM_PASSWORD=changeme
+# Option A (recommended): a scoped API key, created in SheetStorm under your
+# profile (or Settings > API Keys for a service account). Works with MFA.
+# Prefer passing it via the client config's env (see step 4) over this file.
+# SHEETSTORM_API_KEY=ssk_xxxxxxxxxxxx_...
 
-# Option B: Pre-existing API token (skip login)
+# Option B (legacy): Username/password auto-login (no MFA support)
+# SHEETSTORM_USERNAME=you@example.com
+# SHEETSTORM_PASSWORD=your-password
+
+# Option C (legacy): Pre-existing JWT (expires; no automatic renewal)
 # SHEETSTORM_API_TOKEN=your-jwt-token-here
 
 # Optional
@@ -92,15 +97,27 @@ Add to your Claude Desktop config file:
       "args": ["-m", "sheetstorm_bridge"],
       "env": {
         "SHEETSTORM_API_URL": "https://your-sheetstorm-instance.com/api/v1",
-        "SHEETSTORM_USERNAME": "admin@sheetstorm.local",
-        "SHEETSTORM_PASSWORD": "changeme"
+        "SHEETSTORM_API_KEY": "${env:SHEETSTORM_API_KEY}"
       }
     }
   }
 }
 ```
 
-> **Tip**: You can pass credentials via `env` in the config (as shown above) instead of using a `.env` file. The `env` block takes precedence.
+> **Tip**: You can pass credentials via `env` in the config (as shown above) instead of using a `.env` file. The `env` block takes precedence. Reference the key from your environment or secret store (`${env:SHEETSTORM_API_KEY}`, where your client supports it); never paste the key into a config file that is committed or synced.
+
+#### How API keys work
+
+Precedence: `SHEETSTORM_API_KEY` > `SHEETSTORM_API_TOKEN` > username/password.
+Give the key only the scopes the assistant needs (e.g. `incidents:read`,
+`timeline:read`, `timeline:create`); its effective permissions are always
+your own permissions intersected with those scopes. The bridge exchanges the
+key at `POST /api/v1/auth/token` for a 15-minute token, re-exchanges shortly
+before expiry and once after a 401, and stops with a clear error when the key
+is revoked, expired or disabled for your organization. The key is never
+logged (only its `ssk_xxxxxxxxxxxx` prefix). The `logout` tool only drops the
+current token; revoke the key itself in the SheetStorm UI. Keys cannot change
+passwords or MFA, manage keys, or open realtime (WebSocket) sessions.
 
 ### 5. Restart Claude Desktop
 
@@ -185,7 +202,9 @@ If you see `No module named 'mcp'` or other import errors, the dependencies didn
 
 `mcp` must be a 1.x release (`>=1.30,<2`): mcp 2.x removed `mcp.server.fastmcp`.
 
-**"No credentials configured"**: Set either `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
+**"No credentials configured"**: Set `SHEETSTORM_API_KEY` (recommended), or the legacy `SHEETSTORM_API_TOKEN` or both `SHEETSTORM_USERNAME` + `SHEETSTORM_PASSWORD`.
+
+**"API key ssk_… rejected (revoked, expired or disabled)"**: Create or rotate a key in SheetStorm; check that API keys are enabled for your organization and that the key has not expired. A 403 `password_change_required` means the key owner must change their password in the web UI first.
 
 **Authentication failures**: Verify your credentials work by logging into the SheetStorm web UI. Check the API URL includes `/api/v1`.
 

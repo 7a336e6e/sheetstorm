@@ -99,6 +99,10 @@ services:
       AUDIT_CHAIN_PREVIOUS_KEYS: ${AUDIT_CHAIN_PREVIOUS_KEYS:-}
       AUDIT_EXPORT_MAX_ROWS: ${AUDIT_EXPORT_MAX_ROWS:-100000}
       AUDIT_PURGE_BATCH_SIZE: ${AUDIT_PURGE_BATCH_SIZE:-10000}
+      # API key hash pepper (openssl rand -hex 32). Empty: derived from
+      # SECRET_KEY with a startup warning.
+      API_KEY_PEPPER: ${API_KEY_PEPPER:-}
+      API_KEY_TOKEN_TTL_MINUTES: ${API_KEY_TOKEN_TTL_MINUTES:-15}
       # Build metadata shown to platform admins in the system status.
       APP_VERSION: ${APP_VERSION:-}
       GIT_COMMIT: ${GIT_COMMIT:-}

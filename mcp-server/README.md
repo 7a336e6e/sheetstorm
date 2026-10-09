@@ -43,16 +43,36 @@ Key settings:
 |----------|---------|-------------|
 | `SHEETSTORM_API_URL` | `http://localhost:5000/api/v1` | Backend API base URL |
 | `MCP_TRANSPORT` | `stdio` | `stdio` (local, single user) or `sse` (remote, multi-user OAuth) |
-| `SHEETSTORM_USERNAME` / `SHEETSTORM_PASSWORD` | — | **stdio only** — auto-login credentials |
-| `SHEETSTORM_API_TOKEN` | — | **stdio only** — pre-issued JWT |
+| `SHEETSTORM_API_KEY` | — | **stdio only, recommended** — scoped API key (`ssk_…`), exchanged for 15-minute tokens; works with MFA |
+| `SHEETSTORM_API_TOKEN` | — | **stdio only, legacy** — pre-issued JWT |
+| `SHEETSTORM_USERNAME` / `SHEETSTORM_PASSWORD` | — | **stdio only, legacy** — auto-login credentials (no MFA support) |
 | `MCP_ISSUER_URL` | `http://localhost:8811` | Public URL clients reach (OAuth issuer) — sse only |
 | `MCP_SSE_PORT` / `SSE_PORT` | `8811` | HTTP port — sse only |
 | `REDIS_URL` | — | Persist OAuth client registrations (90-day TTL) — sse only |
 | `MCP_ALLOWED_REDIRECT_HOSTS` | — | Comma-separated https hosts allowed as OAuth redirect targets besides loopback (e.g. `claude.ai,vscode.dev`) — sse only |
 | `ARTIFACT_DIR` | `/tmp/sheetstorm-artifacts` | Root of per-user artifact sandboxes — sse only |
 
-The remote transport ignores the static credentials above: every user signs
-in with their own SheetStorm account through the browser OAuth flow.
+Precedence on stdio: `SHEETSTORM_API_KEY` > `SHEETSTORM_API_TOKEN` >
+username/password. The remote transport ignores all static credentials above
+(with a startup warning): every user signs in with their own SheetStorm
+account through the browser OAuth flow.
+
+### API keys
+
+Create a key in SheetStorm (your profile, or Settings > API Keys for a
+service account) with only the scopes the assistant needs, e.g.
+`incidents:read`, `timeline:read`, `timeline:create`. The secret is shown
+once. The client exchanges it at `POST /api/v1/auth/token` for a 15-minute
+token, re-exchanges shortly before expiry and once after a 401, and stops
+with a clear error when the key is revoked, expired or disabled for the
+organization. The key is never logged (messages show its `ssk_xxxxxxxxxxxx`
+prefix only). `logout` only drops the current token; revoke the key itself
+in the UI.
+
+Keep the key out of config files that are committed or synced: reference an
+environment variable or secret store from the client config, as in the
+examples below (`${env:SHEETSTORM_API_KEY}`). Keys start with `ssk_`, so a
+secret-scanning rule for `ssk_[a-z2-7]{12}_[A-Za-z0-9_-]{43}` catches leaks.
 
 ### Run
 
@@ -66,7 +86,9 @@ MCP_TRANSPORT=sse sheetstorm-mcp
 
 ## Claude Desktop Configuration
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
+(export `SHEETSTORM_API_KEY` in the environment Claude Desktop starts from,
+or use your client's secret-input mechanism; never paste the key itself):
 
 ```json
 {
@@ -75,8 +97,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "/path/to/mcp-server/.venv/bin/sheetstorm-mcp",
       "env": {
         "SHEETSTORM_API_URL": "http://localhost:5000/api/v1",
-        "SHEETSTORM_USERNAME": "admin@sheetstorm.local",
-        "SHEETSTORM_PASSWORD": "changeme"
+        "SHEETSTORM_API_KEY": "${env:SHEETSTORM_API_KEY}"
       }
     }
   }
@@ -94,8 +115,7 @@ For local stdio transport, add to `.vscode/mcp.json`:
       "command": "${workspaceFolder}/mcp-server/.venv/bin/sheetstorm-mcp",
       "env": {
         "SHEETSTORM_API_URL": "http://localhost:5000/api/v1",
-        "SHEETSTORM_USERNAME": "admin@sheetstorm.local",
-        "SHEETSTORM_PASSWORD": "changeme"
+        "SHEETSTORM_API_KEY": "${env:SHEETSTORM_API_KEY}"
       }
     }
   }

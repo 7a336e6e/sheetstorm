@@ -57,4 +57,25 @@ describe('SocketProvider', () => {
     act(() => mockHandlers.get('disconnect')!('io server disconnect'))
     expect(mockSocket.connect).toHaveBeenCalledTimes(1)
   })
+
+  it('signs out on session:revoked and does not reconnect', async () => {
+    const logout = jest.fn(async () => {})
+    act(() => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'u@x', name: 'U', roles: [], permissions: [] },
+        isAuthenticated: true,
+        logout,
+      })
+    })
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    )
+    expect(mockHandlers.has('session:revoked')).toBe(true)
+    act(() => mockHandlers.get('session:revoked')!({ reason: 'force_logout' }))
+    expect(logout).toHaveBeenCalledTimes(1)
+    act(() => mockHandlers.get('disconnect')!('io server disconnect'))
+    expect(mockSocket.connect).not.toHaveBeenCalled()
+  })
 })

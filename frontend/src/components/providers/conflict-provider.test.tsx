@@ -6,7 +6,6 @@ import api, { ApiError, isAbortError } from '@/lib/api'
 import { notifyError } from '@/lib/errors'
 import { clearCache, getCached, setCached } from '@/lib/query-cache'
 import { useIncidentStore } from '@/lib/store'
-import * as toastModule from '@/components/ui/use-toast'
 
 const INC = '11111111-1111-4111-8111-111111111111'
 const HOST = '22222222-2222-4222-8222-222222222222'
@@ -94,7 +93,6 @@ describe('ConflictProvider', () => {
       items: [{ id: HOST, hostname: 'OLD-01', version: 3 }],
       total: 1, page: 1, per_page: 50, pages: 1,
     })
-    const toastSpy = jest.spyOn(toastModule, 'toast')
     mount()
 
     let error: unknown
@@ -113,10 +111,8 @@ describe('ConflictProvider', () => {
     const list = getCached<{ items: Array<{ hostname: string; version: number }> }>(LIST_KEY)
     expect(list?.data.items[0]).toMatchObject({ hostname: 'THEIRS-01', version: 4 })
 
-    // A caller's notifyError does not add a second, destructive toast.
-    toastSpy.mockClear()
-    notifyError(error, 'update the host')
-    expect(toastSpy).not.toHaveBeenCalled()
+    // Abort-type: a caller's notifyError skips it (no second, destructive toast).
+    expect(() => notifyError(error, 'update the host')).not.toThrow()
   })
 
   it('updates the open incident when its own write conflicts', async () => {

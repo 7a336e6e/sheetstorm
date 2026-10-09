@@ -48,8 +48,12 @@ describe('gapsAfterJoin', () => {
 })
 
 describe('createCoalescer', () => {
-  beforeEach(() => jest.useFakeTimers())
-  afterEach(() => jest.useRealTimers())
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+  afterEach(() => {
+    jest.useRealTimers()
+  })
 
   it('coalesces a burst into one run per key', async () => {
     const run = jest.fn(async (_key: string) => {})

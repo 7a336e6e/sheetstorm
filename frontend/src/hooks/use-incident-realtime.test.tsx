@@ -317,3 +317,22 @@ describe('useAllPages', () => {
     expect(result.current.total).toBe(3)
   })
 })
+
+describe('live merge: unplaceable changes', () => {
+  it('refetches once (debounced) when a created row cannot be placed (search active)', async () => {
+    const { result } = renderHook(() => {
+      useIncidentRealtime(INC)
+      return usePaginatedQuery<Row>({ endpoint: HOSTS, live: 'host', defaults: { q: 'ws' } })
+    })
+    await waitFor(() => expect(result.current.items).toHaveLength(2))
+    joinAck()
+    const before = hostsGets()
+    changed({ op: 'created', id: 'h3', version: 1, seq: 2, data: { id: 'h3', version: 1, created_at: '2026-01-03T00:00:00Z' } })
+    changed({ op: 'created', id: 'h4', version: 1, seq: 3, data: { id: 'h4', version: 1, created_at: '2026-01-04T00:00:00Z' } })
+    // The rows stay visible while the refetch runs; nothing is guessed in.
+    expect(result.current.items.map((r) => r.id)).toEqual(['h2', 'h1'])
+    await waitFor(() => expect(hostsGets() - before).toBe(1), { timeout: 2000 })
+    await new Promise((r) => setTimeout(r, 500))
+    expect(hostsGets() - before).toBe(1)
+  })
+})

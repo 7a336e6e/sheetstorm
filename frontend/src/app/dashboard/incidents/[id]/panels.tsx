@@ -13,6 +13,7 @@ import { Clock, LayoutList, Star } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { OverviewTab } from '@/components/incidents/detail/OverviewTab'
+import { IncidentMetricsCard } from '@/components/incidents/detail/IncidentMetricsCard'
 import { EventsTable } from '@/components/incidents/EventsTable'
 import { IOCVisualTimeline, PinnedTimelineTab } from '@/components/incidents/timeline/IOCVisualTimeline'
 import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
@@ -28,6 +29,7 @@ export function OverviewPanel({ incident, incidentId, onNavigate, onIncidentChan
       incidentId={incidentId}
       onViewEvents={() => onNavigate('events')}
       onIncidentUpdated={onIncidentChanged}
+      metricsSlot={<IncidentMetricsCard incidentId={incidentId} version={incident.version} />}
     />
   )
 }

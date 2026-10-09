@@ -1,16 +1,19 @@
 "use client"
 
 /**
- * IR milestone strip (W2-DFIR-B, C20): First activity → Detected →
- * Contained → Eradicated → Recovered → Closed, each with its timestamp and
- * the raw delta from the previous set step ("Dwell" for first activity →
- * detected). Aggregated MTTx belongs to the metrics card (RT-POST slot).
+ * IR milestone strip (W2-DFIR-B, C20): First activity (timeline) → First
+ * malicious → Detected → Responded → Contained → Eradicated → Recovered →
+ * Closed, each with its timestamp and the raw delta from the previous set
+ * step ("Dwell" for the step into Detected). Durations and anomalies live in
+ * the metrics card (IncidentMetricsCard, which can open this editor through
+ * `EDIT_LIFECYCLE_EVENT`). `first_malicious_at` and `responded_at` are the
+ * W3-RT-POST additions; there is no separate modal for them.
  *
  * Edit (gated on `incidents:update`) PUTs the changed milestones with
  * If-Match. Order / future problems are caught client-side and the server's
  * 400 `invalid_milestones` is shown inline too.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, Edit2, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -39,6 +42,9 @@ import {
 } from '@/lib/milestones'
 import { incidentOverview } from '@/lib/endpoints/incident-overview'
 import type { Incident, MilestoneField, Versioned } from '@/types'
+
+/** `window` event the metrics card dispatches to open the milestone editor. */
+export const EDIT_LIFECYCLE_EVENT = 'sheetstorm:edit-lifecycle'
 
 interface IRMilestoneStripProps {
   incident: Incident & Versioned
@@ -77,6 +83,18 @@ export function IRMilestoneStrip({ incident, firstActivity, onSaved }: IRMilesto
     setError(null)
     setOpen(true)
   }
+
+  // "Edit lifecycle times" in the metrics card.
+  useEffect(() => {
+    if (!canEdit) return
+    const handler = () => {
+      setDraft(pick(incident))
+      setError(null)
+      setOpen(true)
+    }
+    window.addEventListener(EDIT_LIFECYCLE_EVENT, handler)
+    return () => window.removeEventListener(EDIT_LIFECYCLE_EVENT, handler)
+  }, [canEdit, incident])
 
   const save = async () => {
     const issue = validateMilestones(draft, original)
@@ -119,7 +137,7 @@ export function IRMilestoneStrip({ incident, firstActivity, onSaved }: IRMilesto
         )}
       </CardHeader>
       <CardContent>
-        <ol className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" aria-label="IR milestones">
+        <ol className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8" aria-label="IR milestones">
           {steps.map((step) => {
             const negative = step.deltaMs !== null && step.deltaMs < 0
             return (

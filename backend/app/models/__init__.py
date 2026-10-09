@@ -25,6 +25,7 @@ from app.models.mitre_pattern import MitrePattern
 from app.models.playbook import Playbook, IncidentPlaybook
 from app.models.question import InvestigativeQuestion, QuestionLead
 from app.models.case_template import CaseTemplate, IncidentCaseTemplate
+from app.models.post_incident import IncidentReview, ImprovementAction, ReminderLog
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
@@ -53,4 +54,5 @@ __all__ = [
     'Playbook', 'IncidentPlaybook',
     'InvestigativeQuestion', 'QuestionLead',
     'CaseTemplate', 'IncidentCaseTemplate',
+    'IncidentReview', 'ImprovementAction', 'ReminderLog',
 ]

@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'questions_case_templates'
+EXPECTED_HEAD = 'post_incident_metrics'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -686,3 +686,48 @@ def test_questions_case_templates_models_match_migration(app, db):
             if table in tables or (table, col) in columns:
                 problems.append(d)
     assert not problems, problems
+
+
+# ── post_incident_metrics (W3-RT-POST) ──────────────────────────────
+
+def test_post_incident_metrics_schema_at_head(app, db):
+    from sqlalchemy import inspect
+    insp = inspect(db.engine)
+    cols = {c['name'] for c in insp.get_columns('incidents')}
+    assert {'first_malicious_at', 'responded_at'} <= cols
+    for table in ('incident_reviews', 'improvement_actions', 'reminder_log'):
+        assert insp.has_table(table)
+    assert {'version', 'status', 'contributing_factors'} <= {c['name'] for c in insp.get_columns('incident_reviews')}
+    assert 'version' in {c['name'] for c in insp.get_columns('improvement_actions')}
+    fks = {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+           for fk in insp.get_foreign_keys('improvement_actions')}
+    assert fks['incident_id'] == 'SET NULL'                       # actions outlive a permanent delete
+    assert {fk['constrained_columns'][0]: fk['options'].get('ondelete')
+            for fk in insp.get_foreign_keys('incident_reviews')}['incident_id'] == 'CASCADE'
+    uniques = {u['name'] for u in insp.get_unique_constraints('reminder_log')}
+    assert 'uq_reminder_log_entity_stage' in uniques
+
+
+def test_post_incident_metrics_round_trip_and_idempotent(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        r = _flask_db(scratch_db, 'downgrade', 'questions_case_templates')
+        assert r.returncode == 0, r.stderr[-3000:]
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT to_regclass('public.improvement_actions')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('public.incident_reviews')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('public.reminder_log')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM information_schema.columns WHERE table_name='incidents' "
+                                     "AND column_name IN ('first_malicious_at','responded_at')")).scalar() == 0
+        # a half-applied schema (column already there) must not break the upgrade
+        with eng.begin() as conn:
+            conn.execute(text('ALTER TABLE incidents ADD COLUMN responded_at timestamptz'))
+        r = _flask_db(scratch_db, 'upgrade')
+        assert r.returncode == 0, r.stderr[-3000:]
+        assert _current(scratch_db) == EXPECTED_HEAD
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT to_regclass('public.improvement_actions')")).scalar() is not None
+    finally:
+        eng.dispose()

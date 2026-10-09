@@ -20,6 +20,8 @@ import {
   ChevronRight,
   Search,
   BookOpen,
+  BarChart3,
+  ListChecks,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,12 +33,15 @@ import { adminNavigation, visibleAdminItems } from '@/components/layout/nav-conf
 import { useNotificationStore } from '@/lib/feature-stores'
 import type { Notification } from '@/types'
 
-const navigation = [
+// `permission`: the item is shown only to holders of it (cosmetic; pages and API enforce).
+const navigation: { name: string; href: string; icon: typeof Shield; permission?: string }[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Incidents', href: '/dashboard/incidents', icon: AlertTriangle },
   { name: 'Threat Intel', href: '/dashboard/threat-intel', icon: Search },
   { name: 'Knowledge Base', href: '/dashboard/knowledge-base', icon: BookOpen },
-  { name: 'Reports', href: '/dashboard/reports', icon: FileText },
+  { name: 'Reports', href: '/dashboard/reports', icon: FileText, permission: 'reports:read' },
+  { name: 'Metrics', href: '/dashboard/metrics', icon: BarChart3, permission: 'metrics:read' },
+  { name: 'Improvements', href: '/dashboard/improvements', icon: ListChecks, permission: 'improvements:read' },
 ]
 
 // Admin items live in nav-config.ts, shared with the command palette.
@@ -55,10 +60,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const onSocketNotification = useNotificationStore((s) => s.onSocketNotification)
 
   // Filter navigation items based on permissions
-  const filteredNavigation = navigation.filter((item) => {
-    if (item.href === '/dashboard/reports') return hasPermission('reports:read')
-    return true
-  })
+  const filteredNavigation = navigation.filter((item) => !item.permission || hasPermission(item.permission))
 
   // Unread badge: server count (re-synced every 60s) + socket increments.
   // This is the only `notification` socket subscriber (see feature-stores).

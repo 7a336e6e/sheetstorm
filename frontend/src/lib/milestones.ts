@@ -5,20 +5,29 @@
  * C20) so most mistakes are caught before the PUT; the server stays
  * authoritative and its 400 is shown inline as well.
  * - A value more than 5 minutes in the future is rejected.
- * - Order detected ≤ contained ≤ eradicated ≤ recovered ≤ closed. Only
- *   *changed* values are checked (against every other set value), so a
- *   legacy out-of-order pair never blocks an unrelated edit.
+ * - Order first malicious ≤ detected ≤ contained ≤ eradicated ≤ recovered ≤
+ *   closed. Only *changed* values are checked (against every other set
+ *   value), so a legacy out-of-order pair never blocks an unrelated edit.
+ * - `responded_at` sits outside that chain: it must not precede `detected_at`.
  */
 import { parseTs } from '@/lib/time'
 import type { MilestoneField } from '@/types'
 
+/** Every editable lifecycle timestamp, in display order. */
 export const MILESTONES: readonly { field: MilestoneField; label: string }[] = [
+  { field: 'first_malicious_at', label: 'First malicious activity' },
   { field: 'detected_at', label: 'Detected' },
+  { field: 'responded_at', label: 'Responded' },
   { field: 'contained_at', label: 'Contained' },
   { field: 'eradicated_at', label: 'Eradicated' },
   { field: 'recovered_at', label: 'Recovered' },
   { field: 'closed_at', label: 'Closed' },
 ]
+
+/** The strictly ordered chain (`responded_at` is checked against `detected_at` only). */
+export const MILESTONE_ORDER: readonly MilestoneField[] = MILESTONES.map((m) => m.field).filter(
+  (f) => f !== 'responded_at'
+)
 
 export const MILESTONE_FUTURE_TOLERANCE_MS = 5 * 60 * 1000
 
@@ -55,7 +64,15 @@ export function validateMilestones(
       return { field, message: `${labelOf(field)} cannot be more than 5 minutes in the future.` }
     }
   }
-  const order = MILESTONES.map((m) => m.field)
+  if ('responded_at' in changed || 'detected_at' in changed) {
+    const responded = ms(values.responded_at)
+    const detected = ms(values.detected_at)
+    if (responded !== null && detected !== null && detected > responded) {
+      const field: MilestoneField = 'responded_at' in changed ? 'responded_at' : 'detected_at'
+      return { field, message: `${labelOf('detected_at')} must not be after ${labelOf('responded_at')}.` }
+    }
+  }
+  const order = MILESTONE_ORDER
   for (const field of order) {
     if (!(field in changed)) continue
     const v = ms(values[field])
@@ -84,7 +101,7 @@ export interface MilestoneStep {
   deltaLabel: string | null
 }
 
-/** The strip: first known activity, then the five milestones. */
+/** The strip: first known activity (timeline), then every milestone. */
 export function milestoneSteps(firstActivity: string | null | undefined, values: MilestoneValues): MilestoneStep[] {
   const raw: { key: MilestoneStep['key']; label: string; value: string | null }[] = [
     { key: 'first_activity', label: 'First activity', value: firstActivity ?? null },
@@ -98,7 +115,10 @@ export function milestoneSteps(firstActivity: string | null | undefined, values:
     if (at !== null) {
       if (prev) {
         deltaMs = at - prev.at
-        deltaLabel = prev.key === 'first_activity' && step.key === 'detected_at' ? 'Dwell' : null
+        deltaLabel =
+          (prev.key === 'first_activity' || prev.key === 'first_malicious_at') && step.key === 'detected_at'
+            ? 'Dwell'
+            : null
       }
       prev = { key: step.key, at }
     }

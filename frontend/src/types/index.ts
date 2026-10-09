@@ -55,7 +55,9 @@ export interface Incident {
   lead_responder?: User
   creator?: { id: string; name: string }
   teams?: { id: string; name: string | null }[]
+  first_malicious_at?: string | null
   detected_at?: string
+  responded_at?: string | null
   contained_at?: string
   eradicated_at?: string
   recovered_at?: string
@@ -713,3 +715,4 @@ export * from './audit'
 export * from './security'
 export * from './api-keys'
 export * from './provenance'
+export * from './post-incident'

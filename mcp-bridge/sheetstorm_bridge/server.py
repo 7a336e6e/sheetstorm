@@ -98,6 +98,7 @@ import sheetstorm_bridge.tools.evidence  # noqa: E402, F401
 import sheetstorm_bridge.tools.incidents  # noqa: E402, F401
 import sheetstorm_bridge.tools.iocs  # noqa: E402, F401
 import sheetstorm_bridge.tools.knowledge_base  # noqa: E402, F401
+import sheetstorm_bridge.tools.metrics  # noqa: E402, F401
 import sheetstorm_bridge.tools.playbooks  # noqa: E402, F401
 import sheetstorm_bridge.tools.prompts  # noqa: E402, F401
 import sheetstorm_bridge.tools.questions  # noqa: E402, F401

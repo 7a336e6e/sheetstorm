@@ -619,6 +619,13 @@ def test_purge_step_revokes_and_closes_rooms(rt, db, make_incident):
     assert {c[1] for c in rt.server.calls if c[0] == 'close_room'} == set(realtime.all_rooms(iid))
 
 
+def test_purge_step_accepts_a_context_dict(rt):
+    from app.api.v1.endpoints.incidents import _purge_access_revoked
+    iid = str(uuid.uuid4())
+    _purge_access_revoked({'incident_id': iid})
+    assert ('incident:access_revoked', {'incident_id': iid, 'reason': 'purged'}, f'incident_{iid}') in rt.emits
+
+
 def test_purge_step_registered_when_purge_service_exists():
     try:
         from app.services import incident_purge

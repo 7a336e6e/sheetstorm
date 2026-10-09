@@ -700,10 +700,15 @@ def _purge_access_revoked(incident=None, *args, incident_id=None, **ctx):
     """incident_purge post-commit step `access_revoked`. The row is gone, so
     only the primary key is used (from the instance identity, which survives
     the delete + commit)."""
-    if incident_id is None and incident is not None:
-        from sqlalchemy import inspect as sa_inspect
-        identity = sa_inspect(incident).identity
-        incident_id = identity[0] if identity else None
+    if incident_id is None and isinstance(incident, dict):    # a context dict
+        incident_id = incident.get('incident_id') or incident.get('id')
+    elif incident_id is None and incident is not None:
+        try:
+            from sqlalchemy import inspect as sa_inspect
+            identity = sa_inspect(incident).identity
+            incident_id = identity[0] if identity else None
+        except Exception:  # not a mapped instance: a context object
+            incident_id = getattr(incident, 'incident_id', None)
     if incident_id is None:
         logger.warning('realtime: purge step access_revoked got no incident id')
         return

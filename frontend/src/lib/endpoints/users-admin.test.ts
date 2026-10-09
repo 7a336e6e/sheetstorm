@@ -44,9 +44,15 @@ describe('password policy mirror', () => {
     expect(isPasswordValid('Str0ng!Passw0rd')).toBe(true)
     expect(isPasswordValid('Short1!a')).toBe(false)
     expect(isPasswordValid('NoSpecials1234')).toBe(false)
-    // Only the backend's special set counts (e.g. "-" and "_" do not).
-    expect(passwordChecks('Abcdefghij1-_').special).toBe(false)
-    expect(passwordChecks('Abcdefghij1"').special).toBe(true)
+    // Any non-alphanumeric character is a symbol (security policy, W3-SEC).
+    expect(passwordChecks('Abcdefghij1-_').special).toBe(true)
+    expect(passwordChecks('Abcdefghij12').special).toBe(false)
+    // The org's rules apply when given.
+    const rules = { min_length: 16, max_bytes: 72, require_upper: true, require_lower: true, require_digit: true,
+      require_symbol: false, history_count: 0, max_age_days: 0 }
+    expect(isPasswordValid('Str0ng!Passw0rd', rules)).toBe(false)
+    expect(isPasswordValid('NoSpecials123456', rules)).toBe(true)
+    expect(isPasswordValid('Aa1!' + 'x'.repeat(69))).toBe(false) // over 72 bytes
   })
 })
 

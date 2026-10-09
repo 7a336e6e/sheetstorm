@@ -1,9 +1,11 @@
-"""Organization management endpoints"""
+"""Organization management endpoints (settings + security policy)"""
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1 import api_bp
 from app import db
@@ -13,7 +15,9 @@ from app.middleware.audit import audit_log, log_security_event
 from app.schemas.organization import (
     AI_POLICY_RANK, OrganizationUpdate, OrgSettings, PUBLIC_SETTING_KEYS, effective_ai_tlp_policy,
 )
+from app.services import security_policy
 from app.utils.audit_diff import record_changes
+from app.utils.concurrency import commit_or_conflict, conflict_response, precondition, set_etag
 
 DEFAULT_ORG_SLUG = 'default'  # where self-registration / SSO sign-ups land
 
@@ -30,8 +34,6 @@ def _org_payload(org, user):
         'settings': settings,
         'updated_at': org.updated_at.isoformat() if org.updated_at else None,
     }
-    if body['is_default'] and user.has_permission('organizations:manage'):
-        body['registration_enabled'] = bool(stored.get('registration_enabled', False))
     return body
 
 
@@ -82,10 +84,6 @@ def update_organization():
                         'fields': fields}), 400
 
     new_settings = update.settings.model_dump(exclude_unset=True) if update.settings else {}
-    if 'registration_enabled' in new_settings and org.slug != DEFAULT_ORG_SLUG:
-        return jsonify({'error': 'not_applicable',
-                        'message': 'Registration can only be configured on the default organization',
-                        'fields': {'settings.registration_enabled': 'Only applies to the default organization'}}), 400
 
     before = _audit_view(org)
     if update.name is not None:
@@ -113,3 +111,85 @@ def update_organization():
                            details={'levels': loosened})
 
     return jsonify(_org_payload(org, user)), 200
+
+
+# ── Security policy (services/security_policy.py) ──────────────────────
+
+def _policy_payload(org):
+    from app.models import User
+    row = security_policy.policy_row(org.id)
+    policy = security_policy.get_policy(org.id)
+    updated_by = None
+    if row is not None and row.updated_by:
+        actor = db.session.get(User, row.updated_by)
+        updated_by = {'id': str(row.updated_by), 'name': actor.name if actor else None}
+    return {
+        'id': str(row.id) if row is not None else None,
+        'organization_id': str(org.id),
+        'policy': security_policy.serialize(policy),
+        'version': row.version if row is not None else 0,
+        'defaults': security_policy.serialize(security_policy.default_policy()),
+        'bounds': security_policy.BOUNDS,
+        'stats': security_policy.stats(org.id),
+        'is_platform_org': security_policy.is_platform_org(org),
+        'updated_by': updated_by,
+        'updated_at': row.updated_at.isoformat() if row is not None and row.updated_at else None,
+    }
+
+
+def _current_org():
+    user = get_current_user()
+    return user, (db.session.get(Organization, user.organization_id) if user else None)
+
+
+@api_bp.route('/organization/security-policy', methods=['GET'])
+@jwt_required()
+@require_permission('organizations:manage')
+def get_security_policy():
+    """The caller's org security policy with defaults, bounds and MFA stats."""
+    _, org = _current_org()
+    if not org:
+        return jsonify({'error': 'not_found', 'message': 'Organization not found'}), 404
+    payload = _policy_payload(org)
+    return set_etag(jsonify(payload), SimpleNamespace(version=payload['version'])), 200
+
+
+@api_bp.route('/organization/security-policy', methods=['PUT'])
+@jwt_required()
+@require_permission('organizations:manage')
+@audit_log('admin_action', 'security_policy_update', 'organization_security_policy')
+def update_security_policy():
+    """Body ``{policy: {<section>: {...}}, version}`` (or If-Match). Sections
+    and fields not sent keep their value. 400 validation_error {fields},
+    409 conflict on a stale version, 428 without a version."""
+    user, org = _current_org()
+    if not org:
+        return jsonify({'error': 'not_found', 'message': 'Organization not found'}), 404
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({'error': 'validation_error', 'message': 'JSON object required', 'fields': {}}), 400
+
+    row = security_policy.policy_row(org.id)
+    serializer = lambda _obj: _policy_payload(org)  # noqa: E731
+    conflict = precondition(row if row is not None else SimpleNamespace(version=0), required=True,
+                            body_key='version', serializer=serializer)
+    if conflict:
+        return conflict
+
+    try:
+        row, before, after = security_policy.update_policy(org, body.get('policy'), user)
+    except security_policy.PolicyValidationError as e:
+        db.session.rollback()
+        return jsonify({'error': 'validation_error', 'message': e.message, 'fields': e.fields}), 400
+    try:
+        conflict = commit_or_conflict(row, serializer=serializer)
+    except IntegrityError:  # concurrent first save of this org's row
+        db.session.rollback()
+        return conflict_response(None)
+    if conflict:
+        return conflict
+    security_policy.invalidate_cache()
+
+    changes = security_policy.policy_changes(before, after)
+    g.audit_changes = {**(getattr(g, 'audit_changes', None) or {}), **changes}
+    return set_etag(jsonify(_policy_payload(org)), row), 200

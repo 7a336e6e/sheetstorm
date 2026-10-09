@@ -173,9 +173,10 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
 - **Attack graph (10)**: graph, auto-generate, node/edge CRUD incl. `sheetstorm_update_graph_edge`, node/edge types
 - **Case notes (5)**, **Reports (3)**, **Threat intel (7)**, **Knowledge base (6)**,
   **Advanced analysis (4)**, **Defang (2)**
-- **Admin (20)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who
+- **Admin (21)**: users (list with `status`/`role`/`team_id` filters, create, update, delete: a user who
   authored records cannot be deleted, the error lists them), roles, permissions, notifications, audit logs,
-  health, system status (`sheetstorm_get_system_status`), and the user lifecycle: `sheetstorm_invite_user` (returns a one-time join link, a credential),
+  health, system status (`sheetstorm_get_system_status`), the org security policy (read-only,
+  `sheetstorm_get_security_policy`; no tool can change the policy, sessions or rate limits), and the user lifecycle: `sheetstorm_invite_user` (returns a one-time join link, a credential),
   `sheetstorm_list_invites`, `sheetstorm_revoke_invite`, `sheetstorm_disable_user`, `sheetstorm_enable_user`,
   `sheetstorm_force_logout_user`, `sheetstorm_unlock_user`, `sheetstorm_get_user_activity`.
   Password and MFA resets are not exposed over MCP (they hand out takeover-grade secrets); use the web UI.

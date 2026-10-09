@@ -18,7 +18,6 @@ function org(over: Partial<Organization> = {}): Organization {
     name: 'Acme',
     slug: 'default',
     is_default: true,
-    registration_enabled: false,
     settings: {
       timezone: 'Europe/Paris',
       auto_enrich_iocs: false,
@@ -78,13 +77,11 @@ describe('GeneralTab', () => {
         auto_enrich_iocs: true,
         enrichment_allow_amber_strict: false,
         ai_tlp_policy: { white: 'allow', green: 'allow', amber: 'allow', amber_strict: 'local_only', red: 'local_only' },
-        registration_enabled: false,
       },
     })
   })
 
-  it('hides the registration switch outside the default organization and never sends it', async () => {
-    current = org({ slug: 'org-b', is_default: false, registration_enabled: undefined })
+  it('has no registration switch (it moved to the Security tab) and never sends it', async () => {
     renderTab()
     await screen.findByLabelText('Organization name')
     expect(screen.queryByRole('switch', { name: 'Allow self-registration' })).toBeNull()

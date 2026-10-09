@@ -125,4 +125,18 @@ def register(api_bp) -> None:
 register_restriction('password_change_required', lambda u: bool(getattr(u, 'must_change_password', False)))
 
 
+def _mfa_enrollment_required(user):
+    """Security policy requires MFA for the user, they have not enrolled and
+    the grace period is over (services/security_policy.py)."""
+    from app.services.security_policy import mfa_enrollment_required
+    return mfa_enrollment_required(user)
+
+
+# W3-SEC: API keys are exempt (a key never enrolls MFA; C30).
+register_restriction('mfa_enrollment_required', _mfa_enrollment_required,
+                     ('api_v1.mfa_setup', 'api_v1.mfa_verify', 'api_v1.password_policy'),
+                     applies_to_api_keys=False)
+extend_allowlist('password_change_required', 'api_v1.password_policy')
+
+
 __all__ = ['BASE_ALLOWLIST', 'register_restriction', 'extend_allowlist', 'restriction_for', 'register']

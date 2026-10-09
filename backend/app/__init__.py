@@ -122,7 +122,8 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
     """Shared revocation check (HTTP blocklist loader + WebSocket auth).
 
     Fails CLOSED when the blocklist store is unavailable. Rejects MFA-pending
-    pre-auth tokens, blocklisted jtis, tokens of a revoked API key
+    pre-auth tokens, blocklisted jtis, tokens of a revoked sign-in session
+    (`revoked_session:<sid>`), tokens of a revoked API key
     (`revoked_api_key:<id>`) and tokens minted before the user's current
     token epoch. A just-rotated refresh token is accepted exactly once
     during its short grace window when `consume_refresh_grace` is set.
@@ -140,6 +141,11 @@ def is_token_revoked(jwt_payload, consume_refresh_grace=False):
                     and redis_client.delete(f'refresh_grace:{jti}')):
                 # Concurrent refresh inside the grace window: allow once.
                 return False
+            return True
+        # A revoked sign-in session kills all of its tokens (access and
+        # refresh; services/session_service.py).
+        sid = jwt_payload.get('sid')
+        if sid and redis_client.get(f'revoked_session:{sid}') is not None:
             return True
         # API-key tokens die with their key (marker written on revoke/rotate).
         api_key_id = jwt_payload.get('api_key_id')
@@ -321,6 +327,22 @@ def create_app(config_name=None):
     # Token blocklist check — fail CLOSED (see is_token_revoked). Pre-auth
     # (MFA-pending) tokens are only valid at /auth/mfa/complete, which decodes
     # them manually, so they are rejected on every @jwt_required route.
+    # Session inventory: record activity of the token's sign-in session (at
+    # most every few minutes per session; never fails the response).
+    @app.after_request
+    def touch_sign_in_session(response):
+        try:
+            from flask import request
+            if response.status_code < 400 and request.path.startswith('/api/'):
+                from flask_jwt_extended import get_jwt
+                sid = (get_jwt() or {}).get('sid')
+                if sid:
+                    from app.services.session_service import touch
+                    touch(sid)
+        except Exception:
+            pass
+        return response
+
     @jwt.token_in_blocklist_loader
     def check_if_token_revoked(jwt_header, jwt_payload):
         from flask import request

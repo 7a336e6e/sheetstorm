@@ -55,12 +55,28 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 | POST   | `/auth/invites/lookup` | `{token}` → invite email, org, expiry (`400 invite_invalid`) | 10/minute, 60/hour |
 | POST   | `/auth/invites/accept` | `{token, name, password}` → 201 tokens + cookies (one generic `400 invite_invalid`) | 5/minute, 20/hour |
 | POST   | `/auth/password-reset/complete` | `{token, new_password}` (admin-issued link; `400 reset_invalid`) | 5/minute, 20/hour |
+| GET    | `/auth/password-policy` | Password rules for form hints: the caller's organization, else the platform organization (public) | 60/minute |
+| GET    | `/auth/registration-status` | `{registration_enabled}` of the platform organization's security policy (public) | — |
 
 Login returns one generic `401` for an unknown email, a wrong password, a locked or a disabled
 account. `LOGIN_LOCKOUT_THRESHOLD` consecutive bad passwords / MFA codes lock the account for
 `LOGIN_LOCKOUT_MINUTES`. A user with `must_change_password` (admin temporary password, seeded
-admin) gets `403 password_change_required` on every route except `/auth/me`, `/auth/change-password`,
-`/auth/logout`, `/auth/refresh` and `/health*`.
+admin, expired password) gets `403 password_change_required` on every route except `/auth/me`,
+`/auth/change-password`, `/auth/password-policy`, `/auth/logout`, `/auth/refresh` and `/health*`.
+
+Passwords follow the organization's security policy (see below). A violation answers
+`400 {error: 'bad_request', code: 'password_policy', message, violations: [...]}`. Registration and
+first SSO sign-ins follow the platform organization's policy: `403 registration_disabled` or
+`403 email_domain_not_allowed`.
+
+Every sign-in creates a session: the tokens carry its id (`sid`), refresh keeps it, logout revokes
+it. Sign-in responses and `/auth/me` include `user.security`:
+`{mfa_required, mfa_enrollment_required, mfa_grace_ends_at, password_change_required,
+password_expires_at}`. While `mfa_enrollment_required` is true every route except `/auth/me`,
+`/auth/mfa/setup`, `/auth/mfa/verify`, `/auth/password-policy`, `/auth/change-password`,
+`/auth/logout`, `/auth/refresh` and `/health*` answers `403 mfa_enrollment_required` (API keys are
+exempt). `/auth/mfa/disable` answers `403 mfa_required_by_policy` when the policy requires MFA for
+the user.
 
 ## Incidents
 
@@ -278,6 +294,11 @@ Tasks:
 | POST   | `/teams`                                  | Create team (`teams:create`)   |
 | PUT    | `/teams/{id}`                             | Edit team (`teams:update`); members via `/teams/{id}/members` |
 | DELETE | `/teams/{id}`                             | Delete team (`teams:delete`)   |
+| GET    | `/organization/security-policy`           | Security policy `{policy, version, defaults, bounds, stats, is_platform_org, updated_by, updated_at}` (`organizations:manage`) |
+| PUT    | `/organization/security-policy`           | `{policy: {<section>: {...}}, version}` (or `If-Match`); partial sections keep other values; `400 validation_error {fields}`, `409 conflict`, `428` without a version |
+| GET    | `/users/{id}/sessions`                    | Active sign-in sessions (`current` marks yours); self, or `users:manage` in the same org; interactive sessions only |
+| DELETE | `/users/{id}/sessions/{sid}`              | Revoke one session (its access and refresh tokens stop working at once; other sessions are unaffected) |
+| DELETE | `/users/{id}/sessions`                    | Revoke every session; `?except_current=true` keeps yours ("sign out other devices") |
 | GET    | `/organization`                           | Organization with allow-listed settings |
 | PUT    | `/organization`                           | Update name / settings (`organizations:manage`; unknown keys → `400 validation_error`) |
 | GET    | `/notifications`                          | List notifications             |
@@ -294,8 +315,9 @@ Tasks:
 `PUT /organization` accepts `{name?, settings?}`; `settings` keys (all optional, merged over the
 stored ones): `timezone` (IANA name), `auto_enrich_iocs` (bool), `enrichment_allow_amber_strict`
 (bool), `ai_tlp_policy` (`{white|green|amber|amber_strict|red: allow|local_only|block}`, defaults
-`red`/`amber_strict` → `local_only`, others `allow`) and `registration_enabled` (bool, default
-organization only, otherwise `400 not_applicable`). Self-registration is **closed by default**.
+`red`/`amber_strict` → `local_only`, others `allow`). Self-registration is not an organization
+setting: it is `provisioning.registration_enabled` in the platform organization's security policy
+(**closed by default**); `registration_enabled` and `security` are rejected here.
 Every change is audited with a before/after diff; loosening the AI policy for any TLP level also
 records an `ai_tlp_policy_loosened` security event.
 

@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useEffect, ReactNode } from 'react'
-import { useAuthStore } from '@/lib/store'
+import { needsMfaEnrollment, useAuthStore } from '@/lib/store'
 import { useRouter, usePathname } from 'next/navigation'
 import { isPublicPath, setRestrictionHandler } from '@/lib/api'
 
@@ -47,10 +47,12 @@ export const routeGuards: RouteGuard[] = [
 
 /**
  * Where each account restriction (403 from the backend `account_state` gate)
- * is lifted. W3-SEC adds `mfa_enrollment_required` → `/dashboard/profile?enroll_mfa=1`.
+ * is lifted: a forced password change, and MFA enrollment required by the
+ * org security policy after its grace period (W3-SEC).
  */
 export const RESTRICTION_ROUTES: Record<string, string> = {
   password_change_required: '/auth/change-password',
+  mfa_enrollment_required: '/dashboard/profile?enroll_mfa=1',
 }
 
 /** Whether a user holding `permissions` may open `pathname` (true when no guard matches). */
@@ -79,7 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setRestrictionHandler(null)
   }, [router])
 
-  const mustChangePassword = !!(user as { must_change_password?: boolean } | null)?.must_change_password
+  const mustChangePassword = !!user?.must_change_password
+  const mustEnrollMfa = needsMfaEnrollment(user)
+  const mfaRoute = RESTRICTION_ROUTES.mfa_enrollment_required
 
   useEffect(() => {
     if (!isLoading) {
@@ -87,6 +91,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         router.push('/login')
       } else if (isAuthenticated && mustChangePassword && pathname !== RESTRICTION_ROUTES.password_change_required) {
         router.replace(RESTRICTION_ROUTES.password_change_required)
+      } else if (isAuthenticated && !mustChangePassword && mustEnrollMfa && pathname !== mfaRoute.split('?')[0]) {
+        router.replace(mfaRoute)
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/register')) {
         router.push('/dashboard')
       } else if (isAuthenticated && user) {
@@ -95,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-  }, [isAuthenticated, isLoading, mustChangePassword, pathname, router, user])
+  }, [isAuthenticated, isLoading, mustChangePassword, mustEnrollMfa, mfaRoute, pathname, router, user])
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, isLoading }}>

@@ -47,10 +47,9 @@ class OrgSettings(BaseModel):
 
     timezone: Optional[str] = None
     auto_enrich_iocs: Optional[StrictBool] = None
-    # Only meaningful for the default org (registration lands there); the
-    # endpoint answers 400 not_applicable elsewhere. Moves to the security
-    # policy in W3-SEC.
-    registration_enabled: Optional[StrictBool] = None
+    # Self-registration is NOT an org setting: it lives in the security
+    # policy (provisioning.registration_enabled, W3-SEC), so extra='forbid'
+    # rejects `registration_enabled` here.
     enrichment_allow_amber_strict: Optional[StrictBool] = None
     ai_tlp_policy: Optional[Dict[TlpLevel, AiPolicyMode]] = None
     # API keys (services/api_key_service.py): org kill switch (default on)
@@ -80,8 +79,7 @@ class OrganizationUpdate(BaseModel):
         return v
 
 
-# Keys returned by GET /organization (everything writable except
-# registration_enabled, which is returned separately to managers only).
+# Keys returned by GET /organization.
 PUBLIC_SETTING_KEYS = ('timezone', 'auto_enrich_iocs', 'enrichment_allow_amber_strict',
                        'api_keys_enabled', 'api_key_max_lifetime_days')
 

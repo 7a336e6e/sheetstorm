@@ -8,7 +8,7 @@
 
 import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2, ScrollText } from 'lucide-react'
+import { Settings, Zap, Database, Search, Bell, Shield, Puzzle, FileCode2, ScrollText, ShieldCheck } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab'
@@ -19,10 +19,12 @@ import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { AuthenticationTab } from '@/components/settings/AuthenticationTab'
 import { MitrePatternManager } from '@/components/settings/MitrePatternManager'
 import { AuditRetentionTab } from '@/components/settings/AuditRetentionTab'
+import { SecurityTab } from '@/components/settings/SecurityTab'
 import { useAuthStore } from '@/lib/store'
 
 const TAB_CONFIG = [
     { value: 'general', label: 'General', icon: Settings, anyOf: ['organizations:manage'] },
+    { value: 'security', label: 'Security', icon: ShieldCheck, anyOf: ['organizations:manage'] },
     { value: 'integrations', label: 'Integrations', icon: Puzzle, anyOf: ['integrations:read'] },
     { value: 'ai', label: 'AI Providers', icon: Zap, anyOf: ['integrations:read'] },
     { value: 'storage', label: 'Storage', icon: Database, anyOf: ['integrations:read'] },
@@ -80,6 +82,11 @@ function SettingsInner() {
                 {show('general') && (
                     <TabsContent value="general" className="mt-6 max-w-4xl">
                         <GeneralTab />
+                    </TabsContent>
+                )}
+                {show('security') && (
+                    <TabsContent value="security" className="mt-6 max-w-4xl">
+                        <SecurityTab />
                     </TabsContent>
                 )}
                 {show('integrations') && (

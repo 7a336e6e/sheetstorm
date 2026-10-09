@@ -15,25 +15,12 @@ import { Input, PasswordInput } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
-import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github, Check, X } from 'lucide-react'
+import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github } from 'lucide-react'
 import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
-import { cn } from '@/lib/utils'
 import { readSessionRevokedReason, sessionRevokedMessage } from '@/components/users/session-revoked'
-
-function PasswordCheck({ met, label }: { met: boolean; label: string }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      {met ? (
-        <Check className="h-3 w-3 text-green-600 dark:text-green-400" />
-      ) : (
-        <X className="h-3 w-3 text-muted-foreground" />
-      )}
-      <span className={cn(met ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground')}>
-        {label}
-      </span>
-    </div>
-  )
-}
+import { PasswordChecklist, PasswordRulesHint } from '@/components/settings/PasswordChecklist'
+import { meetsPasswordRules } from '@/lib/endpoints/security'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
 
 /** Muted notices for `/login?reason=…` (e.g. after the socket `session:revoked` event). */
 const LOGIN_NOTICES: Record<string, string> = {
@@ -82,15 +69,10 @@ function LoginPageInner() {
   const [regPassword, setRegPassword] = useState('')
   const [regConfirmPassword, setRegConfirmPassword] = useState('')
 
-  // Password validation for registration
-  const passwordChecks = {
-    length: regPassword.length >= 12,
-    uppercase: /[A-Z]/.test(regPassword),
-    lowercase: /[a-z]/.test(regPassword),
-    number: /[0-9]/.test(regPassword),
-    special: /[^A-Za-z0-9]/.test(regPassword),
-  }
-  const isPasswordValid = Object.values(passwordChecks).every(Boolean)
+  // Password rules for registration: the platform organization's security
+  // policy (hints; the server validates).
+  const passwordRules = usePasswordPolicy(registrationEnabled)
+  const isPasswordValid = meetsPasswordRules(regPassword, passwordRules)
   const passwordsMatch = regPassword === regConfirmPassword && regConfirmPassword.length > 0
 
   const handleGitHubLogin = async () => {
@@ -431,14 +413,10 @@ function LoginPageInner() {
                       disabled={regLoading}
                       className="h-11"
                     />
-                    {regPassword.length > 0 && (
-                      <div className="grid grid-cols-2 gap-1.5 mt-2 text-xs">
-                        <PasswordCheck met={passwordChecks.length} label="12+ characters" />
-                        <PasswordCheck met={passwordChecks.uppercase} label="Uppercase" />
-                        <PasswordCheck met={passwordChecks.lowercase} label="Lowercase" />
-                        <PasswordCheck met={passwordChecks.number} label="Number" />
-                        <PasswordCheck met={passwordChecks.special} label="Special char" />
-                      </div>
+                    {regPassword.length > 0 ? (
+                      <PasswordChecklist password={regPassword} rules={passwordRules} />
+                    ) : (
+                      <PasswordRulesHint rules={passwordRules} />
                     )}
                   </div>
 

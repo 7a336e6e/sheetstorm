@@ -4,6 +4,7 @@ import api from './api'
 import { invalidate } from './query-cache'
 import { supabase, getSupabase } from './supabase'
 import { isTimeMode, type TimeMode } from './time'
+import type { SecurityStatus } from '@/types/security'
 
 export interface User {
   id: string
@@ -14,7 +15,19 @@ export interface User {
   permissions?: string[]
   organization_id?: string
   mfa_enabled?: boolean
+  must_change_password?: boolean
   preferences?: { display_timezone?: TimeMode }
+  /**
+   * Security-policy status (W3-SEC) from sign-in and /auth/me. While
+   * `mfa_enrollment_required` is set the API only serves MFA enrollment, so
+   * AuthProvider keeps the user on /dashboard/profile?enroll_mfa=1.
+   */
+  security?: SecurityStatus
+}
+
+/** Whether the user must enroll in MFA before using the app (policy, past grace). */
+export function needsMfaEnrollment(user: Pick<User, 'security' | 'mfa_enabled'> | null | undefined): boolean {
+  return !!user?.security?.mfa_enrollment_required && !user.mfa_enabled
 }
 
 interface AuthState {

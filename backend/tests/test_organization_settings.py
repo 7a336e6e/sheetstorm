@@ -1,5 +1,6 @@
 """Organization settings: schema validation, merge semantics, registration
-default/scope, AI TLP policy validation, before/after audit, loosening event."""
+(not an org setting since W3-SEC), AI TLP policy validation, before/after
+audit, loosening event."""
 from rbac_helpers import default_org, last_audit, make_role, make_user, new_org, security_events  # noqa: F401
 
 
@@ -56,31 +57,26 @@ def test_viewer_cannot_put_org(app, users, auth):
     assert auth(users['Viewer']).put('/api/v1/organization', json={'name': 'x'}).status_code == 403
 
 
-def test_registration_toggle_default_org_only(app, db, auth, new_org, make_user, default_org):
-    other = _admin_client(auth, make_user, new_org())
-    resp = other.put('/api/v1/organization', json={'settings': {'registration_enabled': True}})
-    assert resp.status_code == 400 and resp.get_json()['error'] == 'not_applicable'
-
-    default_admin = _admin_client(auth, make_user, default_org)
-    try:
-        assert default_admin.put('/api/v1/organization',
-                                 json={'settings': {'registration_enabled': True}}).status_code == 200
-        assert app.test_client().get('/api/v1/auth/registration-status').get_json()['registration_enabled'] is True
-        body = default_admin.get('/api/v1/organization').get_json()
-        assert body['is_default'] is True and body['registration_enabled'] is True
-        viewer_body = auth(make_user(default_org, roles=['Viewer'])).get('/api/v1/organization').get_json()
-        assert 'registration_enabled' not in viewer_body
-    finally:
-        default_admin.put('/api/v1/organization', json={'settings': {'registration_enabled': False}})
-    assert app.test_client().get('/api/v1/auth/registration-status').get_json()['registration_enabled'] is False
+def test_registration_is_not_an_org_setting(app, db, auth, new_org, make_user, default_org):
+    """W3-SEC (C11): registration lives in the platform org's security policy
+    (provisioning.registration_enabled); PUT /organization rejects the key
+    everywhere and GET /organization no longer returns it."""
+    for org in (new_org(), default_org):
+        c = _admin_client(auth, make_user, org)
+        resp = c.put('/api/v1/organization', json={'settings': {'registration_enabled': True}})
+        assert resp.status_code == 400 and resp.get_json()['error'] == 'validation_error'
+        assert 'settings.registration_enabled' in resp.get_json()['fields']
+        assert c.put('/api/v1/organization', json={'security': {}}).status_code == 400
+        assert 'registration_enabled' not in c.get('/api/v1/organization').get_json()
 
 
 def test_registration_default_false_when_unset(app, db, default_org):
-    from app.models import Organization
-    org = Organization.query.get(default_org.id)
-    saved = dict(org.settings or {})
-    org.settings = {k: v for k, v in saved.items() if k != 'registration_enabled'}
-    db.session.commit()
+    from app.models import OrganizationSecurityPolicy
+    row = OrganizationSecurityPolicy.query.filter_by(organization_id=default_org.id).first()
+    saved = dict(row.policy) if row is not None else None
+    if row is not None:
+        db.session.delete(row)
+        db.session.commit()
     try:
         client = app.test_client()
         assert client.get('/api/v1/auth/registration-status').get_json()['registration_enabled'] is False
@@ -88,8 +84,9 @@ def test_registration_default_false_when_unset(app, db, default_org):
                                                           'password': 'An0ther-Str0ng-Pass!'})
         assert resp.status_code == 403
     finally:
-        org.settings = saved
-        db.session.commit()
+        if saved is not None:
+            db.session.add(OrganizationSecurityPolicy(organization_id=default_org.id, policy=saved))
+            db.session.commit()
 
 
 def test_ai_tlp_policy_validation(app, auth, new_org, make_user):

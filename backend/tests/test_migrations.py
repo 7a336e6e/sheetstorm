@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'task_evidence_refs_backfill'
+EXPECTED_HEAD = 'security_policy_sessions'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -200,9 +200,14 @@ def test_custom_roles_rehomed_split_and_access_preserved(scratch_db):
                     'teams:read', 'templates:manage', 'incidents:export'} <= hunters
             assert 'incidents:archive' not in hunters and 'system:manage' not in hunters
             assert by_name['Lonely'][0][2] == {'tasks:read'}
-            # The existing default org keeps registration open.
+            # The existing default org keeps registration open (moved into its
+            # security policy by security_policy_sessions).
             settings = conn.execute(text("SELECT settings FROM organizations WHERE slug='default'")).scalar()
-            assert settings['registration_enabled'] is True
+            assert 'registration_enabled' not in settings
+            policy = conn.execute(text(
+                "SELECT p.policy FROM organization_security_policies p JOIN organizations o "
+                "ON o.id = p.organization_id WHERE o.slug='default'")).scalar()
+            assert policy['provisioning']['registration_enabled'] is True
     finally:
         eng.dispose()
 
@@ -471,6 +476,94 @@ def test_evidence_register_backfill_round_trip(app, scratch_db):
             deltype = conn.execute(text(
                 "SELECT confdeltype FROM pg_constraint WHERE conname = 'chain_of_custody_artifact_id_fkey'")).scalar()
             assert deltype == 'c'
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
+# ── security_policy_sessions (W3-SEC) ───────────────────────────────────────
+
+def test_security_policy_sessions_schema_at_head(app, db):
+    assert db.session.execute(text("SELECT to_regclass('organization_security_policies')")).scalar()
+    assert db.session.execute(text("SELECT to_regclass('system_settings')")).scalar()
+    cols = {r[0]: r[1] for r in db.session.execute(text(
+        "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name='sessions'")).all()}
+    assert {'organization_id', 'refresh_jti', 'last_seen_at', 'auth_method', 'revoked_reason'} <= set(cols)
+    assert cols['token_hash'] == 'YES'
+    idx = set(db.session.execute(text("SELECT indexname FROM pg_indexes WHERE tablename='sessions'")).scalars())
+    assert {'uq_sessions_refresh_jti', 'idx_sessions_user_revoked'} <= idx
+
+
+def test_security_policy_sessions_registration_round_trip(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'task_evidence_refs_backfill')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            orgs = {}
+            for slug, settings in (('sp-open', '{"registration_enabled": true, "timezone": "UTC"}'),
+                                   ('sp-closed', '{"registration_enabled": false}'),
+                                   ('sp-odd', '{"registration_enabled": "yes"}'),
+                                   ('sp-none', '{"timezone": "UTC"}')):
+                orgs[slug] = conn.execute(text(
+                    "INSERT INTO organizations (name, slug, settings) VALUES (:s, :s, CAST(:j AS jsonb)) "
+                    "RETURNING id"), {'s': slug, 'j': settings}).scalar()
+            user = conn.execute(text("INSERT INTO users (organization_id, email, name) "
+                                     "VALUES (:o, 'sp@x.test', 'sp') RETURNING id"), {'o': orgs['sp-open']}).scalar()
+            conn.execute(text("INSERT INTO sessions (user_id, token_hash, expires_at) "
+                              "VALUES (:u, 'legacy', now() + interval '1 day')"), {'u': user})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            def policy(slug):
+                return conn.execute(text(
+                    "SELECT p.policy FROM organization_security_policies p WHERE p.organization_id = :o"),
+                    {'o': orgs[slug]}).scalar()
+            assert policy('sp-open') == {'provisioning': {'registration_enabled': True}}
+            assert policy('sp-closed') == {'provisioning': {'registration_enabled': False}}
+            assert policy('sp-odd') == {'provisioning': {'registration_enabled': False}}
+            assert policy('sp-none') is None  # no legacy key -> no row (code defaults)
+            settings = dict(conn.execute(text(
+                "SELECT slug, settings FROM organizations WHERE slug LIKE 'sp-%'")).all())
+            assert all('registration_enabled' not in s for s in settings.values())
+            assert settings['sp-open']['timezone'] == 'UTC'
+            # A session written by the new code (no token_hash).
+            conn.execute(text("INSERT INTO sessions (user_id, organization_id, refresh_jti, expires_at) "
+                              "VALUES (:u, :o, 'jti-1', now() + interval '1 day')"),
+                         {'u': user, 'o': orgs['sp-open']})
+    finally:
+        eng.dispose()
+
+    # Re-running the data step is a no-op (idempotent upgrade).
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+
+    r = _flask_db(scratch_db, 'downgrade', 'task_evidence_refs_backfill')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            settings = dict(conn.execute(text(
+                "SELECT slug, settings FROM organizations WHERE slug LIKE 'sp-%'")).all())
+            assert settings['sp-open']['registration_enabled'] is True
+            assert settings['sp-closed']['registration_enabled'] is False
+            assert 'registration_enabled' not in settings['sp-none']
+            assert conn.execute(text("SELECT to_regclass('organization_security_policies')")).scalar() is None
+            assert conn.execute(text("SELECT to_regclass('system_settings')")).scalar() is None
+            # Legacy rows survive; rows without token_hash are dropped.
+            assert conn.execute(text("SELECT count(*) FROM sessions")).scalar() == 1
+            nullable = conn.execute(text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name='sessions' AND column_name='token_hash'")).scalar()
+            assert nullable == 'NO'
     finally:
         eng.dispose()
 

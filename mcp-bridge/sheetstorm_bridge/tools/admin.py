@@ -694,6 +694,54 @@ async def sheetstorm_get_system_status() -> str:
         return f"✗ Error: {exc}"
 
 
+def _domains(value) -> str:
+    return ", ".join(value) if isinstance(value, list) and value else "any"
+
+
+@mcp.tool()
+async def sheetstorm_get_security_policy() -> str:
+    """Show your organization's security policy (read-only): password rules,
+    lockout, MFA requirement and adoption, token lifetimes and account
+    provisioning. Changing it is only possible in the web UI. Requires
+    organizations:manage."""
+    client = get_client()
+    try:
+        data = await client.get("/organization/security-policy")
+        policy = data.get("policy") or {}
+        pw = policy.get("password") or {}
+        lock = policy.get("lockout") or {}
+        mfa = policy.get("mfa") or {}
+        sess = policy.get("session") or {}
+        prov = policy.get("provisioning") or {}
+        stats = data.get("stats") or {}
+        classes = [name for key, name in (("require_upper", "upper"), ("require_lower", "lower"),
+                                          ("require_digit", "digit"), ("require_symbol", "symbol"))
+                   if pw.get(key)]
+        scope = {"none": "not required", "privileged": "required for admins (privileged roles)",
+                 "all": "required for everyone"}.get(mfa.get("required_for"), str(mfa.get("required_for")))
+        lines = [
+            f"**Security Policy** (version {data.get('version', 0)}"
+            + (f", updated {data.get('updated_at')}" if data.get("updated_at") else ", defaults") + ")",
+            f"  Password: min {pw.get('min_length')} chars, requires {', '.join(classes) or 'no classes'}; "
+            f"history {pw.get('history_count')}; max age "
+            f"{str(pw.get('max_age_days')) + ' days' if pw.get('max_age_days') else 'off'}",
+            f"  Lockout: {lock.get('threshold')} failed attempts -> {lock.get('duration_minutes')} min",
+            f"  MFA: {scope}, grace {mfa.get('grace_days')} days"
+            + (f" (since {mfa.get('enforced_since')})" if mfa.get("enforced_since") else ""),
+            f"  MFA adoption: {stats.get('users_mfa', 0)}/{stats.get('users_total', 0)} users, "
+            f"{stats.get('privileged_mfa', 0)}/{stats.get('privileged_total', 0)} privileged; "
+            f"{stats.get('users_without_mfa_past_grace', 0)} past the grace period without MFA",
+            f"  Tokens: access {sess.get('access_token_minutes')} min, refresh {sess.get('refresh_token_days')} days",
+            f"  Provisioning: email domains {_domains(prov.get('allowed_email_domains'))}; "
+            f"default role {prov.get('default_role')}"
+            + (f"; self-registration {'open' if prov.get('registration_enabled') else 'closed'}"
+               if data.get("is_platform_org") else ""),
+        ]
+        return "\n".join(lines)
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Health Check
 # ---------------------------------------------------------------------------

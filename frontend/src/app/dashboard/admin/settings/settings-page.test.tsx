@@ -86,6 +86,22 @@ describe('Settings page', () => {
     expect(screen.getByRole('button', { name: 'Delete T1059' })).toBeInTheDocument()
   })
 
+  it('shows the Security tab to organizations:manage holders only (W3-SEC)', async () => {
+    mockSearch = 'tab=security'
+    signIn(['organizations:manage'])
+    await act(async () => {
+      render(<SettingsPage />)
+    })
+    expect(tabNames()).toEqual(['General', 'Security', 'Audit Retention'])
+    expect(screen.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true')
+    cleanup()
+    signIn(['integrations:read'])
+    await act(async () => {
+      render(<SettingsPage />)
+    })
+    expect(tabNames()).not.toContain('Security')
+  })
+
   it('falls back to the first visible tab when the requested one is hidden', async () => {
     mockSearch = 'tab=general'
     signIn(['incidents:read', 'integrations:read'])

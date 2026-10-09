@@ -5,22 +5,21 @@
 
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { FileText, BarChart3, PieChart, TrendingUp, Download, Loader2, AlertCircle, Trash2, BookOpenCheck } from 'lucide-react'
-import { useToast } from '@/components/ui/use-toast'
-import { useConfirm } from '@/components/ui/confirm-dialog'
-import api from '@/lib/api'
-
-interface IncidentOption {
-    id: string
-    incident_number: number
-    title: string
-    severity: string
-    status: string
-}
+import { DataTable, type DataTableColumn, type RowAction } from '@/components/ui/data-table'
+import { IncidentPicker } from '@/components/ui/entity-picker'
+import { Timestamp } from '@/components/ui/timestamp'
+import { confirmDelete, useConfirm } from '@/components/ui/confirm-dialog'
+import { usePermission } from '@/components/auth/permission-gate'
+import { useAiAvailability } from '@/hooks/use-ai-availability'
+import { usePaginatedQuery } from '@/hooks/use-paginated-query'
+import api, { downloadTo, isAbortError, withQuery } from '@/lib/api'
+import { notifyError, notifySuccess } from '@/lib/errors'
+import { invalidate } from '@/lib/query-cache'
+import type { Incident, PaginatedResponse } from '@/types'
+import { FileText, BarChart3, PieChart, TrendingUp, Download, Loader2, Trash2, BookOpenCheck, Info } from 'lucide-react'
 
 interface ReportRecord {
     id: string
@@ -76,143 +75,166 @@ const reportTypes = [
     },
 ]
 
-export default function ReportsPage() {
-    const { toast } = useToast()
+const reportsEndpoint = (incidentId: string) => `/incidents/${incidentId}/reports`
+
+function ReportsContent() {
     const confirm = useConfirm()
+    const canGenerate = usePermission('reports:generate')
     const [generating, setGenerating] = useState<string | null>(null)
-    const [incidents, setIncidents] = useState<IncidentOption[]>([])
-    const [selectedIncidentId, setSelectedIncidentId] = useState<string>('')
-    const [reports, setReports] = useState<ReportRecord[]>([])
-    const [loadingIncidents, setLoadingIncidents] = useState(true)
-    const [loadingReports, setLoadingReports] = useState(false)
-    const [deletingReportId, setDeletingReportId] = useState<string | null>(null)
-    const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null)
+    const [selectedIncident, setSelectedIncident] = useState<Pick<Incident, 'id' | 'incident_number' | 'title'> | null>(null)
+    const selectedIncidentId = selectedIncident?.id ?? null
+    // PDF reports always generate; AI analysis is added only when the org's
+    // AI TLP policy allows a provider for this incident (server-enforced, with
+    // a deterministic fallback). So the buttons stay enabled and the reason
+    // is shown instead of disabling them (AiGate is for AI-only actions).
+    const ai = useAiAvailability(selectedIncidentId, { enabled: canGenerate })
 
-    // Fetch incidents for the selector
+    // Preselect the most recent incident (one row, not a truncated list).
+    const [preselectDone, setPreselectDone] = useState(false)
     useEffect(() => {
-        const fetchIncidents = async () => {
-            try {
-                const response = await api.get<{ items: IncidentOption[] }>('/incidents')
-                setIncidents(response.items)
-                if (response.items.length > 0) {
-                    setSelectedIncidentId(response.items[0].id)
-                }
-            } catch {
-                toast({ title: 'Error', description: 'Failed to load incidents.', variant: 'destructive' })
-            } finally {
-                setLoadingIncidents(false)
-            }
-        }
-        fetchIncidents()
-    }, [toast])
+        if (preselectDone) return
+        const ctrl = new AbortController()
+        api.get<PaginatedResponse<Incident>>(withQuery('/incidents', { per_page: 1 }), { signal: ctrl.signal })
+            .then((res) => {
+                const first = res.items?.[0]
+                if (first) setSelectedIncident((cur) => cur ?? first)
+                setPreselectDone(true)
+            })
+            .catch((err) => {
+                if (isAbortError(err)) return
+                setPreselectDone(true)
+                notifyError(err, 'load incidents')
+            })
+        return () => ctrl.abort()
+    }, [preselectDone])
 
-    // Fetch reports when selected incident changes
-    const fetchReports = useCallback(async (incidentId: string) => {
-        if (!incidentId) return
-        setLoadingReports(true)
-        try {
-            const response = await api.get<{ items: ReportRecord[] }>(`/incidents/${incidentId}/reports`)
-            setReports(response.items)
-        } catch {
-            setReports([])
-        } finally {
-            setLoadingReports(false)
-        }
-    }, [])
-
-    useEffect(() => {
-        if (selectedIncidentId) {
-            fetchReports(selectedIncidentId)
-        } else {
-            setReports([])
-        }
-    }, [selectedIncidentId, fetchReports])
+    const reports = usePaginatedQuery<ReportRecord>({
+        endpoint: reportsEndpoint(selectedIncidentId ?? '_'),
+        enabled: !!selectedIncidentId,
+        defaults: { perPage: 25, sort: '-created_at' },
+    })
 
     const handleDownloadReport = async (report: ReportRecord) => {
         if (!selectedIncidentId) return
-        setDownloadingReportId(report.id)
         try {
-            const blob = await api.downloadFile(
-                `/incidents/${selectedIncidentId}/reports/${report.id}/download`
-            )
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `${report.title.replace(/\s+/g, '_')}.pdf`
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
-        } catch {
-            toast({ title: 'Download Failed', description: 'Could not download the report.', variant: 'destructive' })
-        } finally {
-            setDownloadingReportId(null)
+            await downloadTo(`${reportsEndpoint(selectedIncidentId)}/${report.id}/download`, {
+                fallbackName: `${report.title.replace(/\s+/g, '_')}.pdf`,
+            })
+        } catch (err) {
+            notifyError(err, 'download the report')
         }
     }
 
     const handleDeleteReport = async (report: ReportRecord) => {
         if (!selectedIncidentId) return
-        const confirmed = await confirm({
-            title: 'Delete Report',
-            description: `Delete "${report.title}"? This action cannot be undone.`,
-            confirmLabel: 'Delete',
-            variant: 'destructive',
-        })
-        if (!confirmed) return
-        setDeletingReportId(report.id)
+        if (!(await confirmDelete(confirm, 'report', report.title))) return
         try {
-            await api.delete(`/incidents/${selectedIncidentId}/reports/${report.id}`)
-            toast({ title: 'Report Deleted', description: `${report.title} has been removed.` })
-            setReports(prev => prev.filter(r => r.id !== report.id))
-        } catch {
-            toast({ title: 'Delete Failed', description: 'Could not delete the report.', variant: 'destructive' })
-        } finally {
-            setDeletingReportId(null)
+            await api.delete(`${reportsEndpoint(selectedIncidentId)}/${report.id}`)
+            notifySuccess('Report deleted', `${report.title} has been removed.`)
+            invalidate(reportsEndpoint(selectedIncidentId))
+        } catch (err) {
+            notifyError(err, 'delete the report')
         }
     }
 
     const handleGenerate = async (typeId: string, title: string) => {
-        if (!selectedIncidentId) {
-            toast({ title: 'No incident selected', description: 'Please select an incident first.', variant: 'destructive' })
-            return
-        }
-
+        if (!selectedIncident) return
         setGenerating(typeId)
-        toast({ title: 'Generating Report', description: `Starting AI-powered generation of ${title}...` })
-
         try {
-            const pdfBlob = await api.postForBlob(
-                `/incidents/${selectedIncidentId}/reports/generate-pdf`,
-                { report_type: typeId }
-            )
-
-            // Trigger browser download
-            const url = URL.createObjectURL(pdfBlob)
-            const a = document.createElement('a')
-            a.href = url
-            const selectedIncident = incidents.find(i => i.id === selectedIncidentId)
-            a.download = `incident_${selectedIncident?.incident_number ?? 'report'}_${typeId}.pdf`
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
-
-            toast({ title: 'Report Generated', description: `${title} has been downloaded.` })
-
-            // Refresh the reports list
-            fetchReports(selectedIncidentId)
-        } catch (err) {
-            toast({
-                title: 'Generation Failed',
-                description: err instanceof Error ? err.message : 'An error occurred while generating the report.',
-                variant: 'destructive',
+            await downloadTo(`${reportsEndpoint(selectedIncident.id)}/generate-pdf`, {
+                method: 'POST',
+                data: { report_type: typeId },
+                fallbackName: `incident_${selectedIncident.incident_number}_${typeId}.pdf`,
             })
+            notifySuccess('Report generated', `${title} has been downloaded.`)
+            invalidate(reportsEndpoint(selectedIncident.id))
+        } catch (err) {
+            notifyError(err, `generate the ${title.toLowerCase()}`)
         } finally {
             setGenerating(null)
         }
     }
 
-    const selectedIncident = incidents.find(i => i.id === selectedIncidentId)
+    const columns = useMemo<DataTableColumn<ReportRecord>[]>(
+        () => [
+            {
+                id: 'title',
+                header: 'Report',
+                cell: (r) => (
+                    <div className="flex min-w-0 items-center gap-3">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate text-sm font-medium">{r.title}</span>
+                    </div>
+                ),
+            },
+            {
+                id: 'type',
+                header: 'Type',
+                sortKey: 'report_type',
+                className: 'w-[120px]',
+                hideBelow: 'sm',
+                cell: (r) => <span className="text-xs text-muted-foreground">{r.report_type}</span>,
+            },
+            {
+                id: 'created',
+                header: 'Generated',
+                sortKey: 'created_at',
+                className: 'w-[220px]',
+                cell: (r) => (
+                    <div className="text-xs text-muted-foreground">
+                        <Timestamp value={r.created_at} seconds={false} />
+                        {r.generator && <p className="mt-0.5">{r.generator.name}</p>}
+                    </div>
+                ),
+            },
+            {
+                id: 'format',
+                header: 'Format',
+                className: 'w-[80px]',
+                hideBelow: 'md',
+                cell: (r) => <span className="text-xs uppercase tracking-wide text-muted-foreground">{r.format}</span>,
+            },
+        ],
+        []
+    )
+
+    const rowActions = (r: ReportRecord): RowAction[] => [
+        { label: 'Download', icon: Download, permission: 'reports:read', onSelect: () => void handleDownloadReport(r) },
+        {
+            label: 'Delete',
+            icon: Trash2,
+            destructive: true,
+            permission: 'reports:generate',
+            onSelect: () => void handleDeleteReport(r),
+        },
+    ]
+
+    const generateButton = (typeId: string, title: string, variant: 'primary' | 'compact') => {
+        const busy = generating === typeId
+        const disabled = busy || !selectedIncidentId || generating !== null
+        const button =
+            variant === 'primary' ? (
+                <Button size="sm" onClick={() => void handleGenerate(typeId, title)} disabled={disabled}>
+                    {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                    {busy ? 'Generating…' : 'Generate Report'}
+                </Button>
+            ) : (
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 shrink-0 px-3 text-xs"
+                    onClick={() => void handleGenerate(typeId, title)}
+                    disabled={disabled}
+                    aria-label={`Generate ${title}`}
+                >
+                    {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Download className="mr-1 h-3 w-3" />}
+                    {busy ? '…' : 'Generate'}
+                </Button>
+            )
+        return button
+    }
+
+    const full = reportTypes[0]
 
     return (
         <div className="p-6 space-y-6">
@@ -222,39 +244,22 @@ export default function ReportsPage() {
                     <h1 className="text-2xl font-semibold">Reports</h1>
                     <p className="text-sm text-muted-foreground mt-1">Generate and view incident response reports</p>
                 </div>
-                <div className="w-72">
-                    {loadingIncidents ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground h-10">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Loading incidents...
-                        </div>
-                    ) : incidents.length === 0 ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground h-10">
-                            <AlertCircle className="h-4 w-4" />
-                            No incidents available
-                        </div>
-                    ) : (
-                        <Select value={selectedIncidentId} onValueChange={setSelectedIncidentId}>
-                            <SelectTrigger>
-                                <SelectValue placeholder="Select an incident" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {incidents.map((incident) => (
-                                    <SelectItem key={incident.id} value={incident.id}>
-                                        #{incident.incident_number} — {incident.title}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    )}
+                <div className="w-full sm:w-80">
+                    <IncidentPicker
+                        ariaLabel="Incident"
+                        placeholder="Select an incident…"
+                        value={selectedIncidentId}
+                        valueLabel={selectedIncident ? `#${selectedIncident.incident_number} ${selectedIncident.title}` : undefined}
+                        clearable={false}
+                        onChange={(_id, incident) => setSelectedIncident(incident)}
+                    />
                 </div>
             </div>
 
-            {/* Full Incident Report — Primary CTA */}
-            {(() => {
-                const full = reportTypes[0]
-                return (
-                    <Card key={full.id} className="border-primary/20 bg-primary/[0.03]">
+            {canGenerate && (
+                <>
+                    {/* Full Incident Report — Primary CTA */}
+                    <Card className="border-primary/20 bg-primary/[0.03]">
                         <CardContent className="p-5 flex items-center justify-between gap-6">
                             <div className="flex items-center gap-4 min-w-0">
                                 <div className="shrink-0 flex items-center justify-center h-10 w-10 rounded-lg bg-primary/10 text-primary">
@@ -265,53 +270,42 @@ export default function ReportsPage() {
                                     <p className="text-xs text-muted-foreground truncate">{full.description}</p>
                                 </div>
                             </div>
-                            <Button
-                                size="sm"
-                                onClick={() => handleGenerate(full.id, full.title)}
-                                disabled={generating === full.id || !selectedIncidentId}
-                            >
-                                {generating === full.id ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Download className="mr-2 h-4 w-4" />
-                                )}
-                                {generating === full.id ? 'Generating...' : 'Generate Report'}
-                            </Button>
+                            {generateButton(full.id, full.title, 'primary')}
                         </CardContent>
                     </Card>
-                )
-            })()}
 
-            {/* Sub-reports */}
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {reportTypes.slice(1).map((report) => (
-                    <Card key={report.id} className="hover:bg-muted/30 transition-colors">
-                        <CardContent className="p-4 flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                                <report.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <div className="min-w-0">
-                                    <p className="text-sm font-medium truncate">{report.title}</p>
-                                    <p className="text-xs text-muted-foreground truncate">{report.description}</p>
-                                </div>
-                            </div>
-                            <Button
-                                size="sm"
-                                variant="ghost"
-                                className="shrink-0 text-xs h-8 px-3"
-                                onClick={() => handleGenerate(report.id, report.title)}
-                                disabled={generating === report.id || !selectedIncidentId}
-                            >
-                                {generating === report.id ? (
-                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                ) : (
-                                    <Download className="mr-1 h-3 w-3" />
-                                )}
-                                {generating === report.id ? '...' : 'Generate'}
-                            </Button>
-                        </CardContent>
-                    </Card>
-                ))}
-            </div>
+                    {selectedIncidentId && !ai.loading && !ai.allowed && ai.reason && (
+                        <div
+                            role="note"
+                            className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-muted-foreground"
+                        >
+                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                                AI analysis is not available for this incident: {ai.reason} Reports are generated without
+                                the AI-written analysis.
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Sub-reports */}
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        {reportTypes.slice(1).map((report) => (
+                            <Card key={report.id} className="hover:bg-muted/30 transition-colors">
+                                <CardContent className="p-4 flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <report.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium truncate">{report.title}</p>
+                                            <p className="text-xs text-muted-foreground truncate">{report.description}</p>
+                                        </div>
+                                    </div>
+                                    {generateButton(report.id, report.title, 'compact')}
+                                </CardContent>
+                            </Card>
+                        ))}
+                    </div>
+                </>
+            )}
 
             {/* Recent Reports */}
             <Card>
@@ -320,82 +314,40 @@ export default function ReportsPage() {
                     <CardDescription>
                         {selectedIncident
                             ? `Reports for #${selectedIncident.incident_number} — ${selectedIncident.title}`
-                            : 'Previously generated reports'}
+                            : 'Select an incident to see its reports'}
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    {loadingReports ? (
-                        <div className="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Loading reports...
-                        </div>
-                    ) : reports.length === 0 ? (
-                        <div className="text-center py-8">
-                            <div className="mx-auto w-12 h-12 rounded-md bg-muted flex items-center justify-center mb-4">
-                                <FileText className="h-6 w-6 text-muted-foreground" />
-                            </div>
-                            <p className="font-medium mb-1">No reports generated yet</p>
-                            <p className="text-sm text-muted-foreground">
-                                {selectedIncidentId
-                                    ? 'Select a report type above to generate your first report'
-                                    : 'Select an incident to get started'}
-                            </p>
-                        </div>
+                    {selectedIncidentId ? (
+                        <DataTable
+                            query={reports}
+                            columns={columns}
+                            getRowId={(r) => r.id}
+                            ariaLabel="Reports"
+                            rowActions={rowActions}
+                            pageSizes={[10, 25, 50]}
+                            empty={{
+                                title: 'No reports generated yet',
+                                description: canGenerate
+                                    ? 'Select a report type above to generate the first report.'
+                                    : 'Reports generated for this incident appear here.',
+                            }}
+                        />
                     ) : (
-                        <div className="space-y-2">
-                            {reports.map((report) => (
-                                <div
-                                    key={report.id}
-                                    className="flex items-center justify-between rounded-md border p-3"
-                                >
-                                    <div className="flex items-center gap-3 min-w-0">
-                                        <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-medium truncate">{report.title}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                                {new Date(report.created_at).toLocaleDateString(undefined, {
-                                                    year: 'numeric', month: 'short', day: 'numeric',
-                                                    hour: '2-digit', minute: '2-digit',
-                                                })}
-                                                {report.generator ? ` · ${report.generator.name}` : ''}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                        <span className="text-xs uppercase tracking-wide text-muted-foreground mr-2">
-                                            {report.format}
-                                        </span>
-                                        <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-8 w-8"
-                                            title="Download report"
-                                            disabled={downloadingReportId === report.id}
-                                            onClick={() => handleDownloadReport(report)}
-                                        >
-                                            {downloadingReportId === report.id
-                                                ? <Loader2 className="h-4 w-4 animate-spin" />
-                                                : <Download className="h-4 w-4" />}
-                                        </Button>
-                                        <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-8 w-8 text-destructive hover:text-destructive"
-                                            title="Delete report"
-                                            disabled={deletingReportId === report.id}
-                                            onClick={() => handleDeleteReport(report)}
-                                        >
-                                            {deletingReportId === report.id
-                                                ? <Loader2 className="h-4 w-4 animate-spin" />
-                                                : <Trash2 className="h-4 w-4" />}
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                            {preselectDone ? 'Select an incident to get started.' : 'Loading…'}
+                        </p>
                     )}
                 </CardContent>
             </Card>
         </div>
+    )
+}
+
+export default function ReportsPage() {
+    return (
+        <Suspense fallback={null}>
+            <ReportsContent />
+        </Suspense>
     )
 }

@@ -289,6 +289,58 @@ def test_audit_governance_round_trip_with_data(scratch_db):
     assert _current(scratch_db) == EXPECTED_HEAD
 
 
+# ── user_lifecycle (W1-LIFE-BE) ─────────────────────────────────────
+
+def test_user_lifecycle_backfill_round_trip(scratch_db):
+    r = _flask_db(scratch_db, 'upgrade', 'audit_governance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.begin() as conn:
+            org = conn.execute(text("INSERT INTO organizations (name, slug, settings) "
+                                    "VALUES ('lc', 'lc', '{}') RETURNING id")).scalar()
+            conn.execute(text(
+                "INSERT INTO users (organization_id, email, name, is_active, updated_at) VALUES "
+                "(:o, 'gone@x.test', 'gone', false, '2026-01-02T03:04:05+00'), "
+                "(:o, 'here@x.test', 'here', true, '2026-01-02T03:04:05+00')"), {'o': org})
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            rows = dict(conn.execute(text(
+                "SELECT email, deactivated_at IS NOT NULL AND deactivated_at = '2026-01-02T03:04:05+00' FROM users "
+                "WHERE email IN ('gone@x.test', 'here@x.test')")).all())
+            # Inactive users: deactivated_at = their pre-migration updated_at.
+            assert rows == {'gone@x.test': True, 'here@x.test': False}
+            flags = conn.execute(text(
+                "SELECT bool_and(failed_login_count = 0 AND NOT must_change_password AND locked_until IS NULL) "
+                "FROM users")).scalar()
+            assert flags is True  # existing accounts are not locked or forced to change password
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'downgrade', 'audit_governance')
+    assert r.returncode == 0, r.stderr[-3000:]
+    eng = create_engine(scratch_db)
+    try:
+        with eng.connect() as conn:
+            cols = set(conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='users'")).scalars())
+            assert not cols & {'failed_login_count', 'locked_until', 'must_change_password', 'deactivated_at'}
+            assert conn.execute(text("SELECT to_regclass('user_invites')")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM users WHERE email LIKE '%@x.test'")).scalar() == 2
+    finally:
+        eng.dispose()
+
+    r = _flask_db(scratch_db, 'upgrade')
+    assert r.returncode == 0, r.stderr[-3000:]
+    assert _current(scratch_db) == EXPECTED_HEAD
+
+
 # ── evidence_register_ledger (W1-EVD-CORE) ─────────────────────────────────
 
 def _seed_legacy_evidence(url, key):

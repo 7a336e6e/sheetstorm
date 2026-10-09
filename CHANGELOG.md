@@ -141,6 +141,15 @@
 
 ### Other fixes
 
+- An update rejected with a 4xx (for example an unknown `host_id` on an IOC or
+  compromised account, or an empty case-note content) no longer persists the
+  fields it set before the check; audit rows record the real status of every
+  response.
+- Deleting an attack-graph node also tells connected clients that its edges
+  are gone; changing the lead responder from the incident form updates the
+  assignments panel live.
+- The attack-graph "draw connection" dialog lists every timeline event, not
+  only the first 50.
 - Compromised-account passwords: the `********` mask no longer round-trips into
   the stored password; legacy values equal to the mask are reported as "no
   password stored".

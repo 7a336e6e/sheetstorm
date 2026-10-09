@@ -594,9 +594,10 @@ def test_apply_rate_limit_is_20_per_minute(app, make_incident):
     assert codes[:20] == ['200'] * 20 and codes[20] == '429'
 
 
-def test_apply_rate_limit_is_tagged_with_its_group():
+def test_apply_rate_limit_uses_its_group():
+    # W4-RL: the literal limit became the configurable `template_apply` group.
     src = open(os.path.join(BACKEND_DIR, 'app', 'api', 'v1', 'endpoints', 'case_templates.py')).read()
-    assert '@limiter.limit("20 per minute")  # rl-group: template_apply' in src
+    assert "@limited('template_apply')" in src
 
 
 # ── built-in playbooks ────────────────────────────────────────────────────

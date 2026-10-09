@@ -33,7 +33,9 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_COOKIE_SECURE` | `true` in production | Marks auth cookies `Secure` (HTTPS only). See [HTTPS and cookies](#https-and-cookies) |
 | `JWT_REFRESH_GRACE_SECONDS` | `30` | How long a just-rotated refresh token is still accepted once (multi-tab refresh races) |
 | `TRUSTED_PROXY_CIDRS` / `REAL_IP_HEADER` | empty / `X-Forwarded-For` | Upstream proxies trusted for the client IP; see [Running behind a reverse proxy / CDN](#running-behind-a-reverse-proxy--cdn) |
-| `RATE_LIMIT_DEFAULT` | `600 per minute` | Default Flask-Limiter limit for API routes |
+| `RATE_LIMIT_DEFAULT` | `600 per minute` | Global safety-net limit (group `api_default`) for API routes |
+| `RATE_LIMIT_<GROUP>` | built-in per group | Default for one group, e.g. `RATE_LIMIT_AUTH_LOGIN=5 per minute`. See [Rate limiting](#rate-limiting) |
+| `RATE_LIMIT_SETTINGS_LOCKED` | `false` | `true` ignores admin overrides and makes the Rate limiting settings read-only |
 | `LOGIN_LOCKOUT_THRESHOLD` / `LOGIN_LOCKOUT_MINUTES` | `10` / `15` | Default lockout for organizations that have not set one in their security policy (Settings → Security): lock an account after this many consecutive bad passwords or MFA codes (bounded 3..20), for this many minutes (1..1440). Locked, disabled, unknown and wrong-password logins all get the same generic 401; an admin can unlock early (Users → Unlock) |
 | `PASSWORD_RESET_TTL_HOURS` | `24` | Lifetime of admin-issued one-time password reset links (1..72) |
 | `NEXT_PUBLIC_API_URL` | `/api/v1` | Backend API URL for the frontend (build-time). Relative paths work through the proxy on any host |
@@ -161,6 +163,18 @@ The proxy publishes port `8080` on all interfaces by default. Bind it to a speci
 ## Database migrations
 
 The backend entrypoint runs `flask db upgrade` on every container start, so a fresh `docker compose up` creates the full schema. If the database is not reachable yet it retries up to 5 times with exponential backoff (`MIGRATION_MAX_ATTEMPTS` overrides) and then **exits with an error** - the container will restart and `docker compose logs backend` shows the failure. The API never starts against a half-migrated schema. The admin user is seeded by `start.sh` (or manually: `docker compose exec backend python -c "from app.seed import seed_all; seed_all()"`).
+
+## Rate limiting
+
+Every rate-limited route belongs to a named group (sign-in, MFA, registration, exports, threat-intel lookups, …). Limits count per signed-in user, per API key, or per client IP before sign-in; behind a proxy, the client IP comes from the trusted-proxy settings above.
+
+Platform administrators (an Administrator of the platform organization) change limits in **Settings → Security → Rate limiting**: edit a group's limit (`5 per minute`, or several separated by `;`), disable a group (its routes then use the global `api_default` limit), or turn rate limiting off entirely. Organization administrators can view the settings. Changes apply to every worker within about 5 seconds, without a restart.
+
+- Resolution order: `RATELIMIT_ENABLED=False` (Flask config, tests) → `RATE_LIMIT_SETTINGS_LOCKED=true` (environment only) → admin override → `RATE_LIMIT_<GROUP>` → built-in default.
+- Changes that weaken protection (rate limiting off, an authentication group disabled or raised above 10× its default, `api_default` disabled) need an explicit confirmation and are logged as a `rate_limits_weakened` security event. Every change is audited with a before/after diff.
+- `api_default` cannot go below 30 requests per minute, so the web UI stays usable.
+- If the stored settings cannot be read, the environment and built-in defaults apply with rate limiting **on**.
+- The settings routes themselves have a fixed limit that no setting changes, so a bad configuration cannot lock you out.
 
 ## Custody signing key and rotation
 

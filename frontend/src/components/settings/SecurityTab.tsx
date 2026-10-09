@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Timestamp } from '@/components/ui/timestamp'
 import { usePermission } from '@/components/auth/permission-gate'
+import { RateLimitingSection } from './RateLimitingSection'
 import { api, isApiError } from '@/lib/api'
 import { describeError, notifyError, notifySuccess } from '@/lib/errors'
 import { rbac } from '@/lib/endpoints/rbac'
@@ -639,6 +640,8 @@ export function SecurityTab() {
       </div>
 
       {canManageUsers && <OrgSessionsCard />}
+
+      <RateLimitingSection />
     </div>
   )
 }

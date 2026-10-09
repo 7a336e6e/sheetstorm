@@ -45,6 +45,17 @@ describe('useAuthStore', () => {
     expect(hasRole('Administrator')).toBe(false)
   })
 
+  it('hasAnyPermission is true when any listed permission is held', () => {
+    useAuthStore.setState({ user: analyst, isAuthenticated: true })
+    const { hasAnyPermission } = useAuthStore.getState()
+
+    expect(hasAnyPermission(['users:manage', 'timeline:create'])).toBe(true)
+    expect(hasAnyPermission(['users:manage', 'roles:manage'])).toBe(false)
+    expect(hasAnyPermission([])).toBe(false)
+    useAuthStore.setState({ user: null, isAuthenticated: false })
+    expect(useAuthStore.getState().hasAnyPermission(['incidents:read'])).toBe(false)
+  })
+
   it('denies everything when logged out', () => {
     const { hasPermission, hasRole } = useAuthStore.getState()
     expect(hasPermission('incidents:read')).toBe(false)

@@ -24,14 +24,10 @@ from urllib.parse import urlparse
 from flask import current_app
 from app.services.encryption_service import EncryptionService
 
-AI_POLICY_MODES = ('allow', 'local_only', 'block')
-AI_TLP_POLICY_DEFAULTS = {
-    'white': 'allow',
-    'green': 'allow',
-    'amber': 'allow',
-    'amber_strict': 'local_only',
-    'red': 'local_only',
-}
+# Policy modes and defaults are defined once, with the settings schema.
+from app.schemas.organization import (  # noqa: F401  (re-exported)
+    AI_POLICY_MODES, AI_TLP_POLICY_DEFAULTS, effective_ai_tlp_policy as _effective_stored_policy,
+)
 AI_PROVIDERS = ('openai', 'google', 'ollama', 'openai_compatible')
 _LOCAL_CAPABLE_PROVIDERS = ('ollama', 'openai_compatible')
 
@@ -74,13 +70,8 @@ def effective_ai_tlp_policy(settings) -> dict:
     Read defensively: anything that is not a known TLP key with a known mode
     is ignored (schema validation lives in ``schemas/organization.py``).
     """
-    policy = dict(AI_TLP_POLICY_DEFAULTS)
     stored = (settings or {}).get('ai_tlp_policy') if isinstance(settings, dict) else None
-    if isinstance(stored, dict):
-        for tlp, mode in stored.items():
-            if tlp in policy and mode in AI_POLICY_MODES:
-                policy[tlp] = mode
-    return policy
+    return _effective_stored_policy(stored)
 
 
 def ai_policy_mode(organization_id, incident_tlp) -> str:

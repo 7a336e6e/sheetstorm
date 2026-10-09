@@ -148,6 +148,35 @@ Authorization is **permission-driven and tenant-scoped**. No decision depends on
   organization (`PLATFORM_ORG_SLUG`, default `default`).
 - **Grants**: new permission keys and their role grants are registered once, in the catalog and
   in the `admin_guardrails_rbac` data migration. Feature migrations never `UPDATE roles`.
+- **Admin UI** (cosmetic: the backend stays authoritative):
+  - Route guards (`auth-provider.tsx`), the sidebar's Admin section and the Settings tabs are
+    `{anyOf: [permissions]}` lists. There is no Administrator bypass and no role-name check: Users
+    needs `users:create|update|manage`, Roles `roles:manage|users:read`, Teams
+    `teams:create|update|delete`, Settings `organizations:manage|integrations:read|admin:manage`,
+    Archived incidents `incidents:archive`, Activity `audit_logs:read`. The Admin section is shown
+    when at least one item is visible.
+  - Settings tabs: General needs `organizations:manage`; Integrations, AI Providers, Storage,
+    Threat Intel, Notifications and Authentication need `integrations:read`; MITRE Patterns is
+    visible with `incidents:read` and editable only with `admin:manage`. A hidden `?tab=` falls
+    back to the first visible tab. The old SSO, Security and Organization admin pages are removed
+    (the Security tab is reached via `/dashboard/admin/settings?tab=security` once it exists).
+  - Roles page: the catalog comes from `GET /permissions`, grouped, with Dangerous / Privileged /
+    Platform-only badges. System roles show View and Clone only; custom roles show Edit / Delete
+    when the server marks them `editable`. Permissions you don't hold can't be ticked, and adding a
+    dangerous permission asks you to type the role name.
+  - User modals: roles whose permissions exceed yours are disabled ("exceeds your permissions");
+    a user holding permissions you lack opens read-only; on your own account the Active switch and
+    password reset are hidden (use Change password). Guard refusals (`privilege_escalation`,
+    `insufficient_privilege`, `last_admin`, `self_lockout`, `self_action`, `use_change_password`,
+    `unknown_permissions`) are shown with the server's message and the permissions involved.
+  - `permissions_changed` (socket) refetches `/auth/me`, so nav, guards and gates update live.
+  - Settings → General → **Data egress**: per-TLP AI processing (`ai_tlp_policy`: Any provider /
+    Local providers only / Blocked), the TLP:AMBER+STRICT enrichment switch
+    (`enrichment_allow_amber_strict`) and TLP:RED enrichment shown as always blocked. Loosening
+    either asks for confirmation. AI buttons are wrapped in `components/ai/AiGate.tsx`
+    (`hooks/use-ai-availability.ts`, reading `GET /incidents/<id>/reports/types`), which disables
+    them with the policy reason as a tooltip; a 403 `ai_blocked_by_tlp` is still explained by
+    `describeError`.
 
 ---
 

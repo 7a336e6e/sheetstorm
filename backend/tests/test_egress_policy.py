@@ -152,3 +152,89 @@ def test_playbook_enrich_skipped_for_red(app, users, auth, make_incident, monkey
     result = admin.post(f'/api/v1/incidents/{inc.id}/playbooks/{resp.get_json()["id"]}/activate'
                         ).get_json()['actions_executed'][0]['result']
     assert result['status'] == 'skipped' and result['code'] == 'tlp_restricted'
+
+
+# ---------------------------------------------------------------- MISP push
+
+@pytest.fixture
+def misp(app, db, org_a, users, monkeypatch):
+    """Enabled MISP integration for org A; outbound POSTs are captured."""
+    import json as _json
+    import requests
+    from app.api.v1.endpoints import threat_intel
+    from app.models import Integration
+    from app.services.encryption_service import encryption_service
+    integ = Integration(organization_id=org_a.id, type='misp', name=f'misp-{uuid.uuid4().hex[:6]}',
+                        is_enabled=True, config={'api_url': 'https://misp.example.com'},
+                        created_by=users['Administrator'].id,
+                        credentials_encrypted=encryption_service.encrypt(_json.dumps({'api_key': 'k'})))
+    db.session.add(integ)
+    db.session.commit()
+    monkeypatch.setattr(threat_intel, 'validate_outbound_url', lambda *a, **k: (True, None))
+    sent = []
+
+    class _Resp:
+        status_code = 201
+        text = ''
+
+        @staticmethod
+        def json():
+            return {'Event': {'id': '1', 'uuid': 'u'}}
+
+    monkeypatch.setattr(requests, 'post', lambda url, json=None, **k: sent.append(json) or _Resp())
+    yield sent
+    db.session.delete(integ)
+    db.session.commit()
+
+
+def _push(client, **body):
+    return client.post('/api/v1/threat-intel/misp/push',
+                       json={'iocs': [{'type': 'domain', 'value': f'{uuid.uuid4().hex[:8]}.push.example'}], **body})
+
+
+def test_misp_push_tags_event_with_incident_tlp(app, users, auth, make_incident, misp):
+    inc = make_incident(tlp='green')
+    resp = _push(auth(users['Analyst']), incident_id=str(inc.id))
+    assert resp.status_code == 201, resp.get_json()
+    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:green'}]
+
+
+def test_misp_push_without_incident_defaults_to_amber(app, users, auth, misp):
+    assert _push(auth(users['Analyst'])).status_code == 201
+    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:amber'}]
+
+
+def test_misp_push_requires_incident_access(app, users, auth, make_incident, make_user, org_a, org_b, misp):
+    other_org = make_incident(org=org_b)
+    assert _push(auth(users['Analyst']), incident_id=str(other_org.id)).status_code == 404
+    # incidents:update without a visibility scope: only assigned incidents.
+    narrow = make_user(org_a, perms=['incidents:read', 'incidents:update'])
+    hidden = make_incident()
+    assert _push(auth(narrow), incident_id=str(hidden.id)).status_code == 404
+    assert _push(auth(narrow), incident_id='not-a-uuid').status_code == 400
+    assert misp == []
+
+
+def test_misp_push_red_always_blocked(app, db, users, auth, make_incident, org_settings, misp):
+    from app.models import AuditLog
+    org_settings(enrichment_allow_amber_strict=True)
+    before = AuditLog.query.filter_by(action='misp_push_blocked_by_tlp').count()
+    resp = _push(auth(users['Analyst']), incident_id=str(make_incident(tlp='red').id))
+    assert resp.status_code == 403 and resp.get_json()['error'] == 'tlp_restricted'
+    assert misp == []
+    assert AuditLog.query.filter_by(action='misp_push_blocked_by_tlp').count() == before + 1
+
+
+def test_misp_push_amber_strict_follows_org_setting(app, users, auth, make_incident, org_settings, misp):
+    inc = make_incident(tlp='amber_strict')
+    assert _push(auth(users['Analyst']), incident_id=str(inc.id)).status_code == 403
+    org_settings(enrichment_allow_amber_strict=True)
+    assert _push(auth(users['Analyst']), incident_id=str(inc.id)).status_code == 201
+    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:amber+strict'}]
+
+
+def test_misp_push_refuses_values_from_red_incidents(app, users, auth, restricted_value, misp):
+    _, value = restricted_value('red')
+    resp = auth(users['Analyst']).post('/api/v1/threat-intel/misp/push',
+                                      json={'iocs': [{'type': 'domain', 'value': value}]})
+    assert resp.status_code == 403 and misp == []

@@ -211,15 +211,50 @@ def misp_push_ioc():
         ],
         "event_info": "Optional MISP event title"
     }
+
+    TLP egress: with ``incident_id`` the caller must be able to access that
+    incident (404 otherwise); TLP:RED is always refused and TLP:AMBER+STRICT
+    is refused unless the org allows ``enrichment_allow_amber_strict``
+    (403 ``tlp_restricted``). Values that belong to any such restricted
+    incident of the org are refused as well. The MISP event is tagged with
+    the incident's TLP (``tlp:amber`` when no incident is given).
     """
     import requests as req
+    from app.middleware.audit import log_security_event
+    from app.middleware.rbac import user_can_access_incident
+    from app.models import Incident
+    from app.services.egress_policy import EgressBlocked, assert_enrichment_allowed, assert_values_allowed
+    import uuid
 
     user = get_current_user()
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'bad_request', 'message': 'Request body must be a JSON object'}), 400
 
     iocs = data.get('iocs', [])
-    if not iocs:
+    if not iocs or not isinstance(iocs, list) or not all(isinstance(i, dict) for i in iocs):
         return jsonify({'error': 'bad_request', 'message': 'No IOCs provided'}), 400
+
+    incident = None
+    if data.get('incident_id'):
+        try:
+            incident_id = uuid.UUID(str(data['incident_id']))
+        except ValueError:
+            return jsonify({'error': 'bad_request', 'message': 'incident_id must be a UUID'}), 400
+        incident = Incident.query.filter_by(id=incident_id, organization_id=user.organization_id).first()
+        if incident is None or not user_can_access_incident(user, incident):
+            return jsonify({'error': 'not_found', 'message': 'Incident not found'}), 404
+
+    try:
+        assert_enrichment_allowed(incident)
+        assert_values_allowed(user.organization_id, [i.get('value') for i in iocs])
+    except EgressBlocked as e:
+        log_security_event('misp_push_blocked_by_tlp', resource_type='incident' if incident else 'misp',
+                           resource_id=incident.id if incident else None,
+                           incident_id=incident.id if incident else None,
+                           details={'tlp': e.tlp, 'blocked_count': e.blocked_count}, user=user)
+        return e.to_response()
+    tlp_tag = _MISP_TLP_TAGS.get(incident.tlp if incident else 'amber', 'tlp:amber')
 
     # Get MISP integration
     integration = Integration.query.filter_by(
@@ -264,6 +299,7 @@ def misp_push_ioc():
                 'distribution': 0,  # Organization only
                 'threat_level_id': 2,  # Medium
                 'analysis': 1,  # Ongoing
+                'Tag': [{'name': tlp_tag}],
                 'Attribute': [
                     {
                         'type': ioc.get('type', 'text'),
@@ -305,6 +341,16 @@ def misp_push_ioc():
     except Exception as e:
         logger.exception('MISP push failed')
         return jsonify({'error': 'server_error', 'message': 'MISP push failed'}), 500
+
+
+# Incident TLP -> MISP `tlp` taxonomy tag.
+_MISP_TLP_TAGS = {
+    'white': 'tlp:white',
+    'green': 'tlp:green',
+    'amber': 'tlp:amber',
+    'amber_strict': 'tlp:amber+strict',
+    'red': 'tlp:red',
+}
 
 
 def _misp_type_to_category(ioc_type: str) -> str:

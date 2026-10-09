@@ -80,10 +80,15 @@ detected and unpublished within hours to a few days.
   Next.js advisory OSV lists for 16.x, so the younger `16.4.0` was not needed.
 - Dependabot (`.github/dependabot.yml`) opens PRs only for versions past a
   7-day cooldown and covers npm, pip (backend, mcp-server, mcp-bridge),
-  Dockerfiles, docker-compose and GitHub Actions. Version updates arrive as one
-  grouped weekly PR of minor/patch bumps per ecosystem/directory (at most 2
-  open per entry); semver-major bumps are ignored and done manually. Security
-  updates are grouped into one PR per ecosystem/directory.
+  Dockerfiles, docker-compose and GitHub Actions. For npm, Docker,
+  docker-compose and Actions, version updates arrive as one grouped weekly PR
+  of minor/patch bumps per ecosystem/directory (at most 2 open per entry);
+  semver-major bumps are ignored and done manually. Security updates are
+  grouped into one PR per ecosystem/directory. The pip entries are
+  security-only (`open-pull-requests-limit: 0` disables version updates):
+  Python deps are hash-locked and Dependabot does not regenerate the `*.lock`
+  files, so routine pip bumps are done by hand with `scripts/lock-python.sh`
+  (section 5), and pip security PRs also need a relock before merging.
 
 ### 4. Vetting checklist for a new or bumped dependency
 

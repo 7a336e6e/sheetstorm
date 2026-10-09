@@ -6,8 +6,9 @@
 #    usually unpublished within hours/days) never reach a PR.
 #  - version updates: one grouped weekly PR per ecosystem/directory for
 #    minor/patch bumps; semver-major bumps are ignored and done manually.
+#    pip is the exception: security updates only (see the pip comment below).
 #  - security updates: grouped into one PR per ecosystem/directory.
-#  - at most 2 open version-update PRs per entry.
+#  - at most 2 open version-update PRs per entry (0 for pip).
 #  - Dependabot only proposes PRs; every bump is still reviewed against the
 #    vetting checklist and installed lockfile-only (`npm ci`, hash-locked pip).
 version: 2
@@ -34,11 +35,14 @@ updates:
         update-types: ["version-update:semver-major"]
     labels: ["dependencies", "frontend"]
 
-  # pip: Dependabot bumps the human-edited inputs (requirements*.txt,
-  # constraints.txt, build-requirements.txt, pyproject.toml). It does not
-  # understand the hash-locked *.lock files: regenerate them in the PR with
-  # scripts/lock-python.sh before merging (the Docker builds fail until the
-  # lock matches the input). See assets/docs/supply-chain.md section 5.
+  # pip: security updates only. Python deps are hash-locked (*.lock, installed
+  # with --require-hashes) and Dependabot only edits the inputs
+  # (requirements*.txt, constraints.txt, ...), so its version-update PRs never
+  # build. Routine bumps are done by hand and relocked with
+  # scripts/lock-python.sh. open-pull-requests-limit: 0 disables version
+  # updates but keeps security PRs; those also need a relock with
+  # scripts/lock-python.sh before merging. See assets/docs/supply-chain.md
+  # section 5.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
@@ -46,12 +50,8 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 14
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     groups:
-      pip-backend-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
       pip-backend-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -67,12 +67,8 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 14
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     groups:
-      pip-mcp-server-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
       pip-mcp-server-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -88,12 +84,8 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 14
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     groups:
-      pip-mcp-bridge-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
       pip-mcp-bridge-security:
         applies-to: security-updates
         patterns: ["*"]

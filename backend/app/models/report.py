@@ -37,6 +37,11 @@ class Report(BaseModel):
     def to_dict(self):
         """Convert to dictionary."""
         data = super().to_dict()
+        # The storage location is internal; clients see whether the report is
+        # an immutable stored snapshot and its hash / size.
+        data.pop('storage_path', None)
+        data.pop('storage_type', None)
+        data['is_snapshot'] = bool(self.storage_path and self.sha256)
         data['generator'] = {'id': str(self.generator.id), 'name': self.generator.name} if self.generator else None
         data['incident'] = {
             'id': str(self.incident.id),

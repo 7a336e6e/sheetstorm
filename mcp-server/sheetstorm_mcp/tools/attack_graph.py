@@ -72,19 +72,35 @@ async def sheetstorm_get_attack_graph(incident_id: str) -> str:
 
 
 @mcp.tool()
-async def sheetstorm_auto_generate_graph(incident_id: str) -> str:
-    """Auto-generate attack graph from incident data (hosts, IOCs, timeline, etc.).
+async def sheetstorm_auto_generate_graph(
+    incident_id: str,
+    mode: str = "merge",
+    confirm: bool = False,
+) -> str:
+    """Auto-generate the attack graph from incident data (hosts, IOCs, timeline, etc.).
+
+    mode "merge" (default) only adds what is missing and never moves, edits or
+    deletes existing nodes and edges. mode "replace" deletes the whole graph
+    (including manual nodes, edges and positions) and rebuilds it; it needs
+    confirm=true.
 
     Args:
         incident_id: UUID of the incident
+        mode: "merge" (default) or "replace"
+        confirm: Must be true for mode "replace"
     """
     client = get_client()
     try:
-        data = await client.post(f"/incidents/{incident_id}/attack-graph/auto-generate")
-        nodes = data.get("nodes", [])
-        edges = data.get("edges", [])
+        body: dict = {"mode": mode}
+        if confirm:
+            body["confirm"] = True
+        data = await client.post(f"/incidents/{incident_id}/attack-graph/auto-generate", json=body)
+        created = data.get("created") or {}
+        nodes = created.get("nodes", len(data.get("nodes", [])))
+        edges = created.get("edges", len(data.get("edges", [])))
+        verb = "rebuilt" if data.get("mode", mode) == "replace" else "updated (merge)"
         return (
-            f"✓ Attack graph generated: {len(nodes)} nodes, {len(edges)} edges.\n"
+            f"✓ Attack graph {verb}: {nodes} nodes, {edges} edges created.\n"
             f"Use sheetstorm_get_attack_graph to view the full graph."
         )
     except SheetStormAPIError as exc:

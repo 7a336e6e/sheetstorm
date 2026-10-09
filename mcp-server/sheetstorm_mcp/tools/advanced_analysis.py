@@ -1,12 +1,21 @@
 """Advanced analysis tools — cross-incident search, IOC correlation,
-STIX export, and bulk enrichment."""
+STIX export, CSV export, and bulk enrichment."""
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 from typing import Optional
 
 from sheetstorm_mcp.client import SheetStormAPIError
+from sheetstorm_mcp.config import get_config
 from sheetstorm_mcp.server import get_client, mcp
+from sheetstorm_mcp.tools.artifacts import LocalPathError, _safe_local_path, _write_local_file
+
+# Entities of GET /incidents/<id>/export/<entity> (backend services/csv_export.py).
+EXPORT_ENTITIES = ("timeline", "hosts", "accounts", "network-iocs", "host-iocs", "malware", "tasks")
+MAX_INLINE_ROWS = 200
 
 # ---------------------------------------------------------------------------
 # Global Search
@@ -89,25 +98,30 @@ async def sheetstorm_search(
 async def sheetstorm_correlate_iocs(
     ioc_values: Optional[str] = None,
     ioc_types: Optional[str] = None,
+    incident_id: Optional[str] = None,
 ) -> str:
     """Find IOCs that appear across multiple incidents.
 
     Identifies shared indicators of compromise (IPs, domains, hashes,
     hostnames, file artifacts) across different incidents to detect
-    related threat activity.
+    related threat activity. Only incidents you can access are listed.
 
     Args:
-        ioc_values: Optional comma-separated list of specific IOC values to check.
+        ioc_values: Optional comma-separated list of specific IOC values to check (max 1000).
                     If empty, finds ALL IOCs shared across 2+ incidents.
         ioc_types: Comma-separated IOC types to check (ip,domain,hash,hostname,file,all). Default: all.
+        incident_id: Optional incident UUID. With no ioc_values, the values recorded in
+                    that incident are checked against your other incidents.
     """
     client = get_client()
     try:
         body: dict = {}
         if ioc_values:
-            body["ioc_values"] = [v.strip() for v in ioc_values.split(",")]
+            body["ioc_values"] = [v.strip() for v in ioc_values.split(",") if v.strip()]
         if ioc_types:
-            body["ioc_types"] = [t.strip() for t in ioc_types.split(",")]
+            body["ioc_types"] = [t.strip() for t in ioc_types.split(",") if t.strip()]
+        if incident_id:
+            body["incident_id"] = incident_id
 
         data = await client.post("/correlate-iocs", json=body)
         correlations = data.get("correlations", [])
@@ -117,12 +131,13 @@ async def sheetstorm_correlate_iocs(
 
         parts = [f"**IOC Correlations** — {len(correlations)} shared indicators\n"]
         for c in correlations:
-            incidents_str = ", ".join(
-                f"{i['title']} (`{i['id'][:8]}…`)" for i in c.get("incidents", [])
-            )
+            others = [i for i in c.get("incidents", []) if not incident_id or i.get("id") != incident_id]
+            incidents_str = ", ".join(f"{i['title']} (`{i['id'][:8]}…`)" for i in others)
+            label = "Also seen in" if incident_id else "Seen in"
+            count = len(others) if incident_id else c["incident_count"]
             parts.append(
                 f"### `{c['ioc_value']}` ({c['ioc_type']})\n"
-                f"Seen in **{c['incident_count']}** incidents: {incidents_str}\n"
+                f"{label} **{count}** incidents: {incidents_str}\n"
             )
 
         return "\n".join(parts)
@@ -138,19 +153,31 @@ async def sheetstorm_correlate_iocs(
 @mcp.tool()
 async def sheetstorm_export_stix(
     incident_id: str,
+    save_path: Optional[str] = None,
 ) -> str:
-    """Export an incident as a STIX 2.1 JSON bundle.
+    """Export an incident as a STIX 2.1 JSON bundle (marked with the incident's TLP).
 
     Generates a standards-compliant STIX 2.1 bundle containing all
     incident artifacts: indicators, malware, infrastructure, attack
-    patterns, and their relationships.
+    patterns, and their relationships. Needs the incidents:export permission.
+
+    On the remote MCP server, save_path is relative to your private per-user
+    artifact directory; on a local (stdio) server it is any local path.
 
     Args:
         incident_id: UUID of the incident to export
+        save_path: Optional file to save the full bundle to (otherwise only a summary is returned)
     """
     client = get_client()
     try:
-        data = await client.get(f"/incidents/{incident_id}/export/stix")
+        target = None
+        if save_path:
+            try:
+                target = _safe_local_path(save_path)
+            except LocalPathError as exc:
+                return f"✗ {exc}"
+        resp = await client._send("GET", f"/incidents/{incident_id}/export/stix")
+        data = resp.json()
 
         objects = data.get("objects", [])
         type_counts: dict[str, int] = {}
@@ -173,12 +200,99 @@ async def sheetstorm_export_stix(
                 parts.append(f"Object refs: {len(obj.get('object_refs', []))}")
                 break
 
-        parts.append(f"\n_Full STIX JSON available via API GET /incidents/{incident_id}/export/stix_")
+        if target is not None:
+            try:
+                _write_local_file(target, resp.content, private=get_config().transport != "stdio")
+            except LocalPathError as exc:
+                return f"✗ {exc}"
+            except OSError as exc:
+                return f"✗ Cannot write {save_path}: {exc.strerror or exc}"
+            parts.append(f"\n✓ Full bundle saved to {save_path} ({len(resp.content)} bytes)")
+        else:
+            parts.append("\n_Pass save_path to save the full STIX JSON, or GET "
+                         f"/incidents/{incident_id}/export/stix._")
 
         return "\n".join(parts)
 
     except SheetStormAPIError as exc:
         return f"STIX export failed: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def sheetstorm_export_csv(
+    incident_id: str,
+    entity: str,
+    filters_json: Optional[str] = None,
+    save_path: Optional[str] = None,
+    defang: bool = False,
+) -> str:
+    """Export one entity of an incident as CSV (server-side, formula-safe, UTC times).
+
+    Needs incidents:export plus the entity's read permission. Accounts never
+    include passwords. Without save_path at most 200 rows are returned inline.
+
+    On the remote MCP server, save_path is relative to your private per-user
+    artifact directory; on a local (stdio) server it is any local path.
+
+    Args:
+        incident_id: UUID of the incident
+        entity: One of: timeline, hosts, accounts, network-iocs, host-iocs, malware, tasks
+        filters_json: Optional JSON object of the entity list's filters, e.g.
+            '{"triage_status": "compromised", "q": "ws-", "sort": "-first_seen"}'
+        save_path: Optional file to save the complete CSV to
+        defang: Defang indicator values (evil[.]com, hxxp://) in IOC columns
+    """
+    if entity not in EXPORT_ENTITIES:
+        return f"✗ entity must be one of: {', '.join(EXPORT_ENTITIES)}"
+    params: dict = {}
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except ValueError:
+            return "✗ filters_json must be a JSON object"
+        if not isinstance(filters, dict) or any(
+                not isinstance(v, (str, int, float, bool)) for v in filters.values()):
+            return "✗ filters_json must be a JSON object of simple values"
+        params.update({str(k): str(v).lower() if isinstance(v, bool) else str(v) for k, v in filters.items()})
+    if defang:
+        params["defang"] = "true"
+
+    client = get_client()
+    try:
+        target = None
+        if save_path:
+            try:
+                target = _safe_local_path(save_path)
+            except LocalPathError as exc:
+                return f"✗ {exc}"
+        resp = await client._send("GET", f"/incidents/{incident_id}/export/{entity}", params=params or None)
+        content = resp.content
+        if target is not None:
+            try:
+                _write_local_file(target, content, private=get_config().transport != "stdio")
+            except LocalPathError as exc:
+                return f"✗ {exc}"
+            except OSError as exc:
+                return f"✗ Cannot write {save_path}: {exc.strerror or exc}"
+            return f"✓ {entity} CSV saved to {save_path} ({len(content)} bytes)"
+
+        rows = list(csv.reader(io.StringIO(content.decode("utf-8-sig", errors="replace"))))
+        header, body = (rows[0] if rows else []), rows[1:]
+        total = len(body)
+        shown = body[:MAX_INLINE_ROWS]
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        writer.writerow(header)
+        writer.writerows(shown)
+        note = (f"Showing the first {len(shown)} of {total} rows; pass save_path for the complete file."
+                if total > len(shown) else f"{total} rows.")
+        return f"**{entity} export**\n```csv\n{out.getvalue()}```\n{note}"
+    except SheetStormAPIError as exc:
+        return f"✗ Error: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -188,16 +302,22 @@ async def sheetstorm_export_stix(
 @mcp.tool()
 async def sheetstorm_bulk_enrich(
     ioc_values: str,
+    incident_id: Optional[str] = None,
 ) -> str:
     """Enrich multiple IOCs in batch against threat intelligence sources.
 
     Queries VirusTotal, AbuseIPDB, and other configured sources for
-    reputation and context on each IOC.
+    reputation and context on each IOC. The values are sent to those
+    third-party providers; TLP:RED data is never sent (and AMBER+STRICT only
+    when the organization allows it), the server refuses or marks such values
+    as blocked.
 
     Args:
         ioc_values: Pipe-separated list of IOCs in format 'type:value'.
-                    Types: ip, domain, hash, md5, sha256, email.
-                    Example: 'ip:8.8.8.8|domain:evil.com|hash:abc123'
+                    Types: ip, domain, hash, md5, sha1, sha256, email, hostname.
+                    Example: 'ip:8.8.8.8|domain:evil.com|sha256:abc123...'
+        incident_id: Optional incident UUID the values belong to; its TLP is
+                    checked first (a restricted incident is refused as a whole).
     """
     client = get_client()
     try:
@@ -213,16 +333,22 @@ async def sheetstorm_bulk_enrich(
         if not ioc_list:
             return "No valid IOCs provided. Format: 'type:value|type:value'"
 
-        data = await client.post("/bulk-enrich", json={"ioc_values": ioc_list})
+        body: dict = {"ioc_values": ioc_list}
+        if incident_id:
+            body["incident_id"] = incident_id
+        data = await client.post("/bulk-enrich", json=body)
         results = data.get("results", [])
 
         parts = [
             f"**Bulk Enrichment** — {data.get('total', 0)} IOCs processed\n",
-            f"✅ Enriched: {data.get('enriched', 0)} | ❌ Failed: {data.get('failed', 0)}\n",
+            f"✅ Enriched: {data.get('enriched', 0)} | ❌ Failed: {data.get('failed', 0)}"
+            f" | ⛔ Blocked (TLP): {data.get('blocked', 0)}\n",
         ]
+        if data.get("providers"):
+            parts.append(f"Providers: {', '.join(data['providers'])}\n")
 
         for r in results:
-            status_icon = "✅" if r["status"] == "success" else "❌"
+            status_icon = {"success": "✅", "blocked": "⛔"}.get(r["status"], "❌")
             parts.append(f"{status_icon} **{r['type']}**: `{r['value']}`")
             if r["status"] == "success" and r.get("enrichment"):
                 enrich = r["enrichment"]

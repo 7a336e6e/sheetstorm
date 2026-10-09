@@ -293,7 +293,7 @@ verified).
 | Method | Endpoint                                  | Description                    |
 |--------|-------------------------------------------|--------------------------------|
 | GET    | `/incidents/{id}/attack-graph`            | Full graph with correlations   |
-| POST   | `/incidents/{id}/attack-graph/auto-generate` | Auto-generate from data     |
+| POST   | `/incidents/{id}/attack-graph/auto-generate` | Auto-generate from data: `{mode: merge\|replace, confirm}` |
 | GET    | `/incidents/{id}/attack-graph/nodes`      | List nodes                     |
 | POST   | `/incidents/{id}/attack-graph/nodes`      | Create node                    |
 | PUT    | `/incidents/{id}/attack-graph/nodes/{nid}`| Update node                    |
@@ -304,6 +304,20 @@ verified).
 | DELETE | `/incidents/{id}/attack-graph/edges/{eid}`| Delete edge                    |
 | GET    | `/attack-graph/node-types`                | Available node types           |
 | GET    | `/attack-graph/edge-types`                | Available edge types           |
+
+### Attack graph auto-generate: merge and replace
+
+`mode: "merge"` (the default, also for an empty body) only adds what is
+missing and never moves, edits or deletes existing nodes and edges. Generated
+nodes and edges carry `extra_data.origin = "auto"` and an `auto_key`
+(`host:<id>`, `account:<id>`, `malware:<id>`, `hioc:<id>`, `nioc:<value>`;
+edges `<type>:<src key>-><dst key>`); graphs built before keys existed are
+matched by their host / account links and by type + label, so they are not
+duplicated. Only `origin = "auto"` nodes get their `label` / `extra_data`
+refreshed; manual nodes and every position are left alone. `mode: "replace"`
+deletes the whole graph first (manual nodes, edges and positions included) and
+needs `confirm: true` (400 `confirmation_required` otherwise). The response is
+`{created: {nodes, edges}, mode, message, nodes, edges}`.
 
 ## Artifacts & Evidence
 
@@ -430,9 +444,64 @@ Reads need `incidents:read`, writes `incidents:update` (a Viewer is read-only).
 
 | Method | Endpoint                                  | Description                    |
 |--------|-------------------------------------------|--------------------------------|
-| POST   | `/incidents/{id}/reports/generate-pdf`    | Generate PDF report            |
+| POST   | `/incidents/{id}/reports/generate-pdf`    | Generate (issue) a PDF report; stored as a snapshot, `X-Report-SHA256` / `X-Report-Id` headers |
 | POST   | `/incidents/{id}/reports/ai-generate`     | Generate AI summary            |
-| GET    | `/incidents/{id}/reports`                 | List reports                   |
+| GET    | `/incidents/{id}/reports`                 | List reports (not the soft-deleted ones); `is_snapshot`, `sha256`, `size_bytes` |
+| GET    | `/incidents/{id}/reports/{rid}/download`  | Download the issued PDF (stored bytes, SHA-256 re-checked) |
+| DELETE | `/incidents/{id}/reports/{rid}`           | Soft delete (the issued file is kept) |
+
+A report is what was issued: the PDF bytes are stored once under
+`incidents/<incident>/reports/<report>.pdf` with their SHA-256, and every
+download returns those bytes (`X-Report-SHA256`, `X-Report-Snapshot: stored`).
+A missing or altered file is a 409 `integrity_error` and a
+`security_event / report_integrity_failure`; if the snapshot cannot be stored
+generation fails (500) and no report row is created. Reports issued before
+snapshots (`is_snapshot: false`) are re-rendered from current data and marked
+`X-Report-Snapshot: legacy`. Report files are removed only by the permanent
+incident purge (`incident_purge` steps `report_files_collect` / `report_files`).
+
+## Exports
+
+| Method | Endpoint                                  | Description                    |
+|--------|-------------------------------------------|--------------------------------|
+| GET    | `/incidents/{id}/export/{entity}`         | CSV of `timeline`, `hosts`, `accounts`, `network-iocs`, `host-iocs`, `malware` or `tasks` (30/minute) |
+| GET    | `/incidents/{id}/export/stix`             | STIX 2.1 bundle (`application/stix+json`, TLP-marked) |
+| POST   | `/correlate-iocs`                         | `{incident_id?, ioc_values?, ioc_types?}`: indicators shared across incidents you can access |
+| POST   | `/bulk-enrich`                            | `{incident_id?, ioc_values: [{value, type}]}` (≤ 100; 10/minute) |
+
+Every export needs `incidents:export` **and** the entity's read permission
+(`timeline:read`, `hosts:read`, `accounts:read`, `network_iocs:read`,
+`host_iocs:read`, `malware:read`, `tasks:read`; STIX needs `incidents:read`)
+plus access to the incident. CSV takes the matching list endpoint's filters,
+`q` and `sort` (no paging), streams UTF-8 with a BOM, writes UTC times as
+`...Z`, neutralises formula cells (`= + - @ TAB CR LF` get a leading `'`),
+never includes passwords (accounts carry `Has Password` only) and supports
+`defang=true` for indicator columns. File names are
+`incident-<n>-TLP_<LEVEL>-<entity>-<YYYYMMDDTHHMMZ>.csv`. Each export writes a
+`data_access` audit row (`export_csv` / `export_stix`) with the entity, row
+count and filters.
+
+STIX is built as an object model and every pattern value is escaped for a STIX
+string literal, so values cannot break out of a pattern. Every object
+references the incident's TLP `marking-definition` (white, green, amber and
+red use the STIX 2.1 TLP 1.0 ids; `amber_strict` is marked TLP:AMBER plus a
+`TLP:AMBER+STRICT` statement marking).
+
+`/correlate-iocs` bounds its input (≤ 1000 values of ≤ 2048 characters;
+`ioc_types` from `ip, domain, hash, hostname, file, all`), checks
+`incident_id` access (404 / 403) and, without `ioc_values`, correlates the
+values recorded in that incident. `/bulk-enrich` validates every value
+against its type, checks `incident_id` access, refuses a restricted incident
+as a whole (403 `tlp_restricted`: `red`, and `amber_strict` unless the org
+allows it), marks values found in restricted incidents `blocked`, and returns
+the `providers` that answered. Both are audited (`correlate_iocs`,
+`bulk_enrich`).
+
+`POST /threat-intel/misp/push` without an `incident_id` must carry `tlp`
+(`white|green|amber|amber_strict|red`; 400 `tlp_required` otherwise). `red` is
+always refused and `amber_strict` only when the organization allows it (403
+`tlp_restricted`); the event is tagged with that TLP. With an `incident_id`
+the incident's TLP applies.
 
 ## Admin & System
 

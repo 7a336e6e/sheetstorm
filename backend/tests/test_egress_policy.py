@@ -199,9 +199,47 @@ def test_misp_push_tags_event_with_incident_tlp(app, users, auth, make_incident,
     assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:green'}]
 
 
-def test_misp_push_without_incident_defaults_to_amber(app, users, auth, misp):
-    assert _push(auth(users['Analyst'])).status_code == 201
-    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:amber'}]
+def test_misp_push_without_incident_requires_an_explicit_tlp(app, users, auth, misp):
+    """Owner decision: no incident -> the request must state the sharing level."""
+    client = auth(users['Analyst'])
+    for body in ({}, {'tlp': None}, {'tlp': ''}, {'tlp': 'purple'}, {'tlp': 5}, {'tlp': ['amber']}):
+        resp = _push(client, **body)
+        assert resp.status_code == 400 and resp.get_json()['error'] == 'tlp_required', body
+    assert misp == []
+
+
+@pytest.mark.parametrize('tlp,tag', [('white', 'tlp:white'), ('green', 'tlp:green'), ('amber', 'tlp:amber'),
+                                      ('AMBER', 'tlp:amber')])
+def test_misp_push_without_incident_tags_the_event_with_the_requested_tlp(app, users, auth, misp, tlp, tag):
+    assert _push(auth(users['Analyst']), tlp=tlp).status_code == 201
+    assert misp[-1]['Event']['Tag'] == [{'name': tag}]
+
+
+def test_misp_push_without_incident_red_is_always_blocked(app, db, users, auth, org_settings, misp):
+    from app.models import AuditLog
+    org_settings(enrichment_allow_amber_strict=True)
+    before = AuditLog.query.filter_by(action='misp_push_blocked_by_tlp').count()
+    resp = _push(auth(users['Analyst']), tlp='red')
+    assert resp.status_code == 403 and resp.get_json()['error'] == 'tlp_restricted'
+    assert resp.get_json()['tlp'] == 'red' and misp == []
+    assert AuditLog.query.filter_by(action='misp_push_blocked_by_tlp').count() == before + 1
+
+
+def test_misp_push_without_incident_amber_strict_follows_org_setting(app, users, auth, org_settings, misp):
+    client = auth(users['Analyst'])
+    resp = _push(client, tlp='amber_strict')
+    assert resp.status_code == 403 and resp.get_json()['error'] == 'tlp_restricted' and misp == []
+    org_settings(enrichment_allow_amber_strict=True)
+    assert _push(client, tlp='amber_strict').status_code == 201
+    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:amber+strict'}]
+
+
+def test_misp_push_incident_tlp_wins_over_a_body_tlp(app, users, auth, make_incident, misp):
+    inc = make_incident(tlp='green')
+    assert _push(auth(users['Analyst']), incident_id=str(inc.id), tlp='white').status_code == 201
+    assert misp[-1]['Event']['Tag'] == [{'name': 'tlp:green'}]
+    red = make_incident(tlp='red')
+    assert _push(auth(users['Analyst']), incident_id=str(red.id), tlp='white').status_code == 403
 
 
 def test_misp_push_requires_incident_access(app, users, auth, make_incident, make_user, org_a, org_b, misp):
@@ -236,5 +274,5 @@ def test_misp_push_amber_strict_follows_org_setting(app, users, auth, make_incid
 def test_misp_push_refuses_values_from_red_incidents(app, users, auth, restricted_value, misp):
     _, value = restricted_value('red')
     resp = auth(users['Analyst']).post('/api/v1/threat-intel/misp/push',
-                                      json={'iocs': [{'type': 'domain', 'value': value}]})
+                                      json={'tlp': 'amber', 'iocs': [{'type': 'domain', 'value': value}]})
     assert resp.status_code == 403 and misp == []

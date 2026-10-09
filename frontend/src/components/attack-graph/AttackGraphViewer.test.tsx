@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { getCalls, mockApi, renderTab, resetTabTest, setRole } from '@/components/incidents/test-utils'
+import { getCalls, mockApi, renderTab, resetTabTest, setPermissions, setRole } from '@/components/incidents/test-utils'
 import { AttackGraphViewer, graphAbilities, isManualNode } from './AttackGraphViewer'
 
 beforeEach(() => resetTabTest())
@@ -37,9 +37,19 @@ describe('graph helpers', () => {
     expect(isManualNode({})).toBe(true)
   })
 
-  it('regenerate needs create and delete', () => {
-    expect(graphAbilities({ create: true, update: false, delete: false }).canRegenerate).toBe(false)
-    expect(graphAbilities({ create: true, update: false, delete: true }).canRegenerate).toBe(true)
+  it('nodes the generator created (origin auto) are never manual', () => {
+    expect(isManualNode({ extra_data: { origin: 'auto', auto_key: 'nioc:c2.example' } })).toBe(false)
+    expect(isManualNode({ extra_data: { origin: 'auto' } })).toBe(false)
+  })
+
+  it('adding missing items needs create; rebuilding from scratch needs create and delete', () => {
+    const none = graphAbilities({ create: false, update: false, delete: false })
+    expect(none.canRegenerate).toBe(false)
+    expect(none.canRebuild).toBe(false)
+    const create = graphAbilities({ create: true, update: false, delete: false })
+    expect(create.canRegenerate).toBe(true)
+    expect(create.canRebuild).toBe(false)
+    expect(graphAbilities({ create: true, update: false, delete: true }).canRebuild).toBe(true)
   })
 })
 
@@ -60,7 +70,7 @@ describe('AttackGraphViewer gating', () => {
     renderTab(<AttackGraphViewer incidentId="i1" />)
 
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith('/incidents/i1/attack-graph/auto-generate', { clear_existing: true })
+      expect(api.post).toHaveBeenCalledWith('/incidents/i1/attack-graph/auto-generate', { mode: 'merge' })
     )
     expect(screen.queryByRole('dialog')).toBeNull()
   })
@@ -76,30 +86,64 @@ describe('AttackGraphViewer gating', () => {
     expect(screen.queryByTitle('Regenerate Graph')).toBeNull()
   })
 
-  it('Responder: regenerate with manual nodes requires typing REGENERATE', async () => {
+  it('Responder: Regenerate offers "Add missing items" first and merges without a destructive confirm', async () => {
     setRole('responder')
     const api = mockApi({ '/incidents/i1/attack-graph': { nodes: [autoNode, manualNode], edges: [] } })
     renderTab(<AttackGraphViewer incidentId="i1" />)
 
     fireEvent.click(await screen.findByTitle('Regenerate Graph'))
     const dialog = await screen.findByRole('dialog')
-    const confirmBtn = within(dialog).getByRole('button', { name: 'Regenerate' })
+    expect(within(dialog).getByText(/keeps your edits and layout/i)).toBeTruthy()
+    expect(within(dialog).getByText(/deletes all manual nodes, edges and positions/i)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: /add missing items/i }))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/incidents/i1/attack-graph/auto-generate', { mode: 'merge' })
+    )
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('Responder: rebuilding with manual nodes requires typing REBUILD and sends confirm', async () => {
+    setRole('responder')
+    const api = mockApi({ '/incidents/i1/attack-graph': { nodes: [autoNode, manualNode], edges: [] } })
+    renderTab(<AttackGraphViewer incidentId="i1" />)
+
+    fireEvent.click(await screen.findByTitle('Regenerate Graph'))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /rebuild from scratch/i }))
+    const confirmDialog = await screen.findByRole('dialog')
+    const confirmBtn = within(confirmDialog).getByRole('button', { name: 'Rebuild' })
     expect((confirmBtn as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'REGENERATE' } })
+    fireEvent.change(within(confirmDialog).getByRole('textbox'), { target: { value: 'REBUILD' } })
     expect((confirmBtn as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(confirmBtn)
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith('/incidents/i1/attack-graph/auto-generate', { clear_existing: true })
+      expect(api.post).toHaveBeenCalledWith('/incidents/i1/attack-graph/auto-generate', { mode: 'replace', confirm: true })
     )
   })
 
-  it('Responder: cancelling the regenerate confirm sends nothing', async () => {
+  it('without attack_graph:delete only "Add missing items" is offered', async () => {
+    setPermissions(['incidents:read', 'attack_graph:read', 'attack_graph:create'])
+    mockApi({ '/incidents/i1/attack-graph': { nodes: [autoNode], edges: [] } })
+    renderTab(<AttackGraphViewer incidentId="i1" />)
+
+    fireEvent.click(await screen.findByTitle('Regenerate Graph'))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: /add missing items/i })).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: /rebuild from scratch/i })).toBeNull()
+  })
+
+  it('Responder: cancelling the regenerate dialog or the rebuild confirm sends nothing', async () => {
     setRole('responder')
     const api = mockApi({ '/incidents/i1/attack-graph': { nodes: [autoNode], edges: [] } })
     renderTab(<AttackGraphViewer incidentId="i1" />)
 
     fireEvent.click(await screen.findByTitle('Regenerate Graph'))
-    const dialog = await screen.findByRole('dialog')
+    let dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    fireEvent.click(screen.getByTitle('Regenerate Graph'))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /rebuild from scratch/i }))
+    dialog = await screen.findByRole('dialog')
     expect(within(dialog).queryByRole('textbox')).toBeNull() // no manual nodes: plain confirm
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

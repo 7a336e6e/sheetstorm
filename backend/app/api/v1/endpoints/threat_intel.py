@@ -204,13 +204,21 @@ def misp_push_ioc():
     """Push IOCs to MISP as events/attributes.
     
     Body: {
-        "incident_id": "uuid",
+        "incident_id": "uuid",            # optional; the incident's TLP then applies
+        "tlp": "amber",                   # REQUIRED without incident_id
         "iocs": [
             { "type": "ip-dst", "value": "1.2.3.4", "comment": "C2 server" },
             { "type": "md5", "value": "abc123...", "comment": "Malware hash" }
         ],
         "event_info": "Optional MISP event title"
     }
+
+    Without ``incident_id`` the request must state the sharing level in
+    ``tlp`` (400 ``tlp_required`` otherwise; white|green|amber|amber_strict|
+    red). ``red`` is always refused and ``amber_strict`` is refused unless the
+    org allows it (403 ``tlp_restricted``); the event is tagged with that TLP.
+    With ``incident_id`` the incident's own TLP governs (a ``tlp`` in the body
+    is ignored).
 
     TLP egress: with ``incident_id`` the caller must be able to access that
     incident (404 otherwise); TLP:RED is always refused and TLP:AMBER+STRICT
@@ -223,7 +231,8 @@ def misp_push_ioc():
     from app.middleware.audit import log_security_event
     from app.middleware.rbac import user_can_access_incident
     from app.models import Incident
-    from app.services.egress_policy import EgressBlocked, assert_enrichment_allowed, assert_values_allowed
+    from app.services.egress_policy import (EgressBlocked, assert_enrichment_allowed, assert_values_allowed,
+                                            blocked_tlps)
     import uuid
 
     user = get_current_user()
@@ -254,7 +263,20 @@ def misp_push_ioc():
                            incident_id=incident.id if incident else None,
                            details={'tlp': e.tlp, 'blocked_count': e.blocked_count}, user=user)
         return e.to_response()
-    tlp_tag = _MISP_TLP_TAGS.get(incident.tlp if incident else 'amber', 'tlp:amber')
+    if incident is not None:
+        tlp = incident.tlp
+    else:
+        tlp = data.get('tlp')
+        if not isinstance(tlp, str) or tlp.strip().lower() not in _MISP_TLP_TAGS:
+            return jsonify({'error': 'tlp_required',
+                            'message': 'A TLP is required when pushing without an incident: '
+                                       + ', '.join(_MISP_TLP_TAGS)}), 400
+        tlp = tlp.strip().lower()
+        if tlp in blocked_tlps(user.organization_id):
+            log_security_event('misp_push_blocked_by_tlp', resource_type='misp',
+                               details={'tlp': tlp, 'blocked_count': None}, user=user)
+            return EgressBlocked(tlp).to_response()
+    tlp_tag = _MISP_TLP_TAGS[tlp]
 
     # Get MISP integration
     integration = Integration.query.filter_by(

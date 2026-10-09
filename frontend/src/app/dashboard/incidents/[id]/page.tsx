@@ -15,6 +15,7 @@ import { usePermission, usePermissionCheck } from '@/components/auth/permission-
 import { IncidentRealtimeContext, useIncidentRealtime } from '@/hooks/use-incident-realtime'
 import { PresenceAvatars } from '@/components/incidents/PresenceAvatars'
 import { LiveStatusDot } from '@/components/incidents/LiveStatusDot'
+import { ExportMenu } from '@/components/incidents/ExportMenu'
 import type { Incident, Versioned } from '@/types'
 import { ArrowLeft, Upload, Zap, Edit2, Download } from 'lucide-react'
 
@@ -179,6 +180,12 @@ function IncidentDetail() {
                   <Download className="mr-2 h-4 w-4" /> Generate Report
                 </Button>
               )}
+              <ExportMenu
+                incidentId={incidentId}
+                incidentNumber={incident.incident_number}
+                tlp={incident.tlp}
+                activeTab={activeTab}
+              />
               {canUpdateIncident && (
                 <>
                   <Button variant="outline" onClick={() => setShowImportModal(true)}>

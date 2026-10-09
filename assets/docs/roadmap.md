@@ -172,7 +172,7 @@ AI Client  ◄──── MCP Protocol (SSE) ────►  SheetStorm MCP Se
 | **admin** | 20 | Users and lifecycle, roles, permissions, notifications, audit logs, health, system status |
 | **threat_intel** | 7 | VT, MISP, CVE, IP/domain/email, ransomware |
 | **knowledge_base** | 6 | LOLBAS, Event IDs, D3FEND, MITRE ATT&CK |
-| **advanced_analysis** | 4 | Search, correlation, STIX export, bulk enrich |
+| **advanced_analysis** | 5 | Search, correlation, STIX export, CSV export, bulk enrich |
 | **defang** | 2 | IOC defanging/refanging |
 | **prompts** | 9 | IR analysis templates |
 | **resources** | 7 | Reference data (phases, severities, statuses, MITRE, graph types) |

@@ -18,6 +18,7 @@ import { usePaginatedQuery } from '@/hooks/use-paginated-query'
 import api, { downloadTo, isAbortError, withQuery } from '@/lib/api'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { invalidate } from '@/lib/query-cache'
+import { ReportIntegrityBadge, shortHash } from '@/components/reports/ReportIntegrity'
 import type { Incident, PaginatedResponse } from '@/types'
 import { FileText, BarChart3, PieChart, TrendingUp, Download, Loader2, Trash2, BookOpenCheck, Info } from 'lucide-react'
 
@@ -28,6 +29,10 @@ interface ReportRecord {
     format: string
     sections: string[]
     created_at: string
+    /** Stored, hashed snapshot (immutable); false = legacy report re-rendered on download. */
+    is_snapshot?: boolean
+    sha256?: string | null
+    size_bytes?: number | null
     generator?: { id: string; name: string } | null
     incident?: { id: string; title: string; incident_number: number } | null
 }
@@ -120,6 +125,7 @@ function ReportsContent() {
             await downloadTo(`${reportsEndpoint(selectedIncidentId)}/${report.id}/download`, {
                 fallbackName: `${report.title.replace(/\s+/g, '_')}.pdf`,
             })
+            if (report.sha256) notifySuccess('Report downloaded', `SHA-256 ${shortHash(report.sha256, 16)}`)
         } catch (err) {
             notifyError(err, 'download the report')
         }
@@ -146,7 +152,7 @@ function ReportsContent() {
                 data: { report_type: typeId },
                 fallbackName: `incident_${selectedIncident.incident_number}_${typeId}.pdf`,
             })
-            notifySuccess('Report generated', `${title} has been downloaded.`)
+            notifySuccess('Report generated', `${title} has been issued and downloaded. Its SHA-256 is listed below.`)
             invalidate(reportsEndpoint(selectedIncident.id))
         } catch (err) {
             notifyError(err, `generate the ${title.toLowerCase()}`)
@@ -186,6 +192,12 @@ function ReportsContent() {
                         {r.generator && <p className="mt-0.5">{r.generator.name}</p>}
                     </div>
                 ),
+            },
+            {
+                id: 'integrity',
+                header: 'Integrity',
+                className: 'w-[200px]',
+                cell: (r) => <ReportIntegrityBadge report={r} />,
             },
             {
                 id: 'format',

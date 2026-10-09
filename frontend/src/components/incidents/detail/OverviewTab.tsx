@@ -14,7 +14,9 @@ import {
   FileText,
   ChevronRight,
 } from 'lucide-react'
-import { formatDateTime, formatRelativeTime } from '@/lib/utils'
+import { formatRelativeTime } from '@/lib/utils'
+import { parseTs } from '@/lib/time'
+import { Timestamp } from '@/components/ui/timestamp'
 import { StatCard } from './StatCard'
 import { LeadResponderSelector } from './LeadResponderSelector'
 import { AssignmentsPanel } from '@/components/incidents/AssignmentsPanel'
@@ -50,6 +52,11 @@ export function OverviewTab({
   const pendingTasks = tasks.filter((t) => t.status === 'pending').length
   const inProgressTasks = tasks.filter((t) => t.status === 'in_progress').length
   const taskProgress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : 0
+
+  // The API returns the timeline ascending; never rely on that order here.
+  const tsMs = (e: TimelineEvent) => parseTs(e.timestamp)?.getTime() ?? 0
+  const eventsNewestFirst = [...timeline].sort((a, b) => tsMs(b) - tsMs(a))
+  const firstEvent = eventsNewestFirst[eventsNewestFirst.length - 1]
 
   // Calculate incident duration
   const createdDate = incident.created_at ? new Date(incident.created_at) : null
@@ -130,7 +137,7 @@ export function OverviewTab({
               <div className="text-center py-8 text-muted-foreground">No recent activity</div>
             ) : (
               <div className="space-y-4">
-                {timeline.slice(0, 5).map(event => (
+                {eventsNewestFirst.slice(0, 5).map(event => (
                   <div key={event.id} className="flex gap-4 p-3 rounded-lg hover:bg-muted/50 transition-colors">
                     <div className="text-xs text-muted-foreground w-24 shrink-0 pt-0.5">{formatRelativeTime(event.timestamp)}</div>
                     <div className="flex-1 min-w-0">
@@ -206,7 +213,7 @@ export function OverviewTab({
           <CardContent className="space-y-3">
             <div className="flex justify-between">
               <span className="text-xs text-muted-foreground">Created</span>
-              <span className="text-xs font-medium text-foreground">{incident.created_at ? formatDateTime(incident.created_at) : 'N/A'}</span>
+              <span className="text-xs font-medium text-foreground"><Timestamp value={incident.created_at} seconds={false} fallback="N/A" /></span>
             </div>
             <div className="flex justify-between">
               <span className="text-xs text-muted-foreground">Last Updated</span>
@@ -216,10 +223,10 @@ export function OverviewTab({
               <span className="text-xs text-muted-foreground">Duration</span>
               <span className="text-xs font-bold text-primary">{durationStr}</span>
             </div>
-            {timeline.length > 0 && (
+            {firstEvent && (
               <div className="flex justify-between">
                 <span className="text-xs text-muted-foreground">First Event</span>
-                <span className="text-xs font-medium text-foreground">{formatDateTime(timeline[timeline.length - 1]?.timestamp)}</span>
+                <span className="text-xs font-medium text-foreground"><Timestamp value={firstEvent.timestamp} /></span>
               </div>
             )}
           </CardContent>

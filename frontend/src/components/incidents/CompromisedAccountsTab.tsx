@@ -34,7 +34,6 @@ import {
     TableEmpty,
 } from '@/components/ui/table'
 import { SkeletonTableRow } from '@/components/ui/skeleton'
-import { formatDateTime } from '@/lib/utils'
 import api from '@/lib/api'
 import type { CompromisedAccount, CompromisedHost } from '@/types'
 import {
@@ -53,6 +52,8 @@ import {
     Trash2,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
 
 interface CompromisedAccountsTabProps {
     incidentId: string
@@ -132,7 +133,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
         if (account) {
             setEditingAccount(account)
             setForm({
-                datetime_seen: account.datetime_seen?.slice(0, 16) || '', // Format for datetime-local
+                datetime_seen: account.datetime_seen || '',
                 account_name: account.account_name,
                 // Never pre-fill: the API only returns the masked value
                 password: '',
@@ -411,7 +412,7 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                                                 )}
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
-                                                {formatDateTime(account.datetime_seen)}
+                                                <Timestamp value={account.datetime_seen} />
                                             </TableCell>
                                             <TableCell>
                                                 <Badge
@@ -466,11 +467,10 @@ export function CompromisedAccountsTab({ incidentId }: CompromisedAccountsTabPro
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="datetime">Date Seen *</Label>
-                                <Input
+                                <DateTimeInput
                                     id="datetime"
-                                    type="datetime-local"
                                     value={form.datetime_seen}
-                                    onChange={(e) => setForm({ ...form, datetime_seen: e.target.value })}
+                                    onChange={(iso) => setForm({ ...form, datetime_seen: iso ?? '' })}
                                     variant="glass"
                                 />
                             </div>

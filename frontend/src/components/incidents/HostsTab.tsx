@@ -32,7 +32,6 @@ import {
     GlassTable,
     TableEmpty,
 } from '@/components/ui/table'
-import { formatDateTime } from '@/lib/utils'
 import api from '@/lib/api'
 import type { CompromisedHost, CustomFieldOption } from '@/types'
 import {
@@ -50,6 +49,8 @@ import {
     MoreHorizontal,
 } from 'lucide-react'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
 
 interface HostsTabProps {
     incidentId: string
@@ -277,7 +278,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                                             </TableCell>
                                             <TableCell className="text-xs text-muted-foreground">{host.os_version || '-'}</TableCell>
                                             <TableCell>{getContainmentBadge(host.containment_status || 'active')}</TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">{host.first_seen ? formatDateTime(host.first_seen) : '-'}</TableCell>
+                                            <TableCell className="text-sm text-muted-foreground"><Timestamp value={host.first_seen} fallback="-" /></TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-1">
                                                     <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => handleOpenModal(host)}>
@@ -358,7 +359,7 @@ export function HostsTab({ incidentId, onHostsChange }: HostsTabProps) {
                             </div>
                             <div className="space-y-2">
                                 <Label>First Seen</Label>
-                                <Input type="datetime-local" value={form.first_seen} onChange={e => setForm({ ...form, first_seen: e.target.value })} variant="glass" />
+                                <DateTimeInput value={form.first_seen} onChange={iso => setForm({ ...form, first_seen: iso ?? '' })} variant="glass" />
                             </div>
                         </div>
                         <div className="space-y-2">

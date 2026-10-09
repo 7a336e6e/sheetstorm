@@ -1,3 +1,5 @@
+import type { UserPreferences } from './preferences'
+
 export interface User {
   id: string
   email: string
@@ -12,6 +14,7 @@ export interface User {
   is_active: boolean
   last_login?: string
   created_at: string
+  preferences?: UserPreferences
 }
 
 export interface Team {
@@ -698,4 +701,5 @@ export interface CustomFieldOption {
   created_at: string
 }
 
+export * from './preferences'
 export * from './search'

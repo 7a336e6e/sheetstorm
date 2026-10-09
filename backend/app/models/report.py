@@ -1,5 +1,5 @@
 """Report model"""
-from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy import BigInteger, Column, String, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
@@ -19,6 +19,10 @@ class Report(BaseModel):
     sections = Column(JSONB, default=list)
     generated_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     is_archived = Column(Boolean, default=False, server_default='false')
+    # Immutable-snapshot metadata (filled by report snapshot storage).
+    sha256 = Column(String(64))
+    size_bytes = Column(BigInteger)
+    storage_type = Column(String(20))
 
     # Relationships
     incident = relationship('Incident', back_populates='reports')

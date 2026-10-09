@@ -1,7 +1,8 @@
 """Audit log endpoints"""
 from flask import jsonify, request
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from werkzeug.exceptions import BadRequest
+from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db
 from app.models import AuditLog
@@ -42,11 +43,11 @@ def list_audit_logs():
 
     start_date = request.args.get('start_date')
     if start_date:
-        query = query.filter(AuditLog.created_at >= parse_date(start_date))
+        query = query.filter(AuditLog.created_at >= parse_datetime(start_date, 'start_date'))
 
     end_date = request.args.get('end_date')
     if end_date:
-        query = query.filter(AuditLog.created_at <= parse_date(end_date))
+        query = query.filter(AuditLog.created_at <= parse_datetime(end_date, 'end_date'))
 
     pagination = query.order_by(AuditLog.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
@@ -158,8 +159,8 @@ def get_activity_feed():
     before = request.args.get('before')
     if before:
         try:
-            query = query.filter(AuditLog.created_at < parse_date(before))
-        except (ValueError, TypeError, OverflowError):
+            query = query.filter(AuditLog.created_at < parse_datetime(before, 'before'))
+        except BadRequest:
             pass
 
     incident_id = request.args.get('incident_id')

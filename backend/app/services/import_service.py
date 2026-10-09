@@ -1,9 +1,10 @@
 
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from app import db
 from app.models import TimelineEvent, CompromisedHost, CompromisedAccount, NetworkIndicator, MalwareTool, HostBasedIndicator
 from app.services.encryption_service import encryption_service
+from app.utils.validation import as_utc
 
 class ImportService:
     @staticmethod
@@ -130,25 +131,25 @@ class ImportService:
 
     @staticmethod
     def _parse_date(date_val):
-        """Parse date string or object."""
+        """Parse date string or object. Naive values are UTC (see parse_datetime)."""
         if not date_val:
-            return datetime.now()
+            return datetime.now(timezone.utc)
         
         if isinstance(date_val, str):
             try:
                 # Try common formats
                 for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y %H:%M', '%m/%d/%Y']:
                     try:
-                        return datetime.strptime(date_val, fmt)
+                        return as_utc(datetime.strptime(date_val, fmt))
                     except ValueError:
                         continue
             except:
                 pass
         
         if hasattr(date_val, 'to_pydatetime'):
-            return date_val.to_pydatetime()
+            return as_utc(date_val.to_pydatetime())
             
-        return date_val if isinstance(date_val, datetime) else datetime.now()
+        return as_utc(date_val) if isinstance(date_val, datetime) else datetime.now(timezone.utc)
 
     @staticmethod
     def _import_timeline(incident_id, df, user_id):

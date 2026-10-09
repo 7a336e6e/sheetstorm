@@ -32,7 +32,8 @@ import {
     TableEmpty,
 } from '@/components/ui/table'
 import { SkeletonTableRow, Skeleton } from '@/components/ui/skeleton'
-import { formatDateTime } from '@/lib/utils'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
 import api from '@/lib/api'
 import type { TimelineEvent, CompromisedHost, D3FENDTechnique, MitreMapping } from '@/types'
 import {
@@ -349,8 +350,8 @@ export function EventsTable({ incidentId }: EventsTableProps) {
             mappings = [{ tactic: event.mitre_tactic || '', technique: event.mitre_technique || '', name: '' }]
         }
         setForm({
-            timestamp: event.timestamp ? new Date(event.timestamp).toISOString().slice(0, 16) : '',
-            detection_time: event.detection_time ? new Date(event.detection_time).toISOString().slice(0, 16) : '',
+            timestamp: event.timestamp || '',
+            detection_time: event.detection_time || '',
             confidence_level: event.confidence_level || '',
             activity: event.activity,
             source: event.source || '',
@@ -489,7 +490,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                                         </button>
                                                     </TableCell>
                                                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                                        {formatDateTime(event.timestamp)}
+                                                        <Timestamp value={event.timestamp} />
                                                     </TableCell>
                                                     <TableCell>
                                                         {event.host || event.hostname ? (
@@ -537,7 +538,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                                                                                 <Clock className="h-3 w-3" />
                                                                                 <span className="font-medium">Timestamp</span>
                                                                             </div>
-                                                                            <p className="text-sm pl-5">{formatDateTime(event.timestamp)}</p>
+                                                                            <p className="text-sm pl-5"><Timestamp value={event.timestamp} /></p>
                                                                         </div>
                                                                         {(event.host || event.hostname) && (
                                                                             <div className="space-y-1">
@@ -710,7 +711,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                     <DialogBody className="space-y-4">
                         <div className="space-y-2">
                             <Label>Timestamp *</Label>
-                            <Input type="datetime-local" value={form.timestamp} onChange={e => setForm({ ...form, timestamp: e.target.value })} />
+                            <DateTimeInput value={form.timestamp} onChange={iso => setForm({ ...form, timestamp: iso ?? '' })} />
                         </div>
                         <div className="space-y-2">
                             <Label>Activity *</Label>
@@ -723,7 +724,7 @@ export function EventsTable({ incidentId }: EventsTableProps) {
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Detection Time</Label>
-                                <Input type="datetime-local" value={form.detection_time} onChange={e => setForm({ ...form, detection_time: e.target.value })} />
+                                <DateTimeInput value={form.detection_time} onChange={iso => setForm({ ...form, detection_time: iso ?? '' })} />
                             </div>
                             <div className="space-y-2">
                                 <Label>Confidence</Label>

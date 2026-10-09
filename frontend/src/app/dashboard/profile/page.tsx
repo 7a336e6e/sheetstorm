@@ -19,6 +19,7 @@ import {
   DialogBody,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
+import { TimeModeToggle } from '@/components/ui/time-mode-toggle'
 import {
   User as UserIcon,
   Mail,
@@ -35,6 +36,7 @@ import {
   UsersRound,
   Copy,
   Loader2,
+  Globe,
 } from 'lucide-react'
 import type { User } from '@/types'
 
@@ -338,6 +340,11 @@ export default function ProfilePage() {
                 <span className="text-muted-foreground text-xs">
                   {formatDate(user?.created_at)}
                 </span>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground w-24">Timestamps</span>
+                <TimeModeToggle />
               </div>
             </div>
           </CardContent>

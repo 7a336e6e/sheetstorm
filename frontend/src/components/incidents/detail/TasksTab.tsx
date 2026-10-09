@@ -23,6 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { DateTimeInput } from '@/components/ui/datetime-input'
+import { Timestamp } from '@/components/ui/timestamp'
 import {
   Plus,
   CheckCircle2,
@@ -45,7 +47,7 @@ import {
   Filter,
 } from 'lucide-react'
 import { PHASE_INFO } from '@/lib/design-tokens'
-import { formatDateTime, formatRelativeTime } from '@/lib/utils'
+import { formatRelativeTime } from '@/lib/utils'
 import api from '@/lib/api'
 import { useAuthStore } from '@/lib/store'
 import type { Task, CompromisedHost, CompromisedAccount, MalwareTool, HostBasedIndicator, User as UserType } from '@/types'
@@ -453,7 +455,7 @@ export function TasksTab({ incidentId, tasks, hosts, onTasksChange }: TasksTabPr
                           )}
                           {task.due_date && (
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Calendar className="w-3 h-3" /> {formatDateTime(task.due_date)}
+                              <Calendar className="w-3 h-3" /> <Timestamp value={task.due_date} seconds={false} />
                             </span>
                           )}
                         </div>
@@ -696,7 +698,7 @@ function TaskFormModal({
             </div>
             <div className="space-y-2">
               <Label>Due Date</Label>
-              <Input type="datetime-local" value={taskForm.due_date} onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })} />
+              <DateTimeInput step={60} value={taskForm.due_date} onChange={iso => setTaskForm({ ...taskForm, due_date: iso ?? '' })} />
             </div>
           </div>
 

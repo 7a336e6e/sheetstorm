@@ -1,7 +1,7 @@
 """Indicator of Compromise (IOC) endpoints"""
 from flask import jsonify, request, g, current_app
 from flask_jwt_extended import jwt_required
-from dateutil.parser import parse as parse_date
+from app.utils.validation import parse_datetime
 from app.api.v1 import api_bp
 from app import db, socketio
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool, CompromisedHost, TimelineEvent
@@ -101,7 +101,7 @@ def create_network_ioc(incident_id):
         source_host_id=source_host_id,
         destination_host_id=destination_host_id,
         timeline_event_id=timeline_event_id,
-        timestamp=parse_date(data['timestamp']) if data.get('timestamp') else None,
+        timestamp=parse_datetime(data.get('timestamp'), 'timestamp'),
         protocol=data.get('protocol'),
         port=data.get('port'),
         dns_ip=dns_ip,
@@ -205,7 +205,7 @@ def update_network_ioc(incident_id, ioc_id):
             setattr(ioc, field, data[field])
 
     if 'timestamp' in data:
-        ioc.timestamp = parse_date(data['timestamp']) if data['timestamp'] else None
+        ioc.timestamp = parse_datetime(data['timestamp'], 'timestamp')
 
     # Handle host_id
     if 'host_id' in data:
@@ -338,7 +338,7 @@ def create_host_ioc(incident_id):
         host_id=host_id,
         timeline_event_id=timeline_event_id,
         artifact_type=artifact_type,
-        datetime=parse_date(data['datetime']) if data.get('datetime') else None,
+        datetime=parse_datetime(data.get('datetime'), 'datetime'),
         artifact_value=artifact_value,
         host=host,
         notes=data.get('notes'),
@@ -373,7 +373,7 @@ def update_host_ioc(incident_id, ioc_id):
             setattr(ioc, field, data[field])
 
     if 'datetime' in data:
-        ioc.datetime = parse_date(data['datetime']) if data['datetime'] else None
+        ioc.datetime = parse_datetime(data['datetime'], 'datetime')
 
     # Handle host_id
     if 'host_id' in data:
@@ -476,9 +476,9 @@ def create_malware(incident_id):
         sha256=data.get('sha256'),
         sha512=data.get('sha512'),
         file_size=data.get('file_size'),
-        creation_time=parse_date(data['creation_time']) if data.get('creation_time') else None,
-        modification_time=parse_date(data['modification_time']) if data.get('modification_time') else None,
-        access_time=parse_date(data['access_time']) if data.get('access_time') else None,
+        creation_time=parse_datetime(data.get('creation_time'), 'creation_time'),
+        modification_time=parse_datetime(data.get('modification_time'), 'modification_time'),
+        access_time=parse_datetime(data.get('access_time'), 'access_time'),
         host=host,
         description=data.get('description'),
         malware_family=data.get('malware_family'),
@@ -516,7 +516,7 @@ def update_malware(incident_id, malware_id):
 
     for time_field in ['creation_time', 'modification_time', 'access_time']:
         if time_field in data:
-            setattr(malware, time_field, parse_date(data[time_field]) if data[time_field] else None)
+            setattr(malware, time_field, parse_datetime(data[time_field], time_field))
 
     # Handle host_id
     if 'host_id' in data:

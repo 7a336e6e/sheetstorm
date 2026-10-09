@@ -1,143 +1,136 @@
 "use client"
 
-import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { SeverityBadge, StatusBadge, PhaseBadge, TLPBadge } from '@/components/ui/badge'
 import { TimeModeToggle } from '@/components/ui/time-mode-toggle'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
-import { useIncidentStore, useAuthStore } from '@/lib/store'
-import api from '@/lib/api'
-import type { TimelineEvent, CompromisedHost, Task } from '@/types'
-import {
-  ArrowLeft,
-  Activity,
-  Server,
-  Network,
-  CheckSquare,
-  Key,
-  Globe,
-  Fingerprint,
-  Bug,
-  LayoutList,
-  Upload,
-  Zap,
-  Edit2,
-  FileText,
-  Download,
-  MessageSquare,
-  Clock,
-  Star,
-  Target,
-  BookOpen,
-} from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useIncidentStore } from '@/lib/store'
+import { describeError } from '@/lib/errors'
+import { isApiError } from '@/lib/api'
+import { subscribe } from '@/lib/query-cache'
+import { usePermission, usePermissionCheck } from '@/components/auth/permission-gate'
+import type { Incident, Versioned } from '@/types'
+import { ArrowLeft, Upload, Zap, Edit2, Download } from 'lucide-react'
 
-// ─── Tab Components ──────────────────────────────────────────────────────
-import { CompromisedAccountsTab } from '@/components/incidents/CompromisedAccountsTab'
-import { MalwareToolsTab } from '@/components/incidents/MalwareToolsTab'
-import { NetworkIOCsTab } from '@/components/incidents/NetworkIOCsTab'
-import { HostBasedIOCsTab } from '@/components/incidents/HostBasedIOCsTab'
-import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
-import { EventsTable } from '@/components/incidents/EventsTable'
-import { IOCVisualTimeline, PinnedEventsTable } from '@/components/incidents/timeline/IOCVisualTimeline'
-import { HostsTab } from '@/components/incidents/HostsTab'
-import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { IRPhaseTracker } from '@/components/incidents/IRPhaseTracker'
-import { AttackGraphViewer } from '@/components/attack-graph/AttackGraphViewer'
-import { MitreNavigator } from '@/components/incidents/MitreNavigator'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
-
-// ─── Extracted Detail Components ─────────────────────────────────────────
 import { IncidentDetailSkeleton } from '@/components/incidents/detail/IncidentDetailSkeleton'
 import { DescriptionBlock } from '@/components/incidents/detail/DescriptionBlock'
-import { OverviewTab } from '@/components/incidents/detail/OverviewTab'
-import { TasksTab } from '@/components/incidents/detail/TasksTab'
-import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
 import { EditIncidentModal, UpdateStatusModal, ReportModal } from '@/components/incidents/detail/IncidentModals'
+import { DEFAULT_TAB, TAB_REGISTRY, resolveTab } from './tabs'
 
-// ─── Main Page Component ─────────────────────────────────────────────────
+/** Refetch the incident (header, counts) this long after the last list change. */
+const INCIDENT_REFRESH_DEBOUNCE_MS = 400
 
 export default function IncidentDetailPage() {
+  // useSearchParams (tab/row and every tab's list state) needs a boundary.
+  return (
+    <Suspense fallback={<div className="p-8"><IncidentDetailSkeleton /></div>}>
+      <IncidentDetail />
+    </Suspense>
+  )
+}
+
+function IncidentDetail() {
   const params = useParams()
   const incidentId = params.id as string
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const { currentIncident, fetchIncident } = useIncidentStore()
-  const { hasPermission } = useAuthStore()
-  const canUpdateIncident = hasPermission('incidents:update')
-  const canCreateTask = hasPermission('tasks:create')
-  const canUpdateTask = hasPermission('tasks:update')
-  const canDeleteTask = hasPermission('tasks:delete')
-  const canGenerateReport = hasPermission('reports:generate')
-  const canViewArtifacts = hasPermission('artifacts:read')
-  const [activeTab, setActiveTab] = useState('overview')
-  const [eventsView, setEventsView] = useState<'table' | 'timeline' | 'table-timeline'>('table')
-  const [isLoadingData, setIsLoadingData] = useState(true)
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
-  const [hosts, setHosts] = useState<CompromisedHost[]>([])
+  const can = usePermissionCheck()
+  const canUpdateIncident = usePermission('incidents:update')
+  const canGenerateReport = usePermission('reports:generate')
+
+  const [loadError, setLoadError] = useState<unknown>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   // Modal visibility
   const [showEditModal, setShowEditModal] = useState(false)
   const [showStatusModal, setShowStatusModal] = useState(false)
   const [showReportModal, setShowReportModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
-  const [assignmentsKey, setAssignmentsKey] = useState(0)
 
-  useEffect(() => {
-    if (incidentId) loadIncidentData()
-  }, [incidentId])
-
-  const fetchAllTimelineEvents = async (incidentId: string): Promise<TimelineEvent[]> => {
-    const allEvents: TimelineEvent[] = []
-    let page = 1
-    let totalPages = 1
-    do {
-      const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
-        `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
-      )
-      allEvents.push(...(res.items || []))
-      totalPages = res.pages || 1
-      page++
-    } while (page <= totalPages)
-    return allEvents
-  }
-
-  const loadIncidentData = async () => {
-    setIsLoadingData(true)
+  const reloadIncident = useCallback(async () => {
     try {
       await fetchIncident(incidentId)
-      const [tasksRes, allEvents, hostsRes] = await Promise.all([
-        api.get<{ items: Task[] }>(`/incidents/${incidentId}/tasks`),
-        fetchAllTimelineEvents(incidentId),
-        api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`),
-      ])
-      setTasks(tasksRes.items || [])
-      setTimeline(allEvents)
-      setHosts(hostsRes.items || [])
-    } catch (error) {
-      console.error('Failed to load incident data:', error)
+      setLoadError(null)
+    } catch (err) {
+      setLoadError(err)
     } finally {
-      setIsLoadingData(false)
+      setIsLoading(false)
     }
-  }
+  }, [fetchIncident, incidentId])
+
+  useEffect(() => {
+    if (!incidentId) return
+    setIsLoading(true)
+    void reloadIncident()
+  }, [incidentId, reloadIncident])
+
+  // Any list mutation under this incident (`invalidate('/incidents/<id>/…')`)
+  // can change the header counts: refetch the incident, debounced.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!incidentId) return
+    const unsubscribe = subscribe(`/incidents/${incidentId}`, (ev) => {
+      if (ev.type !== 'invalidate') return
+      if (refreshTimer.current) clearTimeout(refreshTimer.current)
+      refreshTimer.current = setTimeout(() => void reloadIncident(), INCIDENT_REFRESH_DEBOUNCE_MS)
+    })
+    return () => {
+      unsubscribe()
+      if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    }
+  }, [incidentId, reloadIncident])
+
+  // ─── Tabs: `?tab=<id>&row=<uuid>` ──────────────────────────────────────
+  const visibleTabs = TAB_REGISTRY.filter((t) => can(t.permission))
+  const activeTab = resolveTab(searchParams?.get('tab'), can, TAB_REGISTRY)
+  const focusRow = searchParams?.get('row') || null
+
+  // Lazy mount: a keep-mounted tab is rendered from its first visit on.
+  const [visited, setVisited] = useState<Set<string>>(() => new Set([activeTab]))
+  if (!visited.has(activeTab)) setVisited(new Set(visited).add(activeTab))
+
+  const navigate = useCallback(
+    (tab: string, row?: string | null) => {
+      const next = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+      if (tab === DEFAULT_TAB) next.delete('tab')
+      else next.set('tab', tab)
+      if (row) next.set('row', row)
+      else next.delete('row')
+      const qs = next.toString()
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false })
+    },
+    [router, pathname]
+  )
 
   // ─── Loading / Not Found ───────────────────────────────────────────────
 
-  if (isLoadingData && !currentIncident) {
-    return <div className="p-8"><IncidentDetailSkeleton /></div>
-  }
+  const incident = currentIncident && currentIncident.id === incidentId ? (currentIncident as Incident & Versioned) : null
 
-  if (!currentIncident) {
-    return <div className="p-8 text-muted-foreground">Incident not found</div>
+  if (!incident) {
+    if (isLoading) {
+      return <div className="p-8"><IncidentDetailSkeleton /></div>
+    }
+    const notFound = !loadError || (isApiError(loadError) && (loadError.status === 404 || loadError.status === 403))
+    return (
+      <div className="p-8 space-y-3">
+        <p className="text-muted-foreground">
+          {notFound ? 'Incident not found' : describeError(loadError).description}
+        </p>
+        {!notFound && (
+          <Button variant="outline" size="sm" onClick={() => { setIsLoading(true); void reloadIncident() }}>
+            Retry
+          </Button>
+        )}
+      </div>
+    )
   }
-
-  const incident = currentIncident
 
   // ─── Render ────────────────────────────────────────────────────────────
 
@@ -160,8 +153,8 @@ export default function IncidentDetailPage() {
                 <span className="font-mono text-sm text-muted-foreground">
                   #{incident.incident_number}
                 </span>
-                <SeverityBadge severity={incident.severity as any} />
-                <StatusBadge status={incident.status as any} />
+                <SeverityBadge severity={incident.severity} />
+                <StatusBadge status={incident.status} />
                 <PhaseBadge phase={incident.phase} />
                 <TLPBadge tlp={incident.tlp || 'amber'} />
                 <TimeModeToggle />
@@ -171,24 +164,24 @@ export default function IncidentDetailPage() {
                 <DescriptionBlock text={incident.description} />
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               {canGenerateReport && (
-              <Button variant="outline" onClick={() => setShowReportModal(true)}>
-                <Download className="mr-2 h-4 w-4" /> Generate Report
-              </Button>
+                <Button variant="outline" onClick={() => setShowReportModal(true)}>
+                  <Download className="mr-2 h-4 w-4" /> Generate Report
+                </Button>
               )}
               {canUpdateIncident && (
-              <>
-              <Button variant="outline" onClick={() => setShowImportModal(true)}>
-                <Upload className="mr-2 h-4 w-4" /> Import
-              </Button>
-              <Button variant="outline" onClick={() => setShowEditModal(true)}>
-                <Edit2 className="mr-2 h-4 w-4" /> Edit
-              </Button>
-              <Button onClick={() => setShowStatusModal(true)}>
-                <Zap className="mr-2 h-4 w-4" /> Update Status
-              </Button>
-              </>
+                <>
+                  <Button variant="outline" onClick={() => setShowImportModal(true)}>
+                    <Upload className="mr-2 h-4 w-4" /> Import
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowEditModal(true)}>
+                    <Edit2 className="mr-2 h-4 w-4" /> Edit
+                  </Button>
+                  <Button onClick={() => setShowStatusModal(true)}>
+                    <Zap className="mr-2 h-4 w-4" /> Update Status
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -198,275 +191,80 @@ export default function IncidentDetailPage() {
         <IRPhaseTracker currentPhase={incident.phase} context="incident" />
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={(tab) => navigate(tab)} className="w-full">
           <TabsList variant="underline" className="w-full justify-start flex-wrap h-auto gap-y-2">
-            <TabsTrigger variant="underline" value="overview" className="gap-2">
-              <Activity className="h-4 w-4" /> Overview
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="events" className="gap-2">
-              <LayoutList className="h-4 w-4" /> Events
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="hosts" className="gap-2">
-              <Server className="h-4 w-4" /> Hosts
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="tasks" className="gap-2">
-              <CheckSquare className="h-4 w-4" /> Tasks
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="playbook" className="gap-2">
-              <BookOpen className="h-4 w-4" /> Playbook
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="graph" className="gap-2">
-              <Network className="h-4 w-4" /> Attack Graph
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="mitre-matrix" className="gap-2">
-              <Target className="h-4 w-4" /> MITRE Matrix
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="accounts" className="gap-2">
-              <Key className="h-4 w-4" /> Accounts
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="network" className="gap-2">
-              <Globe className="h-4 w-4" /> Network IOCs
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="host-iocs" className="gap-2">
-              <Fingerprint className="h-4 w-4" /> Host IOCs
-            </TabsTrigger>
-            <TabsTrigger variant="underline" value="malware" className="gap-2">
-              <Bug className="h-4 w-4" /> Malware
-            </TabsTrigger>
-            {canViewArtifacts && (
-              <TabsTrigger variant="underline" value="artifacts" className="gap-2">
-                <FileText className="h-4 w-4" /> Artifacts
+            {visibleTabs.map(({ id, label, icon: Icon }) => (
+              <TabsTrigger key={id} variant="underline" value={id} className="gap-2">
+                <Icon className="h-4 w-4" /> {label}
               </TabsTrigger>
-            )}
-            <TabsTrigger variant="underline" value="notes" className="gap-2">
-              <MessageSquare className="h-4 w-4" /> Notes
-            </TabsTrigger>
+            ))}
           </TabsList>
 
-          {/* Overview */}
-          <TabsContent value="overview">
-            <OverviewTab
-              incident={incident as any}
-              incidentId={incidentId}
-              tasks={tasks}
-              hosts={hosts}
-              timeline={timeline}
-              assignmentsKey={assignmentsKey}
-              onViewEvents={() => setActiveTab('events')}
-              onIncidentUpdated={() => {
-                fetchIncident(incidentId)
-                setAssignmentsKey((k) => k + 1)
-              }}
-              onAssignmentsRefresh={() => setAssignmentsKey((k) => k + 1)}
-            />
-          </TabsContent>
-
-          {/* Events */}
-          <TabsContent value="events">
-            <div className="mb-4 flex items-center gap-2">
-              <Button
-                variant={eventsView === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setEventsView('table')}
-                className="gap-1.5"
-              >
-                <LayoutList className="h-3.5 w-3.5" /> Table
-              </Button>
-              <Button
-                variant={eventsView === 'timeline' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setEventsView('timeline')}
-                className="gap-1.5"
-              >
-                <Clock className="h-3.5 w-3.5" /> Visual Timeline
-              </Button>
-              <Button
-                variant={eventsView === 'table-timeline' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setEventsView('table-timeline')}
-                className="gap-1.5"
-              >
-                <Star className="h-3.5 w-3.5" /> Table Timeline
-              </Button>
-            </div>
-            {eventsView === 'table' ? (
-              <EventsTable incidentId={incidentId} />
-            ) : eventsView === 'timeline' ? (
-              <IOCVisualTimeline incidentId={incidentId} />
-            ) : (
-              <PinnedTimelineTab incidentId={incidentId} />
-            )}
-          </TabsContent>
-
-          {/* Hosts */}
-          <TabsContent value="hosts">
-            <HostsTab incidentId={incidentId} onHostsChange={setHosts} />
-          </TabsContent>
-
-          {/* Tasks */}
-          <TabsContent value="tasks">
-            <TasksTab
-              incidentId={incidentId}
-              tasks={tasks}
-              hosts={hosts}
-              onTasksChange={setTasks}
-            />
-          </TabsContent>
-
-          {/* Playbook */}
-          <TabsContent value="playbook">
-            <IncidentPlaybookTab incidentId={incidentId} />
-          </TabsContent>
-
-          {/* Attack Graph */}
-          <TabsContent value="graph">
-            <Card>
-              <CardHeader>
-                <CardTitle>Attack Graph</CardTitle>
-                <CardDescription>Auto-generated visualization of the attack path</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <AttackGraphViewer incidentId={incidentId} hosts={hosts} timeline={timeline} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* MITRE Matrix */}
-          <TabsContent value="mitre-matrix">
-            <Card>
-              <CardHeader>
-                <div>
-                  <CardTitle>MITRE ATT&CK Matrix</CardTitle>
-                  <CardDescription>Visualize technique coverage and attack chains from timeline events</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <MitreNavigator events={timeline} incidentId={incidentId} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="accounts">
-            <CompromisedAccountsTab incidentId={incidentId} />
-          </TabsContent>
-
-          <TabsContent value="network">
-            <NetworkIOCsTab incidentId={incidentId} />
-          </TabsContent>
-
-          <TabsContent value="host-iocs">
-            <HostBasedIOCsTab incidentId={incidentId} />
-          </TabsContent>
-
-          <TabsContent value="malware">
-            <MalwareToolsTab incidentId={incidentId} />
-          </TabsContent>
-
-          <TabsContent value="artifacts">
-            {canViewArtifacts && <ArtifactsTab incidentId={incidentId} />}
-          </TabsContent>
-
-          <TabsContent value="notes">
-            <CaseNotesTab incidentId={incidentId} />
-          </TabsContent>
+          {visibleTabs.map((def) => {
+            const isActive = def.id === activeTab
+            const Panel = def.component
+            const panel = (
+              <Panel
+                incident={incident}
+                incidentId={incidentId}
+                focusRowId={isActive ? focusRow : null}
+                onNavigate={navigate}
+                onIncidentChanged={() => void reloadIncident()}
+              />
+            )
+            if (def.keepMounted) {
+              if (!visited.has(def.id)) return null
+              return (
+                <TabsContent key={def.id} value={def.id} forceMount hidden={!isActive}>
+                  {panel}
+                </TabsContent>
+              )
+            }
+            return (
+              <TabsContent key={def.id} value={def.id}>
+                {isActive && panel}
+              </TabsContent>
+            )
+          })}
         </Tabs>
       </div>
 
       {/* Modals */}
-      <EditIncidentModal
-        open={showEditModal}
-        onOpenChange={setShowEditModal}
-        incident={incident as any}
-        incidentId={incidentId}
-        onUpdated={() => fetchIncident(incidentId)}
-      />
+      {canUpdateIncident && (
+        <>
+          <EditIncidentModal
+            open={showEditModal}
+            onOpenChange={setShowEditModal}
+            incident={incident}
+            incidentId={incidentId}
+            onUpdated={() => void reloadIncident()}
+          />
 
-      <UpdateStatusModal
-        open={showStatusModal}
-        onOpenChange={setShowStatusModal}
-        currentStatus={incident.status}
-        incidentId={incidentId}
-        onUpdated={() => {
-          fetchIncident(incidentId)
-          setAssignmentsKey((k) => k + 1)
-        }}
-      />
+          <UpdateStatusModal
+            open={showStatusModal}
+            onOpenChange={setShowStatusModal}
+            currentStatus={incident.status}
+            incidentVersion={incident.version}
+            incidentId={incidentId}
+            onUpdated={() => void reloadIncident()}
+          />
 
-      <ReportModal
-        open={showReportModal}
-        onOpenChange={setShowReportModal}
-        incidentId={incidentId}
-        incidentNumber={incident.incident_number}
-      />
+          <ImportWizardModal
+            isOpen={showImportModal}
+            onOpenChange={setShowImportModal}
+            incidentId={incidentId}
+          />
+        </>
+      )}
 
-      <ImportWizardModal
-        isOpen={showImportModal}
-        onOpenChange={setShowImportModal}
-        incidentId={incidentId}
-        onComplete={loadIncidentData}
-      />
+      {canGenerateReport && (
+        <ReportModal
+          open={showReportModal}
+          onOpenChange={setShowReportModal}
+          incidentId={incidentId}
+          incidentNumber={incident.incident_number}
+        />
+      )}
     </>
   )
-}
-
-// ─── Pinned Timeline Tab ─────────────────────────────────────────────────
-
-function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
-  const [events, setEvents] = useState<TimelineEvent[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setIsLoading(true)
-      try {
-        const allEvents: TimelineEvent[] = []
-        let page = 1
-        let totalPages = 1
-        do {
-          const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
-            `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
-          )
-          allEvents.push(...(res.items || []))
-          totalPages = res.pages || 1
-          page++
-        } while (page <= totalPages)
-        if (!cancelled) {
-          const pinned = allEvents
-            .filter((e) => e.is_key_event)
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-          setEvents(pinned)
-        }
-      } catch (err) {
-        console.error('Failed to load pinned timeline events:', err)
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [incidentId])
-
-  if (isLoading) {
-    return (
-      <div className="py-16 text-center text-sm text-muted-foreground animate-pulse">
-        <Clock className="h-6 w-6 mx-auto mb-2 opacity-30" />
-        Loading pinned events...
-      </div>
-    )
-  }
-
-  if (events.length === 0) {
-    return (
-      <div className="py-16 text-center border border-dashed border-border rounded-lg">
-        <Star className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
-        <p className="text-sm font-medium text-foreground">No Pinned Events</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Pin events from the Table tab using the &#9733; icon to build your table timeline.
-        </p>
-      </div>
-    )
-  }
-
-  return <PinnedEventsTable events={events} />
 }

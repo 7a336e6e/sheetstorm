@@ -131,7 +131,7 @@ test.describe('user lifecycle admin', { tag: '@admin-user-lifecycle' }, () => {
       await expect((await userRow(page, user.email)).getByText('Disabled')).toBeVisible()
 
       await expect(userPage).toHaveURL(/\/login\?reason=session_revoked/, { timeout: 10_000 })
-      await expect(userPage.getByText(/ended by an administrator/)).toBeVisible()
+      await expect(userPage.getByText('Your account was disabled.')).toBeVisible()
     } finally {
       await removeUser(context, user.id)
       await user.context.close()

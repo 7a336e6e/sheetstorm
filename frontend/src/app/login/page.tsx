@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github, Check, X } from 'lucide-react'
 import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
 import { cn } from '@/lib/utils'
+import { readSessionRevokedReason, sessionRevokedMessage } from '@/components/users/session-revoked'
 
 function PasswordCheck({ met, label }: { met: boolean; label: string }) {
   return (
@@ -56,7 +57,15 @@ function LoginPageInner() {
   }, [])
 
   const initialTab = searchParams.get('tab') === 'register' && registrationEnabled ? 'register' : 'login'
-  const notice = LOGIN_NOTICES[searchParams.get('reason') ?? '']
+  const reasonParam = searchParams.get('reason') ?? ''
+  // Per-reason copy for a live session revocation (stored before the redirect).
+  // This component renders client-side only (useSearchParams under Suspense).
+  const [revokedCopy] = useState(() => {
+    if (reasonParam !== 'session_revoked') return null
+    const reason = readSessionRevokedReason()
+    return reason ? sessionRevokedMessage(reason) : null
+  })
+  const notice = revokedCopy ?? LOGIN_NOTICES[reasonParam]
 
   // Login state
   const [isLoading, setIsLoading] = useState(false)

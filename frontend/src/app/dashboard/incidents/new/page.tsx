@@ -24,6 +24,8 @@ import { usePermission } from '@/components/auth/permission-gate'
 import { tlpColors } from '@/lib/design-tokens'
 import { describeError } from '@/lib/errors'
 import api from '@/lib/api'
+import { caseTemplatesApi } from '@/lib/endpoints/questions'
+import type { CaseTemplate } from '@/types'
 import type { TLPLevel } from '@/types'
 
 interface Team {
@@ -46,6 +48,8 @@ const TLP_HINT: Partial<Record<TLPLevel, string>> = {
   red: 'RED: values are never sent for third-party enrichment, and AI features are limited by your organization policy.',
 }
 
+const NO_TEMPLATE = '__none__'
+
 export default function NewIncidentPage() {
   const router = useRouter()
   const { createIncident } = useIncidentStore()
@@ -56,6 +60,8 @@ export default function NewIncidentPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const canPickLead = usePermission('users:read')
   const [leadName, setLeadName] = useState<string | undefined>()
+  const [templates, setTemplates] = useState<CaseTemplate[]>([])
+  const [templateRef, setTemplateRef] = useState('')
   const [formData, setFormData] = useState<CreateIncidentInput>({
     title: '',
     description: '',
@@ -78,7 +84,23 @@ export default function NewIncidentPage() {
     api.get<{ items: Team[] }>('/teams').then(res => {
       setTeams(res.items || [])
     }).catch(() => {})
+    caseTemplatesApi.list({ includeDefinition: true }).then(res => {
+      setTemplates(res.items.filter((t) => t.is_active))
+    }).catch(() => {})
   }, [])
+
+  /** Picking a template pre-fills its defaults; the server applies the rest. */
+  const pickTemplate = (ref: string) => {
+    setTemplateRef(ref)
+    const defaults = templates.find((t) => t.id === ref)?.definition?.defaults
+    if (!defaults) return
+    setFormData((prev) => ({
+      ...prev,
+      ...(defaults.severity ? { severity: defaults.severity } : {}),
+      ...(defaults.tlp ? { tlp: defaults.tlp } : {}),
+      ...(defaults.classification ? { classification: defaults.classification } : {}),
+    }))
+  }
 
   const toggleTeam = (teamId: string) => {
     setSelectedTeamIds(prev =>
@@ -110,6 +132,7 @@ export default function NewIncidentPage() {
       ...(classification ? { classification } : {}),
       ...(detected_at ? { detected_at } : {}),
       ...(lead_responder_id ? { lead_responder_id } : {}),
+      ...(templateRef ? { case_template: templateRef } : {}),
     }
 
     try {
@@ -146,6 +169,36 @@ export default function NewIncidentPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
+            {templates.length > 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="case-template">Case template</Label>
+                <Select value={templateRef || NO_TEMPLATE} onValueChange={(v) => pickTemplate(v === NO_TEMPLATE ? '' : v)} disabled={isLoading}>
+                  <SelectTrigger id="case-template" variant="glass" aria-label="Case template">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_TEMPLATE}>No template</SelectItem>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}{t.is_builtin ? ' (built-in)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {templateRef && (
+                  <p className="text-xs text-muted-foreground">
+                    {(() => {
+                      const t = templates.find((x) => x.id === templateRef)
+                      if (!t) return null
+                      const parts = [`${t.summary.questions} questions`, `${t.summary.leads} leads`]
+                      if (t.summary.playbook) parts.push('a playbook')
+                      if (t.summary.custom_fields) parts.push(`${t.summary.custom_fields} custom fields`)
+                      return `Adds ${parts.join(', ')}.`
+                    })()}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="title">Title *</Label>
               <Input

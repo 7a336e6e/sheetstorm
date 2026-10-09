@@ -7,7 +7,7 @@
  * is cosmetic, the pages and the API enforce.
  */
 import type { LucideIcon } from 'lucide-react'
-import { Activity, Archive, LayoutGrid, Settings, Shield, Users, UsersRound } from 'lucide-react'
+import { Activity, Archive, FileStack, LayoutGrid, Settings, Shield, Users, UsersRound } from 'lucide-react'
 
 export interface AdminNavItem {
   /** Stable id; the palette command is `nav-<id>`. */
@@ -27,6 +27,7 @@ export const adminNavigation: AdminNavItem[] = [
   { id: 'users', name: 'Users', href: '/dashboard/admin/users', icon: Users, anyOf: ['users:create', 'users:update', 'users:manage'], keywords: 'admin accounts' },
   { id: 'roles', name: 'Roles', href: '/dashboard/admin/roles', icon: Shield, anyOf: ['roles:manage', 'users:read'], keywords: 'admin permissions' },
   { id: 'teams', name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound, anyOf: ['teams:create', 'teams:update', 'teams:delete'], keywords: 'admin groups' },
+  { id: 'templates', name: 'Case Templates', href: '/dashboard/admin/templates', icon: FileStack, anyOf: ['templates:manage'], keywords: 'playbooks questions' },
   {
     id: 'settings',
     name: 'Settings',

@@ -533,6 +533,28 @@ def build_manifest(*, scope, incident, items, entries, heads, anchors, verificat
     }
 
 
+_ANCHOR_README = (
+    "\nExternal anchors (RFC 3161 timestamps)\n"
+    "  Anchors of type rfc3161 carry a base64 TimeStampToken (token_der) that a timestamp authority\n"
+    "  issued for the 32-byte incident head hash (head_hash). SheetStorm checks the token's structure,\n"
+    "  digest and nonce when it is received but does NOT verify the authority's signature; do that here\n"
+    "  with OpenSSL 1.1.1+ and the authority's CA certificate (get it from the operator):\n"
+    "  First extract the tokens (this block is one shell command, deliberately not indented):\n"
+    "python3 - <<'EOF'\n"
+    "import base64, json\n"
+    "for a in json.load(open('manifest.json'))['anchors']:\n"
+    "    if a['anchor_type'] == 'rfc3161' and a.get('token_der'):\n"
+    "        open('anchor_%s.tst' % a['id'], 'wb').write(base64.b64decode(a['token_der']))\n"
+    "        print(a['id'], a['head_hash'])\n"
+    "EOF\n"
+    "  Then, per anchor:\n"
+    "    openssl ts -verify -in anchor_<id>.tst -token_in -digest <head_hash> -CAfile tsa-ca.pem\n"
+    "  Add -untrusted intermediates.pem if the chain needs it. \"Verification: OK\" proves the authority\n"
+    "  signed that head hash at the time shown by: openssl ts -reply -in anchor_<id>.tst -token_in -text\n"
+    "  Anchors of type export_manifest only record that the head was handed out in an export.\n"
+)
+
+
 def readme_text(scope, incident, item=None) -> str:
     what = f'evidence item {item.display_id}' if item is not None else (
         f"the evidence register of {incident_view(incident)['case'] or incident.id}")
@@ -562,6 +584,7 @@ def readme_text(scope, incident, item=None) -> str:
         "individually; they are sealed by the first chained entry.\n\n"
         "Privacy: the manifest contains staff IP addresses and user agents, because they are part\n"
         "of each entry's hashed payload.\n"
+        f"{_ANCHOR_README if scope == 'incident' else ''}"
     )
 
 

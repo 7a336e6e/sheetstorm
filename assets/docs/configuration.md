@@ -13,6 +13,8 @@ Copy `.env.example` to `.env` and configure (`start.sh` does this and auto-gener
 | `JWT_SECRET_KEY` | Yes | - | JWT signing key |
 | `FERNET_KEY` | Yes | - | Fernet key encrypting integration credentials at rest |
 | `CUSTODY_SIGNING_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key for chain-of-custody signatures. See [Custody signing key](#custody-signing-key-and-rotation) |
+| `TSA_URL` | No | empty (disabled) | RFC 3161 timestamp authority for anchoring the custody ledger. See [External timestamps](#external-timestamps-rfc-3161) |
+| `TSA_TIMEOUT_SECONDS` / `TSA_MAX_RESPONSE_BYTES` | No | `10` / `65536` | Timeout (1..60 s) and response size cap for TSA requests |
 | `AUDIT_CHAIN_KEY` | Recommended | falls back to `SECRET_KEY` (startup warning) | HMAC key of the tamper-evident audit log chain. See [Audit log governance](#audit-log-governance) |
 | `API_KEY_PEPPER` | Recommended | derived from `SECRET_KEY` (startup warning) | Pepper of the API key hashes (HMAC-SHA256). Generate with `openssl rand -hex 32` and keep it outside the database; changing it (or `SECRET_KEY` while unset) invalidates every API key |
 | `API_KEY_TOKEN_TTL_MINUTES` | No | `15` | Lifetime (1..60) of the access token `POST /auth/token` mints for an API key |
@@ -171,6 +173,15 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 - Set it **before** recording evidence. If it is unset the backend falls back to `SECRET_KEY`, which means rotating `SECRET_KEY` would invalidate every custody signature. When migrating an existing install off the fallback, set `CUSTODY_SIGNING_KEY` to the current `SECRET_KEY` value so existing signatures keep verifying, then rotate `SECRET_KEY` freely.
 - Rotating `CUSTODY_SIGNING_KEY` itself makes signatures created with the old key fail verification. Avoid rotating during active cases. If you must rotate (suspected key exposure), first verify and export the custody records of open cases, archive the old key securely together with that export, then record the rotation date in the affected cases.
 - Never reuse the custody key for anything else and never commit it.
+
+## External timestamps (RFC 3161)
+
+Optionally, the incident custody ledger head can be anchored with a trusted timestamp authority (TSA). The anchor proves the ledger existed in that state at that time, independently of the server clock. It is off by default.
+
+- Set `TSA_URL` to your TSA endpoint, for example a commercial or internal RFC 3161 service. The URL is checked against the outbound URL policy on every request; an internal TSA must be on `OUTBOUND_URL_ALLOWLIST`. Basic-auth credentials may be embedded in the URL; they are stripped from everything that is stored, returned or exported.
+- Users with `artifacts:upload` anchor the current head with `POST /api/v1/incidents/<id>/evidence/custody/anchor`. Re-anchoring an already anchored head returns the existing anchor without contacting the TSA. A TSA failure is recorded as a `failed` anchor and answered with 502 `tsa_failed`.
+- Anchors are append-only, like the ledger. Verification results include `anchor_status` (granted/failed counts, whether the current head is anchored).
+- SheetStorm checks the reply's status, digest and nonce, and stores the token as received. It does **not** verify the TSA's signature or certificate chain. Do that offline: the incident custody bundle's README includes the extraction script and the `openssl ts -verify -in anchor.tst -token_in -digest <head_hash> -CAfile tsa-ca.pem` command. Keep the TSA's CA certificate with your case records.
 
 ## Audit log governance
 

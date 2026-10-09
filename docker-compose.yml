@@ -51,6 +51,9 @@ services:
       # HMAC key for chain-of-custody signatures (kept separate from SECRET_KEY
       # so rotating SECRET_KEY does not invalidate custody records).
       CUSTODY_SIGNING_KEY: ${CUSTODY_SIGNING_KEY:-}
+      TSA_URL: ${TSA_URL:-}
+      TSA_TIMEOUT_SECONDS: ${TSA_TIMEOUT_SECONDS:-10}
+      TSA_MAX_RESPONSE_BYTES: ${TSA_MAX_RESPONSE_BYTES:-65536}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}

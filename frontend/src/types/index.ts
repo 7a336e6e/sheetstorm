@@ -52,6 +52,9 @@ export interface Incident {
   tlp: TLPLevel
   team_id?: string
   owning_team?: { id: string; name: string }
+  /** Archived incidents are read-only and only visible with `incidents:archive`. */
+  is_archived?: boolean
+  archived_at?: string | null
   lead_responder?: User
   creator?: { id: string; name: string }
   teams?: { id: string; name: string | null }[]

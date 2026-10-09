@@ -29,7 +29,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 import { DateTimeInput } from '@/components/ui/datetime-input'
 import { Textarea } from '@/components/ui/input'
 import { Timestamp } from '@/components/ui/timestamp'
-import { usePermission } from '@/components/auth/permission-gate'
+import { usePermissionIgnoringReadOnly } from '@/components/auth/permission-gate'
 import { evidenceApi, evidenceBase, evidenceFilesApi } from '@/lib/endpoints/evidence'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { invalidate } from '@/lib/query-cache'
@@ -69,7 +69,9 @@ export interface LegalHoldControlProps {
 }
 
 export function LegalHoldControl({ kind, incidentId, id, item, label, compact, onChanged, className }: LegalHoldControlProps) {
-  const canManage = usePermission(HOLD_PERMISSION)
+  // Holds stay manageable on archived (read-only) incidents: a hold must be
+  // released before an archived incident can be purged.
+  const canManage = usePermissionIgnoringReadOnly(HOLD_PERMISSION)
   const confirm = useConfirm()
   const [placing, setPlacing] = useState(false)
   const [busy, setBusy] = useState(false)

@@ -8,16 +8,16 @@ import { SeverityBadge, StatusBadge, PhaseBadge, TLPBadge } from '@/components/u
 import { TimeModeToggle } from '@/components/ui/time-mode-toggle'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIncidentStore } from '@/lib/store'
-import { describeError } from '@/lib/errors'
+import { describeError, notifyError, notifySuccess } from '@/lib/errors'
 import { isApiError } from '@/lib/api'
 import { subscribe } from '@/lib/query-cache'
-import { usePermission, usePermissionCheck } from '@/components/auth/permission-gate'
+import { ReadOnlyScope, usePermission, usePermissionCheck } from '@/components/auth/permission-gate'
 import { IncidentRealtimeContext, useIncidentRealtime } from '@/hooks/use-incident-realtime'
 import { PresenceAvatars } from '@/components/incidents/PresenceAvatars'
 import { LiveStatusDot } from '@/components/incidents/LiveStatusDot'
 import { ExportMenu } from '@/components/incidents/ExportMenu'
 import type { Incident, Versioned } from '@/types'
-import { ArrowLeft, Upload, Zap, Edit2, Download } from 'lucide-react'
+import { ArchiveRestore, ArrowLeft, Upload, Zap, Edit2, Download, Lock } from 'lucide-react'
 
 import { IRPhaseTracker } from '@/components/incidents/IRPhaseTracker'
 import { ImportWizardModal } from '@/components/incidents/import-wizard/ImportWizardModal'
@@ -44,12 +44,14 @@ function IncidentDetail() {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { currentIncident, fetchIncident } = useIncidentStore()
+  const { currentIncident, fetchIncident, unarchiveIncident } = useIncidentStore()
   // Live updates + presence for every tab below (W2-RT-FE).
   const realtime = useIncidentRealtime(incidentId)
   const can = usePermissionCheck()
-  const canUpdateIncident = usePermission('incidents:update')
-  const canGenerateReport = usePermission('reports:generate')
+  const canUpdate = usePermission('incidents:update')
+  const canReport = usePermission('reports:generate')
+  const canUnarchive = usePermission('incidents:archive')
+  const [restoring, setRestoring] = useState(false)
 
   const [loadError, setLoadError] = useState<unknown>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -118,6 +120,10 @@ function IncidentDetail() {
   // ─── Loading / Not Found ───────────────────────────────────────────────
 
   const incident = currentIncident && currentIncident.id === incidentId ? (currentIncident as Incident & Versioned) : null
+  // Archived incidents are read-only (the API answers 409 incident_archived).
+  const readOnly = !!incident?.is_archived
+  const canUpdateIncident = canUpdate && !readOnly
+  const canGenerateReport = canReport && !readOnly
 
   if (!incident) {
     if (isLoading) {
@@ -140,9 +146,39 @@ function IncidentDetail() {
 
   // ─── Render ────────────────────────────────────────────────────────────
 
+  const restore = async () => {
+    setRestoring(true)
+    try {
+      await unarchiveIncident(incidentId)
+      notifySuccess('Incident restored')
+      await reloadIncident()
+    } catch (err) {
+      notifyError(err, 'restore the incident')
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   return (
+    <ReadOnlyScope active={readOnly}>
     <IncidentRealtimeContext.Provider value={realtime}>
       <div className="p-6 lg:p-8 space-y-6">
+        {readOnly && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm"
+          >
+            <Lock className="h-4 w-4 shrink-0 text-amber-500" />
+            <span className="flex-1">
+              This incident is archived and read-only. Only users who can manage archived incidents can see it.
+            </span>
+            {canUnarchive && (
+              <Button size="sm" variant="outline" onClick={() => void restore()} disabled={restoring}>
+                <ArchiveRestore className="mr-1.5 h-4 w-4" /> Unarchive
+              </Button>
+            )}
+          </div>
+        )}
         {/* Header */}
         <div>
           <Link
@@ -282,5 +318,6 @@ function IncidentDetail() {
         />
       )}
     </IncidentRealtimeContext.Provider>
+    </ReadOnlyScope>
   )
 }

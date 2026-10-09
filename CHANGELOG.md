@@ -4,6 +4,13 @@
 
 ### Behavior changes (upgrade notes)
 
+- **Archived incidents are hidden and read-only.** Without `incidents:archive`
+  an archived incident answers 404 everywhere (detail, sub-resources, search,
+  websocket rooms, MCP), even through an old link. Holders of
+  `incidents:archive` can open it from Admin → Archived Incidents (titles now
+  link to it) and browse it read-only: edit controls are hidden and every
+  mutating request answers 409 `incident_archived` until it is unarchived
+  (an Unarchive button sits in the archived banner).
 - **Timestamps are UTC.** Timestamps without an offset are now stored as UTC.
   Events entered in local time before this fix were stored shifted by the
   server/database session offset; review timelines created before the upgrade

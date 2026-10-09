@@ -898,7 +898,7 @@ def void_evidence(incident_id, evidence_item_id):
 
 @api_bp.route(ITEM + '/legal-hold', methods=['POST'])
 @jwt_required()
-@require_incident_access(EVIDENCE_PERMS['manage'])
+@require_incident_access(EVIDENCE_PERMS['manage'], allow_archived_writes=True)
 @audit_log('admin_action', 'legal_hold', 'evidence_item')
 @_api_errors
 def set_evidence_legal_hold(incident_id, evidence_item_id):

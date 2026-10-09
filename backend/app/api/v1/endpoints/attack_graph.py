@@ -58,24 +58,53 @@ def auto_generate_attack_graph(incident_id):
     """
     Auto-generate attack graph from compromised hosts and timeline events.
     Delegates to GraphAutomationService for all generation logic.
+
+    Body (all optional): ``{"mode": "merge" | "replace", "confirm": bool}``.
+    ``merge`` (default) adds only what is missing and never moves, edits or
+    deletes existing nodes and edges. ``replace`` deletes the whole graph
+    first, including manual nodes, edges and positions, and therefore needs
+    ``"confirm": true`` (400 ``confirmation_required`` otherwise).
+
+    Response: ``{created: {nodes, edges}, mode, message, nodes, edges}``.
     """
     from app.services.graph_automation_service import GraphAutomationService
 
     user = get_current_user()
     incident = g.incident
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({'error': 'bad_request', 'message': 'Request body must be a JSON object'}), 400
 
-    nodes_created, edges_created = GraphAutomationService.auto_generate(incident, user.id)
+    mode = data.get('mode', 'merge')
+    if mode not in ('merge', 'replace'):
+        return jsonify({'error': 'bad_request', 'message': "mode must be 'merge' or 'replace'"}), 400
+    if mode == 'replace' and data.get('confirm') is not True:
+        return jsonify({
+            'error': 'confirmation_required',
+            'message': 'Rebuilding from scratch deletes all manual nodes, edges and positions; '
+                       'send "confirm": true to proceed, or use mode "merge"',
+        }), 400
+
+    nodes_created, edges_created = GraphAutomationService.auto_generate(incident, user.id, mode=mode)
     realtime.emit_resync(incident.id, ['attack_graph'], 'auto_generate')
 
+    created = {'nodes': len(nodes_created), 'edges': len(edges_created)}
     if not nodes_created and not edges_created:
         return jsonify({
-            'message': 'No compromised hosts found to generate graph',
+            'message': 'No compromised hosts found to generate graph' if mode == 'replace'
+                       else 'Nothing to add: the graph is up to date',
+            'mode': mode,
+            'created': created,
             'nodes': [],
             'edges': []
         }), 200
 
     return jsonify({
         'message': f'Generated {len(nodes_created)} nodes and {len(edges_created)} edges',
+        'mode': mode,
+        'created': created,
         'nodes': [n.to_dict() for n in nodes_created],
         'edges': [e.to_dict() for e in edges_created]
     }), 201

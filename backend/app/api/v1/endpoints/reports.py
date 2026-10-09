@@ -10,7 +10,8 @@ from app import db
 from app.models import Report, Incident, TimelineEvent, CompromisedHost, CompromisedAccount
 from app.models import NetworkIndicator, HostBasedIndicator, MalwareTool
 from app.middleware.rbac import require_incident_access, get_current_user
-from app.middleware.audit import audit_log
+from app.middleware.audit import audit_log, log_security_event
+from app.services import report_files
 from app.services.ai_service import ai_service, AIBlockedByTLP
 from app.services.pdf_render import html_to_pdf
 from app.utils.pagination import list_response
@@ -48,7 +49,7 @@ def list_reports(incident_id):
     """List generated reports (utils/pagination.py contract; filter
     report_type)."""
     incident = g.incident
-    query = Report.query.filter_by(incident_id=incident.id)
+    query = Report.query.filter_by(incident_id=incident.id, is_archived=False)
     return jsonify(list_response(
         query, sortable={'created_at': Report.created_at, 'report_type': Report.report_type},
         default_sort='-created_at', id_col=Report.id,
@@ -172,7 +173,9 @@ def generate_pdf_report(incident_id):
             'message': 'PDF generation failed. Please try again or contact support.'
         }), 500
 
-    # ── Step 4: Save report record ───────────────────────────────────
+    # ── Step 4: Issue the report: a stored, hashed snapshot ──────────
+    # What is returned now is what every later download returns (bytes plus
+    # SHA-256); if the snapshot cannot be stored no report record exists.
     report = Report(
         incident_id=incident.id,
         title=f'{report_title} - #{incident.incident_number}',
@@ -183,8 +186,18 @@ def generate_pdf_report(incident_id):
         sections=sections,
         generated_by=user.id,
     )
-    db.session.add(report)
-    db.session.commit()
+    try:
+        db.session.add(report)
+        db.session.flush()
+        report_files.store_snapshot(report, pdf_bytes)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Report snapshot could not be stored')
+        return jsonify({
+            'error': 'server_error',
+            'message': 'The report could not be stored. Please try again or contact support.'
+        }), 500
 
     # ── Step 5: Return PDF ───────────────────────────────────────────
     response = send_file(
@@ -193,6 +206,8 @@ def generate_pdf_report(incident_id):
         as_attachment=True,
         download_name=f'incident_{incident.incident_number}_{report_type}_report.pdf',
     )
+    response.headers['X-Report-SHA256'] = report.sha256
+    response.headers['X-Report-Id'] = str(report.id)
     if ai_blocked:
         response.headers['X-SheetStorm-AI-Status'] = AIBlockedByTLP.code
     return response
@@ -295,19 +310,44 @@ def list_report_types(incident_id):
 @api_bp.route('/incidents/<uuid:incident_id>/reports/<uuid:report_id>/download', methods=['GET'])
 @jwt_required()
 @require_incident_access('reports:read')
+@audit_log('data_access', 'download', 'report')
 def download_report(incident_id, report_id):
-    """Download (re-generate) a previously generated report as PDF.
+    """Download a previously issued report.
 
-    Re-renders the stored ai_summary Markdown to PDF. If no ai_summary
-    exists, rebuilds a basic data-only report.
+    A snapshot report returns the stored bytes after re-checking their SHA-256
+    (``X-Report-SHA256``); a missing or altered file is a 409
+    ``integrity_error`` and a security event. A legacy report (issued before
+    snapshots existed, no stored file) is re-rendered from the stored
+    ``ai_summary`` / current data and marked ``X-Report-Snapshot: legacy``.
+    Soft-deleted reports are 404.
     """
     incident = g.incident
-    report = Report.query.filter_by(id=report_id, incident_id=incident.id).first()
+    report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_archived=False).first()
     if not report:
         return jsonify({'error': 'not_found', 'message': 'Report not found'}), 404
 
+    download_name = f'incident_{incident.incident_number}_{report.report_type}_report.pdf'
+
+    if report_files.is_snapshot(report):
+        try:
+            pdf_bytes = report_files.load_snapshot(report)
+        except report_files.SnapshotIntegrityError as e:
+            log_security_event('report_integrity_failure', resource_type='report', resource_id=report.id,
+                               incident_id=incident.id,
+                               details={'reason': e.reason, 'expected_sha256': e.expected,
+                                        'actual_sha256': e.actual})
+            return jsonify({
+                'error': 'integrity_error',
+                'message': 'The stored report no longer matches its recorded SHA-256 and was not served.',
+                'expected_sha256': report.sha256,
+            }), 409
+        response = send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True,
+                             download_name=download_name)
+        response.headers['X-Report-SHA256'] = report.sha256
+        response.headers['X-Report-Snapshot'] = 'stored'
+        return response
+
     report_title = report.title
-    report_type = report.report_type
     sections = report.sections or ['summary']
 
     if report.ai_summary:
@@ -337,16 +377,15 @@ def download_report(incident_id, report_id):
 
     try:
         pdf_bytes = html_to_pdf(html_content)
-    except Exception as e:
-        current_app.logger.error(f"PDF re-generation failed: {e}")
-        return jsonify({'error': 'server_error', 'message': f'PDF generation failed: {str(e)}'}), 500
+    except Exception:
+        current_app.logger.exception('Legacy report re-render failed')
+        return jsonify({'error': 'server_error',
+                        'message': 'PDF generation failed. Please try again or contact support.'}), 500
 
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'incident_{incident.incident_number}_{report_type}_report.pdf',
-    )
+    response = send_file(io.BytesIO(pdf_bytes), mimetype='application/pdf', as_attachment=True,
+                         download_name=download_name)
+    response.headers['X-Report-Snapshot'] = 'legacy'
+    return response
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/reports/<uuid:report_id>', methods=['DELETE'])
@@ -354,7 +393,8 @@ def download_report(incident_id, report_id):
 @require_incident_access('reports:generate')
 @audit_log('data_modification', 'delete', 'report')
 def delete_report(incident_id, report_id):
-    """Soft-delete a report record."""
+    """Soft-delete a report record. The issued file is retained (C34) and is
+    removed only by the incident purge step."""
     incident = g.incident
     report = Report.query.filter_by(id=report_id, incident_id=incident.id, is_archived=False).first()
     if not report:

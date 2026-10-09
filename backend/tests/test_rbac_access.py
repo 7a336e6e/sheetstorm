@@ -17,7 +17,8 @@ def test_viewer_tlp_white_and_assigned_allowed(app, users, auth, make_incident):
     assigned = make_incident(tlp='red', assign=[users['Viewer']])
     for inc in (white, assigned):
         assert viewer.get(f'/api/v1/incidents/{inc.id}').status_code == 200
-        assert viewer.get(f'/api/v1/incidents/{inc.id}/export/stix').status_code == 200
+        # STIX needs incidents:export on top of read (C24); Viewers do not hold it.
+        assert viewer.get(f'/api/v1/incidents/{inc.id}/export/stix').status_code == 403
     ids = {i['id'] for i in viewer.get('/api/v1/incidents?per_page=100').get_json()['items']}
     assert str(white.id) in ids and str(assigned.id) in ids
 

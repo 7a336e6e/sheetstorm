@@ -194,11 +194,15 @@ def delete_graph_node(incident_id, node_id):
     if conflict:
         return conflict, conflict.status_code
 
+    # The node's edges go with it (ORM cascade): note them so clients drop them too.
+    edge_ids = [e.id for e in node.outgoing_edges] + [e.id for e in node.incoming_edges]
     db.session.delete(node)
     conflict = commit_or_conflict(node)
     if conflict:
         return conflict, conflict.status_code
     realtime.emit_change(incident.id, 'graph_node', 'deleted', id=node_id)
+    for edge_id in dict.fromkeys(edge_ids):
+        realtime.emit_change(incident.id, 'graph_edge', 'deleted', id=edge_id)
 
     return jsonify({'message': 'Node deleted'}), 200
 

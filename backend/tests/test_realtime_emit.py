@@ -322,6 +322,24 @@ def test_network_ioc_with_graph_node_emits_both(rt, admin, make_incident):
     assert sorted(e['entity'] for e, _ in rt.changes()) == ['graph_node', 'network_ioc']
 
 
+def test_node_delete_emits_its_cascaded_edges(rt, admin, make_incident):
+    inc = make_incident()
+    hub, a, b = make_node(admin, inc), make_node(admin, inc), make_node(admin, inc)
+    edges = [_ok(admin.post(f'{API}/incidents/{inc.id}/attack-graph/edges',
+                            json={'source_node_id': src['id'], 'target_node_id': dst['id'],
+                                  'edge_type': 'lateral_movement'}))
+             for src, dst in ((hub, a), (b, hub))]
+    other = _ok(admin.post(f'{API}/incidents/{inc.id}/attack-graph/edges',
+                           json={'source_node_id': a['id'], 'target_node_id': b['id'], 'edge_type': 'lateral_movement'}))
+    rt.clear()
+    _ok(admin.delete(f"{API}/incidents/{inc.id}/attack-graph/nodes/{hub['id']}"))
+    got = [(e['entity'], e['op'], e['id']) for e, _ in rt.changes()]
+    assert got[0] == ('graph_node', 'deleted', hub['id'])
+    assert sorted(got[1:]) == sorted(('graph_edge', 'deleted', e['id']) for e in edges)
+    assert other['id'] not in {i for _, _, i in got}
+    assert all(c is None for c in rt.committed), 'emitted before the delete was committed'
+
+
 def test_artifact_upload_emits_created(rt, monkeypatch, admin, make_incident):
     from app.api.v1.endpoints import artifacts
     monkeypatch.setattr(artifacts, '_try_google_drive_primary', lambda *a, **k: None)

@@ -7,8 +7,9 @@ from flask_jwt_extended import (
     jwt_required, get_jwt_identity, get_jwt,
     set_access_cookies, set_refresh_cookies, unset_jwt_cookies
 )
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import User, Role, UserRole, Session, Organization
 from app.middleware.audit import audit_log, log_auth_event
 from app.middleware.rbac import get_current_user as rbac_current_user, require_interactive_session
@@ -167,7 +168,7 @@ def registration_status():
 
 
 @api_bp.route('/auth/password-policy', methods=['GET'])
-@limiter.limit("60 per minute")  # rl-group: auth_me
+@limited('auth_me')
 def password_policy():
     """Public password rules (form hints): the caller's org policy when
     authenticated, otherwise the platform org's (registration)."""
@@ -186,7 +187,7 @@ def password_policy():
 
 
 @api_bp.route('/auth/register', methods=['POST'])
-@limiter.limit("3 per hour")
+@limited('auth_register')
 def register():
     """Register a new user account in the platform org (its security policy
     decides: registration_enabled, allowed email domains, password rules,
@@ -247,7 +248,7 @@ def register():
 
 
 @api_bp.route('/auth/login', methods=['POST'])
-@limiter.limit("5 per minute")
+@limited('auth_login')
 def login():
     """Authenticate user and return tokens."""
     try:
@@ -344,7 +345,7 @@ def login():
 
 
 @api_bp.route('/auth/refresh', methods=['POST'])
-@limiter.limit("30 per hour")
+@limited('auth_refresh')
 @jwt_required(refresh=True)
 def refresh():
     """Refresh access token, rotating the refresh token (same session)."""
@@ -395,7 +396,7 @@ def refresh():
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
-@limiter.limit("30 per minute")
+@limited('auth_logout')
 @jwt_required()
 def logout():
     """Logout and revoke the current access token (and refresh token if given)."""
@@ -429,7 +430,7 @@ def logout():
 
 
 @api_bp.route('/auth/me', methods=['GET'])
-@limiter.limit("60 per minute")
+@limited('auth_me')
 @jwt_required()
 def get_current_user():
     """Get current authenticated user."""
@@ -468,7 +469,7 @@ PREFERENCE_KEYS = {
 
 
 @api_bp.route('/auth/me/preferences', methods=['PATCH'])
-@limiter.limit("30 per minute")  # rl-group: api_default
+@limited('auth_preferences')
 @jwt_required()
 @require_interactive_session
 @audit_log('data_modification', 'update_preferences', 'user')
@@ -495,7 +496,7 @@ def update_my_preferences():
 
 
 @api_bp.route('/auth/change-password', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('auth_password_change')
 @jwt_required()
 @require_interactive_session
 def change_password():
@@ -563,7 +564,7 @@ def change_password():
 
 
 @api_bp.route('/auth/supabase', methods=['POST'])
-@limiter.limit("10 per minute")
+@limited('auth_sso_supabase')
 def supabase_auth():
     """Authenticate with Supabase JWT."""
     data = request.get_json(silent=True) or {}
@@ -731,7 +732,7 @@ def _get_github_credentials():
 
 
 @api_bp.route('/auth/github', methods=['GET'])
-@limiter.limit("20 per minute")
+@limited('auth_sso_github')
 def github_auth_redirect():
     """Return the GitHub OAuth authorization URL for the frontend to redirect to."""
     client_id, _ = _get_github_credentials()
@@ -761,7 +762,7 @@ def github_auth_redirect():
 
 
 @api_bp.route('/auth/github/callback', methods=['POST'])
-@limiter.limit("20 per minute")
+@limited('auth_sso_github')
 def github_auth_callback():
     """Exchange GitHub OAuth code for user tokens."""
     import requests as http_requests
@@ -939,7 +940,7 @@ def github_auth_callback():
 # ── MFA Endpoints ──────────────────────────────────────────────────
 
 @api_bp.route('/auth/mfa/setup', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('mfa_enroll')
 @jwt_required()
 @require_interactive_session
 def mfa_setup():
@@ -984,7 +985,7 @@ def mfa_setup():
 
 
 @api_bp.route('/auth/mfa/verify', methods=['POST'])
-@limiter.limit("10 per hour")
+@limited('mfa_verify')
 @jwt_required()
 @require_interactive_session
 def mfa_verify():
@@ -1025,7 +1026,7 @@ def mfa_verify():
 
 
 @api_bp.route('/auth/mfa/complete', methods=['POST'])
-@limiter.limit("10 per minute")
+@limited('mfa_complete')
 def mfa_complete_oauth():
     """Complete OAuth login by verifying MFA code using a pre-auth token.
 
@@ -1102,7 +1103,7 @@ def mfa_complete_oauth():
 
 
 @api_bp.route('/auth/mfa/disable', methods=['POST'])
-@limiter.limit("5 per hour")
+@limited('mfa_enroll')
 @jwt_required()
 @require_interactive_session
 def mfa_disable():

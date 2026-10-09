@@ -8,7 +8,8 @@ from flask_jwt_extended import jwt_required
 from sqlalchemy import func
 from werkzeug.exceptions import BadRequest
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log, log_audit_event, log_security_event
 from app.middleware.rbac import get_current_user, require_permission
@@ -122,7 +123,7 @@ def _export_filename(org, ext):
 @api_bp.route('/audit-logs/export', methods=['GET'])
 @jwt_required()
 @require_permission('audit_logs:export')
-@limiter.limit("10 per hour")  # rl-group: audit_export
+@limited('audit_export')
 def export_audit_logs():
     """Export the filtered audit log as CSV or JSONL (format=csv|jsonl).
 
@@ -290,7 +291,7 @@ def update_audit_settings():
 @api_bp.route('/admin/audit-integrity', methods=['GET'])
 @jwt_required()
 @require_permission('organizations:manage')
-@limiter.limit("6 per hour")  # rl-group: audit_integrity
+@limited('audit_integrity')
 def verify_audit_integrity():
     """Verify the organization's audit hash chain (first <= 50 failures)."""
     user = get_current_user()

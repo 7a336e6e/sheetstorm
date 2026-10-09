@@ -42,6 +42,7 @@ from app.api.v1.endpoints import decision_log
 from app.api.v1.endpoints import metrics
 from app.api.v1.endpoints import user_admin
 from app.api.v1.endpoints import auth_lifecycle
+from app.api.v1.endpoints import system
 
 # Restricted-account gate (must-change-password, MFA enrollment): one
 # before_request for the whole API.

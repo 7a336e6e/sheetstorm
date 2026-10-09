@@ -3,8 +3,9 @@ import logging
 
 from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
-from app import db, limiter
+from app import db
 from app.models import Integration
 from app.middleware.rbac import require_permission, get_current_user
 from app.middleware.audit import audit_log
@@ -60,7 +61,7 @@ def _extract_threat_labels(classification: dict) -> list[str]:
 @api_bp.route('/threat-intel/virustotal/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def virustotal_lookup():
     """Look up a hash, URL, domain, or IP on VirusTotal.
     
@@ -198,7 +199,7 @@ def virustotal_lookup():
 @api_bp.route('/threat-intel/misp/push', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:update')
-@limiter.limit('5/minute')
+@limited('threat_intel_misp_push')
 @audit_log('data_modification', 'push_ioc', 'misp')
 def misp_push_ioc():
     """Push IOCs to MISP as events/attributes.
@@ -404,7 +405,7 @@ def _misp_type_to_category(ioc_type: str) -> str:
 @api_bp.route('/threat-intel/cve/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('15/minute')
+@limited('threat_intel_cve')
 def cve_lookup():
     """Look up a CVE by ID using public APIs (NVD + CISA KEV).
 
@@ -523,7 +524,7 @@ def cve_lookup():
 @api_bp.route('/threat-intel/ip/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def ip_reputation_lookup():
     """Look up IP reputation.  Tries AbuseIPDB first (if configured),
     then VirusTotal, then free ip-api.com for geo only.
@@ -632,7 +633,7 @@ def ip_reputation_lookup():
 @api_bp.route('/threat-intel/domain/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def domain_reputation_lookup():
     """Look up domain reputation via VirusTotal (if configured).
 
@@ -745,7 +746,7 @@ def domain_reputation_lookup():
 @api_bp.route('/threat-intel/email/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def email_reputation_lookup():
     """Look up email address in breach databases.
     Uses Have I Been Pwned API if configured, otherwise returns
@@ -847,7 +848,7 @@ def _load_ransomware_data() -> list:
 @api_bp.route('/threat-intel/ransomware/lookup', methods=['POST'])
 @jwt_required()
 @require_permission('incidents:read')
-@limiter.limit('10/minute')
+@limited('threat_intel_lookup')
 def ransomware_victim_lookup():
     """Search ransomware.live for victim postings.
 

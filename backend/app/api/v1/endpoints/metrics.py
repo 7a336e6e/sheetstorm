@@ -30,7 +30,8 @@ from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import (
@@ -107,7 +108,7 @@ def get_incident_metrics(incident_id):
 @api_bp.route('/metrics/incidents', methods=['GET'])
 @jwt_required()
 @require_permission('metrics:read')
-@limiter.limit("30 per minute")  # rl-group: metrics
+@limited('metrics')
 def get_org_metrics():
     """Median / p90 per metric over the incidents the caller can see.
 

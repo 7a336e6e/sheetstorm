@@ -3,7 +3,8 @@ completion. Tokens travel in POST bodies (never URLs or logs); every failure
 of a kind returns one generic error so nothing can be enumerated."""
 from flask import jsonify, request
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.api.v1.endpoints.auth import _auth_cookies, issue_tokens
 from app.middleware.audit import log_auth_event
@@ -23,7 +24,7 @@ def _invite_invalid():
 
 
 @api_bp.route('/auth/invites/lookup', methods=['POST'])
-@limiter.limit("10 per minute;60 per hour")  # rl-group: invites_lookup
+@limited('invites_lookup')
 def lookup_invite_public():
     """{token} -> {email, name, organization_name, expires_at}."""
     invite = invite_service.lookup_invite(_body().get('token'))
@@ -39,7 +40,7 @@ def lookup_invite_public():
 
 
 @api_bp.route('/auth/invites/accept', methods=['POST'])
-@limiter.limit("5 per minute;20 per hour")  # rl-group: invites_accept
+@limited('invites_accept')
 def accept_invite_public():
     """{token, name, password} -> 201 {access_token, refresh_token, user} + cookies."""
     data = _body()
@@ -64,7 +65,7 @@ def accept_invite_public():
 
 
 @api_bp.route('/auth/password-reset/complete', methods=['POST'])
-@limiter.limit("5 per minute;20 per hour")  # rl-group: password_reset_complete
+@limited('password_reset_complete')
 def complete_password_reset_public():
     """{token, new_password}: sets the password, clears must-change and the
     lockout, revokes every session. The user then signs in normally."""

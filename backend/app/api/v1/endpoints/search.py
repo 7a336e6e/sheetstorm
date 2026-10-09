@@ -7,10 +7,11 @@ also holds cross-incident IOC correlation, bulk enrichment and STIX export.
 from flask import Response, g, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, cast, select, String
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import require_permission, get_current_user
-from app import db, limiter
+from app import db
 from app.models.incident import Incident
 from app.models.compromised import CompromisedHost
 from app.models.ioc import NetworkIndicator, HostBasedIndicator, MalwareTool
@@ -62,7 +63,7 @@ def _user_incident_ids(user_id):
 # ---------------------------------------------------------------------------
 
 @api_bp.route('/search', methods=['GET'])
-@limiter.limit("60 per minute")  # rl-group: search
+@limited('search')
 @jwt_required()
 @require_permission('incidents:read')
 def search_across_incidents():
@@ -377,7 +378,7 @@ def _enrichment_summary(enrichment: dict) -> str:
 
 
 @api_bp.route('/bulk-enrich', methods=['POST'])
-@limiter.limit("10 per minute")  # rl-group: bulk_enrich
+@limited('bulk_enrich')
 @jwt_required()
 @require_permission('incidents:read')
 @audit_log('data_access', 'bulk_enrich', 'incident')
@@ -497,7 +498,7 @@ def bulk_enrich():
 
 @api_bp.route('/incidents/<uuid:incident_id>/export/stix', methods=['GET'])
 @jwt_required()
-@limiter.limit('30 per minute')  # rl-group: exports
+@limited('exports')
 @require_permission('incidents:read')
 @audit_log('data_access', 'export_stix', 'incident')
 def export_incident_stix(incident_id):

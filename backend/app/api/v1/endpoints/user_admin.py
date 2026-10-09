@@ -10,7 +10,8 @@ import sqlalchemy as sa
 from flask import current_app, jsonify, request
 from flask_jwt_extended import jwt_required
 
-from app import db, limiter
+from app.services.rate_limit_settings import limited
+from app import db
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import get_current_user, require_permission
@@ -75,7 +76,7 @@ def user_admin_stats():
 # ── Invites ─────────────────────────────────────────────────────────
 
 @api_bp.route('/users/invites', methods=['POST'])
-@limiter.limit("30 per hour")  # rl-group: invite_create
+@limited('invite_create')
 @jwt_required()
 @require_permission('users:manage')
 @audit_log('admin_action', 'create_invite', 'user_invite')
@@ -245,7 +246,7 @@ def user_admin_reset_mfa(user_id):
 # ── Bulk ────────────────────────────────────────────────────────────
 
 @api_bp.route('/users/bulk', methods=['POST'])
-@limiter.limit("10 per minute")  # rl-group: users_bulk
+@limited('users_bulk')
 @jwt_required()
 @require_permission('users:manage')
 def user_admin_bulk():

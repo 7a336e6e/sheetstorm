@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from flask import Response, g, jsonify, request, stream_with_context
 from flask_jwt_extended import jwt_required
 
-from app import limiter
+from app.services.rate_limit_settings import limited
 from app.api.v1 import api_bp
 from app.middleware.audit import audit_log
 from app.middleware.rbac import get_current_user, require_incident_access
@@ -42,7 +42,7 @@ def forbidden(permission: str):
 @api_bp.route('/incidents/<uuid:incident_id>/export/<string:entity>', methods=['GET'])
 @jwt_required()
 @require_incident_access('incidents:read')
-@limiter.limit('30 per minute')  # rl-group: exports
+@limited('exports')
 @audit_log('data_access', 'export_csv', 'incident')
 def export_incident_csv(incident_id, entity):
     """CSV export of one entity (``timeline``, ``hosts``, ``accounts``,

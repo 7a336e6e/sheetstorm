@@ -52,6 +52,15 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 | POST   | `/auth/refresh`    | Refresh access token | —          |
 | GET    | `/auth/me`         | Current user info    | —          |
 | PUT    | `/auth/password`   | Change password      | —          |
+| POST   | `/auth/invites/lookup` | `{token}` → invite email, org, expiry (`400 invite_invalid`) | 10/minute, 60/hour |
+| POST   | `/auth/invites/accept` | `{token, name, password}` → 201 tokens + cookies (one generic `400 invite_invalid`) | 5/minute, 20/hour |
+| POST   | `/auth/password-reset/complete` | `{token, new_password}` (admin-issued link; `400 reset_invalid`) | 5/minute, 20/hour |
+
+Login returns one generic `401` for an unknown email, a wrong password, a locked or a disabled
+account. `LOGIN_LOCKOUT_THRESHOLD` consecutive bad passwords / MFA codes lock the account for
+`LOGIN_LOCKOUT_MINUTES`. A user with `must_change_password` (admin temporary password, seeded
+admin) gets `403 password_change_required` on every route except `/auth/me`, `/auth/change-password`,
+`/auth/logout`, `/auth/refresh` and `/health*`.
 
 ## Incidents
 
@@ -162,11 +171,23 @@ result has `id`, `type`, `incident_id`, `incident_title`, `title`, `snippet`,
 
 | Method | Endpoint                                  | Description                    |
 |--------|-------------------------------------------|--------------------------------|
-| GET    | `/users`                                  | List users                     |
+| GET    | `/users`                                  | List users (`q`, `role`, `role_id`, `status`=active\|disabled\|locked\|must_change_password, `team_id`, `mfa`) |
+| GET    | `/users/stats`                            | Org-wide counts (active, disabled, locked, MFA, pending invites, by role) |
+| POST   | `/users/invites`                          | Invite (`users:manage`; roles need `roles:manage`); returns the one-time `token`/`accept_path` once |
+| GET    | `/users/invites`                          | Invites (`status`=pending\|accepted\|revoked\|expired\|all) |
+| DELETE | `/users/invites/{id}`                     | Revoke an invite (`409 already_accepted`) |
+| POST   | `/users/{id}/disable`                     | Disable with `{reason}`; revokes every session (`users:manage`) |
+| POST   | `/users/{id}/enable`                      | Re-enable (old sessions stay revoked) |
+| POST   | `/users/{id}/force-logout`                | Revoke every session and socket |
+| POST   | `/users/{id}/unlock`                      | Clear a login lockout |
+| POST   | `/users/{id}/reset-password`              | `{mode: link\|temp, revoke_sessions?}` → one-time link or temporary password (forced change) |
+| POST   | `/users/{id}/reset-mfa`                   | Remove MFA and revoke sessions (`409 mfa_not_enabled`) |
+| POST   | `/users/bulk`                             | `{action: disable\|enable\|force_logout\|add_role\|remove_role\|add_team, user_ids (≤100)}` → per-item results (10/minute) |
+| GET    | `/users/{id}/activity`                    | Audit rows by / about the user (`audit_logs:read`, `scope`=actor\|target\|all) |
 | POST   | `/users`                                  | Create user (`users:create`; roles need `roles:manage` and must be within your permissions) |
 | GET    | `/users/{id}`                             | Get user details               |
 | PUT    | `/users/{id}`                             | Update user (`users:update`; you must outrank the user) |
-| DELETE | `/users/{id}`                             | Delete user (`users:delete`; never yourself or the last admin) |
+| DELETE | `/users/{id}`                             | Delete user (`users:delete`; never yourself or the last admin). A user with authored records → `409 user_has_records {counts, hint:'deactivate'}`; `?anonymize=true` scrubs personal data and keeps the row |
 | GET    | `/users/{id}/roles`                       | Get user roles                 |
 | POST   | `/users/{id}/roles`                       | Assign role (`roles:manage`, within your permissions) |
 | DELETE | `/users/{id}/roles/{rid}`                 | Remove role (`roles:manage`; last-admin / self-lockout guarded) |

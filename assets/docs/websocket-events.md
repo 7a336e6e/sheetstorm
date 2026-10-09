@@ -84,7 +84,7 @@ security event `ws_rate_limited` and disconnects the socket. Denied joins log
 | `graph:node_drag` | `incident_<id>:attack_graph` (not echoed) | `{ incident_id, node_id, x, y, user_id }` |
 | `rt:error` | self | `{ code: 'denied' \| 'rate_limited' \| 'invalid', event }` |
 | `permissions_changed` | `user_<id>` | `{}` after a role assignment/revocation for that user or an edit of a role they hold (≤500 holders); refetch `/auth/me` (sockets are then disconnected) |
-| `session:revoked` | `user_<id>` | `{ reason }` |
+| `session:revoked` | `user_<id>` | `{ reason }`: `disabled`, `deleted`, `force_logout`, `password_reset` or `mfa_reset` (services/token_revocation.py); the user's sockets are then disconnected. Sign the client out |
 | `notification` | `user_<id>` | `Notification` |
 | `activity:new` | incident / org rooms, or (admin actions) each holder of `audit_logs:read` | audit activity item (public details) |
 | `pong` | self | — |

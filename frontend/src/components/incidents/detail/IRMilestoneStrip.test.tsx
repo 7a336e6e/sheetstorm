@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { ApiError } from '@/lib/api'
+import { useTimePrefStore } from '@/lib/store'
 import type { Incident } from '@/types'
 import { mockApi, renderTab, resetTabTest, setRole } from '../test-utils'
 
@@ -28,8 +29,16 @@ const incident = {
   version: 5,
 } as Incident & { version: number }
 
-beforeEach(() => resetTabTest())
-afterEach(() => resetTabTest())
+// Typed datetime-local values are read in the display mode: pin it to UTC so
+// the expected ISO payloads do not depend on the machine's time zone.
+beforeEach(() => {
+  resetTabTest()
+  act(() => useTimePrefStore.setState({ mode: 'utc' }))
+})
+afterEach(() => {
+  resetTabTest()
+  act(() => useTimePrefStore.setState({ mode: 'local' }))
+})
 
 const input = (label: string) => screen.getByLabelText(label) as HTMLInputElement
 

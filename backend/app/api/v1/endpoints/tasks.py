@@ -3,11 +3,13 @@ from datetime import datetime, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import Task, TaskComment
 from app.middleware.rbac import require_incident_access, get_current_user
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_task_assigned
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import list_response, severity_rank
 from app.utils.validation import parse_datetime, check_choice, json_body
 
@@ -94,7 +96,8 @@ def create_task(incident_id):
     if task.assignee_id:
         notify_task_assigned(str(task.assignee_id), task)
 
-    socketio.emit('task_added', task.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'task', 'created', obj=task,
+                         data=task.to_dict(include_comments=True))
 
     return jsonify(task.to_dict()), 201
 
@@ -110,7 +113,7 @@ def get_task(incident_id, task_id):
     if not task:
         return jsonify({'error': 'not_found', 'message': 'Task not found'}), 404
 
-    return jsonify(task.to_dict(include_comments=True)), 200
+    return set_etag(jsonify(task.to_dict(include_comments=True)), task), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/tasks/<uuid:task_id>', methods=['PUT'])
@@ -125,6 +128,9 @@ def update_task(incident_id, task_id):
     task = Task.query.filter_by(id=task_id, incident_id=incident.id).first()
     if not task:
         return jsonify({'error': 'not_found', 'message': 'Task not found'}), 404
+    conflict = precondition(task)
+    if conflict:
+        return conflict, conflict.status_code
 
     old_assignee = task.assignee_id
 
@@ -165,15 +171,18 @@ def update_task(incident_id, task_id):
     if 'due_date' in data:
         task.due_date = data['due_date']
 
-    db.session.commit()
+    conflict = commit_or_conflict(task)
+    if conflict:
+        return conflict, conflict.status_code
 
     # Notify new assignee
     if task.assignee_id and task.assignee_id != old_assignee:
         notify_task_assigned(str(task.assignee_id), task)
 
-    socketio.emit('task_updated', task.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'task', 'updated', obj=task,
+                         data=task.to_dict(include_comments=True))
 
-    return jsonify(task.to_dict(include_comments=True)), 200
+    return set_etag(jsonify(task.to_dict(include_comments=True)), task), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/tasks/<uuid:task_id>', methods=['DELETE'])
@@ -187,11 +196,15 @@ def delete_task(incident_id, task_id):
     task = Task.query.filter_by(id=task_id, incident_id=incident.id).first()
     if not task:
         return jsonify({'error': 'not_found', 'message': 'Task not found'}), 404
+    conflict = precondition(task)
+    if conflict:
+        return conflict, conflict.status_code
 
     db.session.delete(task)
-    db.session.commit()
-
-    socketio.emit('task_deleted', {'id': str(task_id)}, room=f'incident_{incident_id}')
+    conflict = commit_or_conflict(task)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'task', 'deleted', id=task_id)
 
     return jsonify({'message': 'Task deleted'}), 200
 
@@ -243,11 +256,7 @@ def add_task_comment(incident_id, task_id):
 
     db.session.add(comment)
     db.session.commit()
-
-    socketio.emit('task_comment_added', {
-        'task_id': str(task_id),
-        'comment': comment.to_dict()
-    }, room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'task_comment', 'created', obj=comment)
 
     return jsonify(comment.to_dict()), 201
 
@@ -274,5 +283,6 @@ def delete_task_comment(incident_id, task_id, comment_id):
 
     db.session.delete(comment)
     db.session.commit()
+    realtime.emit_change(incident.id, 'task_comment', 'deleted', id=comment_id)
 
     return jsonify({'message': 'Comment deleted'}), 200

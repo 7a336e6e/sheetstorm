@@ -25,6 +25,19 @@
 - **`tasks:delete` now works for custom roles** (it is checked as a permission,
   not a role name).
 
+- **Legacy per-entity socket events are gone.** `incident_updated`,
+  `timeline_event_added|updated|deleted`, `task_added|updated|deleted`,
+  `task_comment_added`, `case_note_created|updated|deleted`, `host_added`,
+  `graph_node_added|updated|deleted` and `graph_edge_added|updated|deleted`
+  are replaced by `entity:changed` in per-scope rooms (and `incident:resync`
+  for bulk changes); see `assets/docs/websocket-events.md`. External socket
+  consumers of the old names must switch.
+- **Optimistic concurrency on incident entities.** PUT/PATCH/DELETE accept
+  `If-Match: "<version>"` (or `expected_version` in the body) and return
+  `409 conflict` with the current row when it is stale; responses carry `ETag`.
+  Requests without either keep last-write-wins. Two concurrent writes to the
+  same row now give one `409` instead of a silent lost update.
+
 ### Other fixes
 
 - Compromised-account passwords: the `********` mask no longer round-trips into

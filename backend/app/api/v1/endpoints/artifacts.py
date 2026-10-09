@@ -24,6 +24,7 @@ from app.services.custody_ledger import CustodyError, CustodyLedger
 from app.services.pdf_render import html_to_pdf
 from app.utils.csv_safe import csv_safe
 from app.utils.pagination import list_response
+from app.services import realtime
 
 
 ARTIFACT_SORTABLE = {
@@ -172,6 +173,7 @@ def upload_artifact(incident_id):
         return jsonify({'error': 'server_error', 'message': 'Failed to record the upload'}), 500
 
     ChainOfCustodyService.audit_upload(artifact)
+    realtime.emit_change(incident.id, 'artifact', 'created', obj=artifact)
     return jsonify(artifact.to_dict()), 201
 
 
@@ -351,6 +353,7 @@ def verify_artifact(incident_id, artifact_id):
 
     # Log verification
     ChainOfCustodyService.log_verification(artifact, str(user.id), result, computed_hashes)
+    realtime.emit_change(incident.id, 'artifact', 'updated', obj=artifact)
 
     return jsonify({
         'result': result,
@@ -426,6 +429,7 @@ def set_legal_hold(incident_id, artifact_id):
     db.session.commit()
 
     ChainOfCustodyService.log_legal_hold(artifact, str(user.id), hold, data.get('reason'))
+    realtime.emit_change(incident.id, 'artifact', 'updated', obj=artifact)
     return jsonify(artifact.to_dict()), 200
 
 
@@ -664,6 +668,7 @@ def delete_artifact(incident_id, artifact_id):
     # 3) Record that the content is gone.
     artifact.content_purged = purged
     db.session.commit()
+    realtime.emit_change(incident.id, 'artifact', 'deleted', id=artifact_id)
 
     return jsonify({'message': 'Artifact deleted', 'artifact': artifact.to_dict()}), 200
 

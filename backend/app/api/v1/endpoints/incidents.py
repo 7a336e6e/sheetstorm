@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from flask import jsonify, request, g
 from flask_jwt_extended import jwt_required
 from app.api.v1 import api_bp
-from app import db, socketio
+from app import db
 from app.models import Incident, IncidentAssignment, IncidentTeam, User
 from app.middleware.rbac import (  # noqa: F401  (accessible_incidents_query re-exported for callers)
     require_permission, require_incident_access, get_current_user,
@@ -13,6 +13,8 @@ from app.middleware.rbac import (  # noqa: F401  (accessible_incidents_query re-
 from app.middleware.audit import audit_log
 from app.services.notification_service import notify_incident_created, notify_user_assigned
 from app.services.import_service import ImportService
+from app.services import realtime
+from app.utils.concurrency import commit_or_conflict, precondition, set_etag
 from app.utils.pagination import in_list, list_response, parse_uuid, severity_rank
 
 logger = logging.getLogger(__name__)
@@ -127,6 +129,8 @@ def create_incident():
 
     # Send notifications
     notify_incident_created(incident)
+    realtime.emit_change(incident.id, 'incident', 'created', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
     return jsonify(incident.to_dict(include_counts=True)), 201
 
@@ -137,7 +141,7 @@ def create_incident():
 def get_incident(incident_id):
     """Get incident details."""
     incident = g.incident  # Set by require_incident_access
-    return jsonify(incident.to_dict(include_counts=True)), 200
+    return set_etag(jsonify(incident.to_dict(include_counts=True)), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>', methods=['PUT'])
@@ -154,6 +158,10 @@ def update_incident(incident_id):
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    conflict = precondition(incident)
+    if conflict:
+        return conflict, conflict.status_code
+    access_before = (incident.tlp, incident.team_id)
 
     # Update fields
     if 'title' in update_data and update_data['title']:
@@ -218,12 +226,17 @@ def update_incident(incident_id):
     if 'team_id' in update_data:
         incident.team_id = str(update_data['team_id']) if update_data['team_id'] else None
 
-    db.session.commit()
+    conflict = commit_or_conflict(incident)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    if (incident.tlp, incident.team_id) != access_before:
+        # TLP / team drive read_tlp_white / read_team visibility: evict
+        # anyone present in the incident who lost access.
+        _evict_lost_access(incident, [p['user_id'] for p in realtime.presence_list(incident.id)])
 
-    # Broadcast update via WebSocket
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(incident.to_dict(include_counts=True)), 200
+    return set_etag(jsonify(incident.to_dict(include_counts=True)), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/status', methods=['PATCH'])
@@ -239,6 +252,9 @@ def update_incident_status(incident_id):
         update_data = data.model_dump(exclude_unset=True)
     except ValueError as e:
         return jsonify({'error': 'bad_request', 'message': str(e)}), 400
+    conflict = precondition(incident)
+    if conflict:
+        return conflict, conflict.status_code
 
     STATUS_PHASE_MAP = {
         'open': 1,
@@ -278,12 +294,13 @@ def update_incident_status(incident_id):
         if update_data['phase'] in phase_status_map:
             incident.status = phase_status_map[update_data['phase']]
 
-    db.session.commit()
+    conflict = commit_or_conflict(incident)
+    if conflict:
+        return conflict, conflict.status_code
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
-    # Broadcast update
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
-
-    return jsonify(incident.to_dict()), 200
+    return set_etag(jsonify(incident.to_dict()), incident), 200
 
 
 @api_bp.route('/incidents/<uuid:incident_id>/archive', methods=['POST'])
@@ -305,6 +322,7 @@ def archive_incident(incident_id):
     incident.archived_by = user.id
     incident.updated_at = datetime.now(timezone.utc)
     db.session.commit()
+    revoke_incident_rooms(incident.id, 'archived')
 
     return jsonify({'message': 'Incident archived successfully'}), 200
 
@@ -342,6 +360,8 @@ def unarchive_incident(incident_id):
     incident.archived_by = None
     incident.updated_at = datetime.now(timezone.utc)
     db.session.commit()
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
 
     return jsonify({'message': 'Incident restored successfully', 'incident': incident.to_dict()}), 200
 
@@ -459,7 +479,10 @@ def assign_user(incident_id):
 
     # Notify assigned user
     notify_user_assigned(str(target_user.id), incident)
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'assignment', 'updated' if existing else 'created', obj=assignment)
+    if new_role == 'Lead Responder':
+        realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                             data=incident.to_dict(include_counts=True))
 
     return jsonify(assignment.to_dict()), 201
 
@@ -488,8 +511,8 @@ def remove_assignment(incident_id, assignment_id):
         incident.lead_responder_id = None
 
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'assignment', 'deleted', id=assignment.id)
+    _evict_lost_access(incident, [assignment.user_id])
 
     return jsonify({'message': 'Assignment removed'}), 200
 
@@ -514,6 +537,7 @@ def import_incident_data(incident_id):
         
     try:
         results = ImportService.process_excel_import(incident_id, file, user.id)
+        realtime.emit_resync(incident_id, None, 'import')
         return jsonify({
             'message': 'Import completed successfully',
             'results': results
@@ -562,6 +586,7 @@ def submit_import_data(incident_id):
         
     try:
         results = ImportService.bulk_create_entities(incident_id, data, user.id)
+        realtime.emit_resync(incident_id, None, 'import')
         return jsonify({
             'message': 'Import completed successfully',
             'results': results
@@ -612,8 +637,10 @@ def add_incident_team(incident_id):
     it = IncidentTeam(incident_id=incident.id, team_id=team.id)
     db.session.add(it)
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    # The first linked team turns an org-wide (team scope) incident team-only.
+    _evict_lost_access(incident, [p['user_id'] for p in realtime.presence_list(incident.id)])
 
     return jsonify(it.to_dict()), 201
 
@@ -630,9 +657,64 @@ def remove_incident_team(incident_id, team_id):
     if not it:
         return jsonify({'error': 'not_found', 'message': 'Team association not found'}), 404
 
+    member_ids = [m.user_id for m in it.team.members] if it.team else []
     db.session.delete(it)
     db.session.commit()
-
-    socketio.emit('incident_updated', incident.to_dict(), room=f'incident_{incident_id}')
+    realtime.emit_change(incident.id, 'incident', 'updated', obj=incident,
+                         data=incident.to_dict(include_counts=True))
+    _evict_lost_access(incident, member_ids)
 
     return jsonify({'message': 'Team removed from incident'}), 200
+
+
+# --- Realtime revocation (W1-RT-EMIT) ---
+
+def _evict_lost_access(incident, user_ids):
+    """After commit: drop users who can no longer see the incident from its
+    socket rooms (assignment/team removal, TLP or team change)."""
+    for uid in dict.fromkeys(str(u) for u in user_ids if u):
+        try:
+            target = db.session.get(User, uid)
+            if target is None or not user_can_access_incident(target, incident):
+                realtime.evict_user_from_incident(uid, incident.id, reason='access_removed')
+        except Exception:
+            logger.exception('realtime: access re-check failed for user %s', uid)
+
+
+def revoke_incident_rooms(incident_id, reason):
+    """After commit: tell everyone in the incident's rooms that access is gone
+    (archive / purge), then close the base and scope rooms."""
+    try:
+        iid = realtime.canonical_incident_id(incident_id)
+        realtime.get_emitter().emit('incident:access_revoked', {'incident_id': iid, 'reason': reason},
+                                    to=realtime.base_room(iid))
+    except Exception:
+        logger.exception('realtime: access_revoked broadcast failed')
+    realtime.close_incident_rooms(incident_id)
+
+
+def _purge_access_revoked(incident=None, *args, incident_id=None, **ctx):
+    """incident_purge post-commit step `access_revoked`. The row is gone, so
+    only the primary key is used (from the instance identity, which survives
+    the delete + commit)."""
+    if incident_id is None and isinstance(incident, dict):    # a context dict
+        incident_id = incident.get('incident_id') or incident.get('id')
+    elif incident_id is None and incident is not None:
+        try:
+            from sqlalchemy import inspect as sa_inspect
+            identity = sa_inspect(incident).identity
+            incident_id = identity[0] if identity else None
+        except Exception:  # not a mapped instance: a context object
+            incident_id = getattr(incident, 'incident_id', None)
+    if incident_id is None:
+        logger.warning('realtime: purge step access_revoked got no incident id')
+        return
+    revoke_incident_rooms(incident_id, 'purged')
+
+
+try:  # incident_purge ships with W1-EVD-CORE; without it there is nothing to hook.
+    from app.services.incident_purge import register_purge_step
+except ImportError:  # pragma: no cover - depends on merge order
+    register_purge_step = None
+if register_purge_step is not None:
+    register_purge_step('access_revoked', _purge_access_revoked, phase='post_commit')

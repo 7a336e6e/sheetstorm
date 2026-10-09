@@ -6,6 +6,7 @@ from app import db
 from app.models import Team, TeamMember, User
 from app.middleware.rbac import require_permission, require_all_permissions, get_current_user
 from app.middleware.audit import audit_log
+from app.services import realtime
 from app.utils.audit_diff import record_changes, snapshot
 
 _TEAM_AUDIT_FIELDS = ('name', 'description')
@@ -117,10 +118,14 @@ def delete_team(team_id):
         return jsonify({'error': 'not_found', 'message': 'Team not found'}), 404
 
     before = snapshot(team, _TEAM_AUDIT_FIELDS)
-    before['members'] = sorted(str(m.user_id) for m in TeamMember.query.filter_by(team_id=team.id))
+    member_ids = [m.user_id for m in TeamMember.query.filter_by(team_id=team.id)]
+    before['members'] = sorted(str(uid) for uid in member_ids)
     db.session.delete(team)
     db.session.commit()
     record_changes(before, {})
+    # Team-scoped incident visibility changed: sockets reconnect and rejoin.
+    for uid in member_ids:
+        realtime.disconnect_user_sockets(uid)
 
     return jsonify({'message': 'Team deleted successfully'}), 200
 
@@ -177,5 +182,6 @@ def remove_team_member(team_id, user_id):
     db.session.delete(member)
     db.session.commit()
     record_changes({'members': [str(user_id)]}, {'members': []})
+    realtime.disconnect_user_sockets(user_id)  # rejoin re-checks team-scoped access
 
     return jsonify({'message': 'User removed from team'}), 200

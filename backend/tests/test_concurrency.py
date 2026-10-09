@@ -87,13 +87,41 @@ def test_precondition_variants(app, db, users, make_incident):
     assert check(body={'version': 2}, required=True, body_key='version') is None
 
 
+def _end_read_transaction(db):
+    """Commit the scoped session's open (read) transaction without expiring
+    the loaded objects, so it holds no transaction and no locks while another
+    connection writes, yet `t.version` stays the value this session read."""
+    sess = db.session()
+    previous = sess.expire_on_commit
+    sess.expire_on_commit = False
+    try:
+        sess.commit()
+    finally:
+        sess.expire_on_commit = previous
+    assert not sess.in_transaction()
+
+
+def _bounded(conn_or_session):
+    """Fail fast (instead of hanging) if a statement ever waits on a lock:
+    both connections are driven by this one thread, so a lock wait between
+    them is a self-deadlock Postgres cannot detect."""
+    conn_or_session.execute(text("SET LOCAL lock_timeout = '5s'"))
+    conn_or_session.execute(text("SET LOCAL statement_timeout = '15s'"))
+
+
 def test_commit_or_conflict_on_concurrent_writer(app, db, users, make_incident):
     t = _task(db, make_incident(), users['Administrator'])
+    tid = t.id                      # loads the row (version 1) in the session ...
+    assert t.version == 1
+    _end_read_transaction(db)       # ... then leaves the session idle.
+
     # Another session/worker commits first.
     with db.engine.begin() as conn:
+        _bounded(conn)
         conn.execute(text("UPDATE tasks SET version = version + 1, title='theirs' WHERE id=:i"),
-                     {'i': t.id})
-    t.title = 'mine'
+                     {'i': tid})
+    _bounded(db.session)            # (before the change: execute() autoflushes)
+    t.title = 'mine'                # still based on version 1
     with app.test_request_context('/'):
         resp = commit_or_conflict(t)
     assert resp.status_code == 409

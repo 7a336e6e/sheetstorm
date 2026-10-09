@@ -26,7 +26,11 @@ USER_SORTABLE = {
     'created_at': User.created_at,
     'last_login': User.last_login,
 }
-USER_FILTERS = {'is_active': (User.is_active, 'bool'), 'mfa': (User.mfa_enabled, 'bool')}
+USER_FILTERS = {
+    'is_active': (User.is_active, 'bool'),
+    'mfa': (User.mfa_enabled, 'bool'),
+    'service_account': (User.is_service_account, 'bool'),
+}
 USER_STATUSES = ('active', 'disabled', 'locked', 'must_change_password')
 
 

@@ -66,6 +66,11 @@ const MFA_OPTIONS = [
   { value: 'false', label: 'MFA off' },
 ]
 
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'false', label: 'People' },
+  { value: 'true', label: 'Service accounts' },
+]
+
 export default function UsersPage() {
   return (
     <Suspense fallback={null}>
@@ -418,6 +423,14 @@ function UsersAdmin() {
         onChange={(v) => query.setFilter('mfa', v)}
         options={MFA_OPTIONS}
         className="w-[130px]"
+      />
+      <FilterSelect
+        label="Account type"
+        allLabel="All accounts"
+        value={filters.service_account}
+        onChange={(v) => query.setFilter('service_account', v)}
+        options={ACCOUNT_TYPE_OPTIONS}
+        className="w-[160px]"
       />
     </>
   )

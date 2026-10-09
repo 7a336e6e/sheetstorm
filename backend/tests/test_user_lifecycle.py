@@ -854,6 +854,24 @@ def test_users_list_lifecycle_filters(app, db, auth, org_admin, make_user):
     assert client.get('/api/v1/users?team_id=nope').status_code == 400
 
 
+def test_users_list_service_account_filter(app, db, auth, org_admin, make_user):
+    org, admin = org_admin
+    svc = make_user(org, roles=['Viewer'])
+    svc.is_service_account = True
+    human = make_user(org, roles=['Viewer'])
+    db.session.commit()
+    client = auth(admin)
+
+    def ids(qs):
+        resp = client.get(f'/api/v1/users?{qs}')
+        assert resp.status_code == 200, qs
+        return {i['id'] for i in resp.get_json()['items']}
+    assert ids('service_account=true') == {str(svc.id)}
+    humans = ids('service_account=false')
+    assert str(human.id) in humans and str(admin.id) in humans and str(svc.id) not in humans
+    assert client.get('/api/v1/users?service_account=perhaps').status_code == 400
+
+
 def test_get_user_admin_fields_only_for_managers(app, db, auth, org_admin, make_user):
     org, admin = org_admin
     victim = make_user(org, roles=['Analyst'])

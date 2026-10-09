@@ -273,13 +273,14 @@ describe('Users admin page: gating', () => {
 
 describe('Users admin page: filters and URL', () => {
   it('reads filters from the URL into the request', async () => {
-    mockSearch = 'users.f.status=locked&users.f.mfa=true&users.f.team_id=t1&users.q=ali&users.sort=-last_login'
+    mockSearch = 'users.f.status=locked&users.f.mfa=true&users.f.service_account=true&users.f.team_id=t1&users.q=ali&users.sort=-last_login'
     setPermissions(ADMIN_PERMS)
     renderPage()
     await screen.findByText('alice@x.test')
     const p = usersParams()
     expect(p.get('status')).toBe('locked')
     expect(p.get('mfa')).toBe('true')
+    expect(p.get('service_account')).toBe('true')
     expect(p.get('team_id')).toBe('t1')
     expect(p.get('q')).toBe('ali')
     expect(p.get('sort')).toBe('-last_login')
@@ -297,6 +298,9 @@ describe('Users admin page: filters and URL', () => {
 
     await chooseOption(screen.getByRole('combobox', { name: 'Role' }), 'Viewer')
     await waitFor(() => expect(usersParams().get('role_id')).toBe('r-viewer'))
+
+    await chooseOption(screen.getByRole('combobox', { name: 'Account type' }), 'Service accounts')
+    await waitFor(() => expect(usersParams().get('service_account')).toBe('true'))
   })
 })
 

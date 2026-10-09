@@ -157,12 +157,12 @@ Run `sheetstorm-mcp` with an MCP inspector to see full descriptions. Highlights:
   `sheetstorm_archive_incident`, `sheetstorm_unarchive_incident`, `sheetstorm_list_archived_incidents`,
   `sheetstorm_permanently_delete_incident` (Administrator, archived incidents only, requires `confirmation="DELETE PERMANENTLY"`)
 - **Assignments (3)**: list/assign/remove responders
-- **Timeline (7)**: list/create/update/delete events (`detection_time`, `confidence_level`),
+- **Timeline (7)**: list/create/update/delete events (`detection_time`, `confidence_level`, record provenance: `source_evidence_id`, `source_record_ref`, `raw_timestamp` + `source_timezone` so the server derives the UTC time),
   `sheetstorm_mark_timeline_event_as_ioc`, `sheetstorm_list_timeline_mitre_tactics`, `sheetstorm_list_timeline_mitre_techniques`
 - **Tasks & leads (7)**: tasks with `task_type`, `lead_outcome`, `investigation_direction`, `evidence_refs` (labels resolved by the server); lead queue `sheetstorm_list_leads`; comments
 - **Compromised assets (10)**: hosts (`triage_status`, acquisition flags, triage/acquisition filters, `sheetstorm_bulk_update_hosts`), accounts incl. `sheetstorm_update_account`,
   `sheetstorm_delete_account`, `sheetstorm_reveal_account_password` (one account; plaintext enters the model context)
-- **IOCs (12)**: network IOCs, host IOCs, malware
+- **IOCs (12)**: network IOCs, host IOCs, malware (add/update accept the same provenance parameters as timeline events)
 - **Artifacts (7)**: list, upload (acquisition metadata), download, verify, chain of custody,
   `sheetstorm_set_legal_hold`, `sheetstorm_export_custody` (JSON)
 - **Evidence register (5)**: `sheetstorm_list_evidence`, `sheetstorm_get_evidence`, `sheetstorm_register_evidence`

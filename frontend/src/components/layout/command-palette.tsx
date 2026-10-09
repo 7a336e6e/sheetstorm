@@ -17,9 +17,7 @@ import { create } from 'zustand'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Activity,
   AlertTriangle,
-  Archive,
   ArrowRight,
   BookOpen,
   FileText,
@@ -29,11 +27,7 @@ import {
   Loader2,
   Plus,
   Search,
-  Settings,
-  Shield,
   User,
-  Users,
-  UsersRound,
 } from 'lucide-react'
 import api, { isAbortError, withQuery } from '@/lib/api'
 import { describeError } from '@/lib/errors'
@@ -51,6 +45,7 @@ import {
   splitHighlight,
 } from '@/lib/global-search'
 import { useShortcutsHelp } from '@/components/layout/shortcuts-help'
+import { adminNavigation } from '@/components/layout/nav-config'
 import { cn } from '@/lib/utils'
 import type { SearchResponse, SearchResult } from '@/types'
 
@@ -104,39 +99,15 @@ export const NAV_COMMANDS: NavCommand[] = [
   { id: 'nav-reports', label: 'Reports', href: '/dashboard/reports', icon: FileText, anyOf: ['reports:read'] },
   { id: 'nav-threat-intel', label: 'Threat intel', href: '/dashboard/threat-intel', icon: Search, keywords: 'lookup enrich ioc' },
   { id: 'nav-kb', label: 'Knowledge base', href: '/dashboard/knowledge-base', icon: BookOpen, keywords: 'kb docs lolbas' },
-  { id: 'nav-activity', label: 'Activity', href: '/dashboard/activity', icon: Activity, keywords: 'audit log', anyOf: ['audit_logs:read'] },
-  {
-    id: 'nav-archived',
-    label: 'Archived incidents',
-    href: '/dashboard/admin/archived-incidents',
-    icon: Archive,
-    anyOf: ['incidents:archive'],
-  },
-  {
-    id: 'nav-users',
-    label: 'Users',
-    href: '/dashboard/admin/users',
-    icon: Users,
-    keywords: 'admin accounts',
-    anyOf: ['users:create', 'users:update', 'users:manage'],
-  },
-  { id: 'nav-roles', label: 'Roles', href: '/dashboard/admin/roles', icon: Shield, keywords: 'admin permissions', anyOf: ['roles:manage', 'users:read'] },
-  {
-    id: 'nav-teams',
-    label: 'Teams',
-    href: '/dashboard/admin/teams',
-    icon: UsersRound,
-    keywords: 'admin groups',
-    anyOf: ['teams:create', 'teams:update', 'teams:delete'],
-  },
-  {
-    id: 'nav-settings',
-    label: 'Settings',
-    href: '/dashboard/admin/settings',
-    icon: Settings,
-    keywords: 'admin organization integrations',
-    anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'],
-  },
+  // Admin pages: same items and permission sets as the sidebar (nav-config.ts).
+  ...adminNavigation.map((item) => ({
+    id: `nav-${item.id}`,
+    label: item.name,
+    href: item.href,
+    icon: item.icon,
+    keywords: item.keywords,
+    anyOf: item.anyOf,
+  })),
   { id: 'nav-profile', label: 'Profile', href: '/dashboard/profile', icon: User, keywords: 'account mfa password' },
   { id: 'nav-shortcuts', label: 'Keyboard shortcuts', action: 'shortcuts', icon: Keyboard, keywords: 'help keys hotkeys' },
 ]

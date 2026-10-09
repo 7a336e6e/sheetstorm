@@ -113,6 +113,15 @@ describe('filterNavCommands', () => {
     expect(ids).not.toContain('nav-users')
     expect(filterNavCommands(NAV_COMMANDS, 'audit', () => true).map((c) => c.id)).toEqual(['nav-activity'])
   })
+
+  it('takes the admin commands and their permission sets from the sidebar navigation', async () => {
+    const { adminNavigation } = await import('./sidebar')
+    expect(adminNavigation.length).toBeGreaterThan(0)
+    for (const item of adminNavigation) {
+      const command = NAV_COMMANDS.find((c) => c.href === item.href)
+      expect(command?.anyOf).toBe(item.anyOf) // the same array: one source of truth
+    }
+  })
 })
 
 describe('CommandPalette keyboard behaviour', () => {

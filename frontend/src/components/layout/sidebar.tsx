@@ -13,18 +13,13 @@ import {
   Shield,
   LayoutDashboard,
   AlertTriangle,
-  Users,
-  UsersRound,
-  Settings,
   LogOut,
   Bell,
   FileText,
-  Activity,
   ChevronLeft,
   ChevronRight,
   Search,
   BookOpen,
-  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +27,7 @@ import { Suspense, useState, useEffect, useMemo } from 'react'
 import { useSocketEvent } from '@/hooks/use-socket'
 import { NotificationPanel } from '@/components/layout/NotificationPanel'
 import { useCommandPalette } from '@/components/layout/command-palette'
+import { adminNavigation, visibleAdminItems } from '@/components/layout/nav-config'
 import { useNotificationStore } from '@/lib/feature-stores'
 import type { Notification } from '@/types'
 
@@ -43,23 +39,8 @@ const navigation = [
   { name: 'Reports', href: '/dashboard/reports', icon: FileText },
 ]
 
-// Each admin item is shown to holders of ANY of `anyOf` (same sets as the
-// route guards in auth-provider.tsx). The Admin section renders when at least
-// one item is left. Permissions only, never role names.
-export const adminNavigation = [
-  { name: 'Activity', href: '/dashboard/activity', icon: Activity, anyOf: ['audit_logs:read'] },
-  { name: 'Archived Incidents', href: '/dashboard/admin/archived-incidents', icon: Archive, anyOf: ['incidents:archive'] },
-  { name: 'Users', href: '/dashboard/admin/users', icon: Users, anyOf: ['users:create', 'users:update', 'users:manage'] },
-  { name: 'Roles', href: '/dashboard/admin/roles', icon: Shield, anyOf: ['roles:manage', 'users:read'] },
-  { name: 'Teams', href: '/dashboard/admin/teams', icon: UsersRound, anyOf: ['teams:create', 'teams:update', 'teams:delete'] },
-  { name: 'Settings', href: '/dashboard/admin/settings', icon: Settings, anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'] },
-]
-
-/** Admin items a user holding `permissions` may see. */
-export function visibleAdminItems(permissions: readonly string[] | undefined) {
-  const granted = permissions ?? []
-  return adminNavigation.filter((item) => item.anyOf.some((p) => granted.includes(p)))
-}
+// Admin items live in nav-config.ts, shared with the command palette.
+export { adminNavigation, visibleAdminItems }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()

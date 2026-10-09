@@ -38,6 +38,10 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import api from '@/lib/api'
+import { invalidate } from '@/lib/query-cache'
+import { describeError, notifyError } from '@/lib/errors'
+import { useAllPages } from '@/hooks/use-paginated-query'
+import { usePermission } from '@/components/auth/permission-gate'
 import type { TimelineEvent, CompromisedHost } from '@/types'
 import { useTheme } from '@/components/providers/theme-provider'
 import { useToast } from '@/components/ui/use-toast'
@@ -75,6 +79,13 @@ const NODE_MIN_HEIGHT = 160  // enforced via min-h on the card
 const CARD_SPACING = 320    // distance between cards along the main axis
 const STEM_GAP = 28         // gap between card edge and axis line
 const AXIS_WIDTH = 2
+
+const NO_EVENTS: TimelineEvent[] = []
+
+/** Ascending by timestamp; the API order is not relied on. */
+function byTimestamp(events: TimelineEvent[]): TimelineEvent[] {
+    return [...events].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+}
 
 // Axis line node — rendered inside the viewport so it appears in PNG exports
 const AxisLineNode = memo(function AxisLineNode({ data }: any) {
@@ -201,12 +212,13 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
     const { toast } = useToast()
     const { fitView, zoomIn, zoomOut, getNodes } = useReactFlow()
 
-    const [allEvents, setAllEvents] = useState<TimelineEvent[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const [loadError, setLoadError] = useState(false)
+    const canCreate = usePermission('timeline:create')
+    const timeline = useAllPages<TimelineEvent>(`/incidents/${incidentId}/timeline`, { live: 'timeline_event' })
+    // Keep a stable reference while nothing is loaded (the graph effect depends on it).
+    const loaded = timeline.items.length ? timeline.items : NO_EVENTS
+    const allEvents = useMemo(() => byTimestamp(loaded), [loaded])
     const [filterMode, setFilterMode] = useState<'pinned' | 'all'>('pinned')
     const [orientation, setOrientation] = useState<Orientation>('horizontal')
-    const [hosts, setHosts] = useState<CompromisedHost[]>([])
 
     // Add event dialog
     const [showAddModal, setShowAddModal] = useState(false)
@@ -218,49 +230,10 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
         host_id: '',
         mitre_mappings: [] as { tactic: string; technique: string; name: string }[],
     })
+    const hostsQuery = useAllPages<CompromisedHost>(`/incidents/${incidentId}/hosts`, { live: 'host', enabled: showAddModal })
 
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-
-    // ─── Data loading ────────────────────────────────────────────────────
-
-    useEffect(() => {
-        if (incidentId) loadData()
-    }, [incidentId])
-
-    const loadData = async () => {
-        setIsLoading(true)
-        try {
-            setLoadError(false)
-            const allEvents: TimelineEvent[] = []
-            let page = 1
-            let totalPages = 1
-            do {
-                const res = await api.get<{ items: TimelineEvent[]; pages: number }>(
-                    `/incidents/${incidentId}/timeline?per_page=200&page=${page}`
-                )
-                allEvents.push(...(res.items || []))
-                totalPages = res.pages || 1
-                page++
-            } while (page <= totalPages)
-
-            const hostsRes = await api.get<{ items: CompromisedHost[] }>(`/incidents/${incidentId}/hosts`)
-            const sorted = allEvents.sort(
-                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            )
-            setAllEvents(sorted)
-            setHosts(hostsRes.items || [])
-        } catch {
-            setLoadError(true)
-            toast({
-                title: 'Failed to load timeline',
-                description: 'Check your connection and try again.',
-                variant: 'destructive',
-            })
-        } finally {
-            setIsLoading(false)
-        }
-    }
 
     const events = useMemo(
         () => filterMode === 'pinned' ? allEvents.filter(e => e.is_key_event) : allEvents,
@@ -293,13 +266,10 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
             })
             setShowAddModal(false)
             setForm({ timestamp: '', activity: '', source: '', host_id: '', mitre_mappings: [] })
-            loadData()
-        } catch {
-            toast({
-                title: 'Failed to add event',
-                description: 'Please try again.',
-                variant: 'destructive',
-            })
+            // Timeline writes can create IOCs / hosts server-side.
+            invalidate(`/incidents/${incidentId}`)
+        } catch (error) {
+            notifyError(error, 'add the event')
         } finally {
             setIsSubmitting(false)
         }
@@ -364,7 +334,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
 
     // ─── Loading state ───────────────────────────────────────────────────
 
-    if (isLoading) {
+    if (timeline.isLoading) {
         return (
             <div className="py-16 text-center text-sm text-muted-foreground animate-pulse">
                 <Clock className="h-6 w-6 mx-auto mb-2 opacity-30" />
@@ -373,15 +343,15 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
         )
     }
 
-    if (loadError && !isLoading) {
+    if (timeline.error && allEvents.length === 0) {
         return (
             <Card className="border-destructive/30">
-                <CardContent className="py-8 text-center">
+                <CardContent className="py-8 text-center" role="alert">
                     <p className="text-sm font-medium text-foreground">Failed to load timeline</p>
                     <p className="text-xs text-muted-foreground mt-1 mb-4">
-                        Check your connection and try again.
+                        {describeError(timeline.error).description}
                     </p>
-                    <Button onClick={loadData} variant="outline" size="sm">
+                    <Button onClick={() => void timeline.refetch()} variant="outline" size="sm">
                         Retry
                     </Button>
                 </CardContent>
@@ -399,7 +369,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                     setFilterMode={setFilterMode}
                     pinnedCount={pinnedCount}
                     allCount={allEvents.length}
-                    onAdd={() => setShowAddModal(true)}
+                    onAdd={canCreate ? () => setShowAddModal(true) : undefined}
                     orientation={orientation}
                     onToggleOrientation={toggleOrientation}
                     onExport={handleExportPng}
@@ -416,7 +386,9 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                     <p className="text-xs text-muted-foreground mt-1">
                         {filterMode === 'pinned'
                             ? 'Pin events from the Events tab using the ★ icon to build your timeline.'
-                            : 'Add events from the Events tab or click "Add Event" above.'}
+                            : canCreate
+                                ? 'Add events from the Events tab or click "Add Event" above.'
+                                : 'No events have been recorded for this incident yet.'}
                     </p>
                 </div>
                 <AddEventDialog
@@ -424,7 +396,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                     onOpenChange={setShowAddModal}
                     form={form}
                     setForm={setForm}
-                    hosts={hosts}
+                    hosts={hostsQuery.items}
                     onSubmit={handleAddEvent}
                     isSubmitting={isSubmitting}
                 />
@@ -436,12 +408,13 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
 
     return (
         <div className="space-y-4">
+            {timeline.truncated && <TruncatedNotice shown={allEvents.length} total={timeline.total} />}
             <ControlBar
                 filterMode={filterMode}
                 setFilterMode={setFilterMode}
                 pinnedCount={pinnedCount}
                 allCount={allEvents.length}
-                onAdd={() => setShowAddModal(true)}
+                onAdd={canCreate ? () => setShowAddModal(true) : undefined}
                 orientation={orientation}
                 onToggleOrientation={toggleOrientation}
                 onExport={handleExportPng}
@@ -503,7 +476,7 @@ function TimelineInner({ incidentId }: IOCVisualTimelineProps) {
                 onOpenChange={setShowAddModal}
                 form={form}
                 setForm={setForm}
-                hosts={hosts}
+                hosts={hostsQuery.items}
                 onSubmit={handleAddEvent}
                 isSubmitting={isSubmitting}
             />
@@ -531,7 +504,8 @@ function ControlBar({
     setFilterMode: (m: 'pinned' | 'all') => void
     pinnedCount: number
     allCount: number
-    onAdd: () => void
+    /** Omitted when the user may not create events. */
+    onAdd?: () => void
     orientation: Orientation
     onToggleOrientation: () => void
     onExport: () => void
@@ -593,13 +567,68 @@ function ControlBar({
                                 </Button>
                             </>
                         )}
-                        <Button onClick={onAdd} size="sm">
-                            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Event
-                        </Button>
+                        {onAdd && (
+                            <Button onClick={onAdd} size="sm">
+                                <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Event
+                            </Button>
+                        )}
                     </div>
                 </div>
             </CardContent>
         </Card>
+    )
+}
+
+function TruncatedNotice({ shown, total }: { shown: number; total: number }) {
+    return (
+        <p role="status" className="text-xs text-amber-400">
+            Showing the first {shown.toLocaleString()} of {total.toLocaleString()} events.
+        </p>
+    )
+}
+
+// ─── Pinned Timeline Tab (Events → "Table Timeline") ────────────────────────
+
+/** Key (pinned) events only, filtered server-side and shared via the cache. */
+export function PinnedTimelineTab({ incidentId }: { incidentId: string }) {
+    const pinned = useAllPages<TimelineEvent>(`/incidents/${incidentId}/timeline?key_only=true`, { live: 'timeline_event' })
+
+    if (pinned.isLoading) {
+        return (
+            <div className="py-16 text-center text-sm text-muted-foreground animate-pulse">
+                <Clock className="h-6 w-6 mx-auto mb-2 opacity-30" />
+                Loading pinned events...
+            </div>
+        )
+    }
+
+    if (pinned.error && pinned.items.length === 0) {
+        return (
+            <div role="alert" className="py-12 text-center border border-destructive/30 rounded-lg space-y-3">
+                <p className="text-sm font-medium text-foreground">Failed to load pinned events</p>
+                <p className="text-xs text-muted-foreground">{describeError(pinned.error).description}</p>
+                <Button onClick={() => void pinned.refetch()} variant="outline" size="sm">Retry</Button>
+            </div>
+        )
+    }
+
+    if (pinned.items.length === 0) {
+        return (
+            <div className="py-16 text-center border border-dashed border-border rounded-lg">
+                <Star className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
+                <p className="text-sm font-medium text-foreground">No Pinned Events</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Pin events from the Table tab using the &#9733; icon to build your table timeline.
+                </p>
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-2">
+            {pinned.truncated && <TruncatedNotice shown={pinned.items.length} total={pinned.total} />}
+            <PinnedEventsTable events={pinned.items} />
+        </div>
     )
 }
 

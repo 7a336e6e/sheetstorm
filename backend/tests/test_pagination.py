@@ -385,8 +385,11 @@ def test_users_list_scoped_searchable_sortable(app, auth, users):
     emails = [u['email'] for u in body['items']]
     assert emails == sorted(emails)
 
-    body = c.get('/api/v1/users', query_string={'role': 'Viewer', 'is_active': 'true'}).get_json()
-    assert [u['email'] for u in body['items']] == ['viewer@a.test']
+    # Other tests may add Viewers to org A: assert the filter, not the population.
+    body = c.get('/api/v1/users', query_string={'role': 'Viewer', 'is_active': 'true', 'per_page': 200}).get_json()
+    assert 'viewer@a.test' in [u['email'] for u in body['items']]
+    assert all('Viewer' in u['roles'] and u['is_active'] for u in body['items'])
+    assert not any(u['email'].endswith('@b.test') for u in body['items'])
 
     # `_` is literal, not a single-char wildcard.
     body = c.get('/api/v1/users', query_string={'q': 'incident_responder'}).get_json()

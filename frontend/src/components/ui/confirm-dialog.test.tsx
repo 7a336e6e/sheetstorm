@@ -1,18 +1,18 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ConfirmDialogProvider, confirmDelete, useConfirm, type ConfirmFn } from './confirm-dialog'
 
 afterEach(cleanup)
 
+function Grab({ onReady }: { onReady: (confirm: ConfirmFn) => void }) {
+  onReady(useConfirm())
+  return null
+}
+
 function setup() {
   let confirm: ConfirmFn = () => Promise.resolve(false)
-  function Grab() {
-    confirm = useConfirm()
-    return null
-  }
   render(
     <ConfirmDialogProvider>
-      <Grab />
+      <Grab onReady={(c) => (confirm = c)} />
     </ConfirmDialogProvider>
   )
   return () => confirm

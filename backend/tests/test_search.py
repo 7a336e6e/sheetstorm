@@ -35,7 +35,8 @@ def make_user(app, db, org_a):
     from app.models import Role, User, UserRole
 
     def make(perms):
-        role = Role(name=f'search-test-{uuid.uuid4().hex[:8]}', permissions=list(perms))
+        role = Role(name=f'search-test-{uuid.uuid4().hex[:8]}', permissions=list(perms),
+                    organization_id=org_a.id)
         user = User(email=f'{uuid.uuid4().hex[:8]}@a.test', name='custom', organization_id=org_a.id,
                     auth_provider='local', is_active=True, is_verified=True)
         user.set_password('Sup3r-Secret-Passw0rd!')

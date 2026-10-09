@@ -113,8 +113,9 @@ def test_org_update_records_diff(app, db, auth, new_org, make_user):
     changes = row.details['changes']
     assert changes['name'] == {'from': 't', 'to': 'Renamed'}
     assert changes['settings.timezone'] == {'from': 'UTC', 'to': 'Europe/Paris'}
-    assert changes['settings.ai_tlp_policy']['from']['green'] == 'allow'
-    assert changes['settings.ai_tlp_policy']['to']['green'] == 'block'
+    # utils/audit_diff diffs nested dicts one level deep (dotted keys).
+    assert changes['settings.ai_tlp_policy.green'] == {'from': 'allow', 'to': 'block'}
+    assert not any(k.startswith('settings.ai_tlp_policy.') and k != 'settings.ai_tlp_policy.green' for k in changes)
     assert 'settings.auto_enrich_iocs' not in changes
 
 

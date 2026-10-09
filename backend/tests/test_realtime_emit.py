@@ -609,6 +609,16 @@ def test_lead_change_rechecks_access_of_the_previous_lead(rt, db, users, admin, 
         realtime.unregister_sid(operator.id, 'sid-old-lead')
 
 
+def test_duplicate_assignment_is_already_assigned(rt, admin, make_incident, fresh_user):
+    inc = make_incident()
+    analyst = fresh_user('Analyst')
+    _ok(admin.post(f'{API}/incidents/{inc.id}/assignments', json={'user_id': str(analyst.id), 'role': 'Analyst'}))
+    rt.clear()
+    resp = admin.post(f'{API}/incidents/{inc.id}/assignments', json={'user_id': str(analyst.id), 'role': 'Analyst'})
+    assert resp.status_code == 409 and resp.get_json()['error'] == 'already_assigned'
+    assert rt.changes() == []
+
+
 def test_assign_lead_emits_demoted_lead(rt, db, users, admin, make_incident, fresh_user):
     inc = make_incident()
     old, new = fresh_user('Analyst'), fresh_user('Analyst')

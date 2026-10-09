@@ -56,6 +56,25 @@ describe('describeError', () => {
     expect(describeError(apiErr(404)).description).toBe('Not found — it may have been deleted.')
   })
 
+  it('maps already_assigned to its own copy, not the edit-conflict copy', () => {
+    const d = describeError(apiErr(409, 'User already assigned with this role', 'already_assigned'))
+    expect(d.title).toBe('Already assigned')
+    expect(d.description).toBe('User already assigned with this role')
+  })
+
+  it('maps user_has_records and names the counts', () => {
+    const d = describeError(
+      apiErr(409, 'x', 'user_has_records', { counts: { case_notes: 3, timeline_events: 12 }, hint: 'deactivate' })
+    )
+    expect(d.title).toBe('User has authored records')
+    expect(d.description).toBe(
+      'This user has authored records (3 case notes, 12 timeline events); deactivate the account instead.'
+    )
+    expect(describeError(apiErr(409, 'x', 'user_has_records', { counts: {} })).description).toBe(
+      'This user has authored records; deactivate the account instead.'
+    )
+  })
+
   it('maps ai_blocked_by_tlp to a readable message', () => {
     const d = describeError(apiErr(403, 'x', 'ai_blocked_by_tlp', { tlp: 'red', mode: 'local_only' }))
     expect(d.title).toBe('Blocked by data egress policy')

@@ -463,7 +463,7 @@ def assign_user(incident_id):
             existing.assigned_at = datetime.now(timezone.utc)
             assignment = existing
         elif existing.role == new_role:
-            return jsonify({'error': 'conflict', 'message': 'User already assigned with this role'}), 409
+            return jsonify({'error': 'already_assigned', 'message': 'User already assigned with this role'}), 409
         else:
             # User is already assigned with a different role — update the role
             existing.role = new_role

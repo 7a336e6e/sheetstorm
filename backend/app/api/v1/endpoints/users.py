@@ -369,7 +369,7 @@ def assign_role(user_id):
     # Check if already assigned
     existing = UserRole.query.filter_by(user_id=user.id, role_id=role.id).first()
     if existing:
-        return jsonify({'error': 'conflict', 'message': 'Role already assigned'}), 409
+        return jsonify({'error': 'already_assigned', 'message': 'Role already assigned'}), 409
 
     user_role = UserRole(
         user_id=user.id,

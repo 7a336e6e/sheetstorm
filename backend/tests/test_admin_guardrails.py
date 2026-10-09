@@ -40,6 +40,16 @@ def test_assign_role_within_ceiling_ok_and_emits(app, auth, new_org, make_user, 
     assert ('permissions_changed', {}, f'user_{target.id}') in emitted
 
 
+def test_assign_role_twice_is_already_assigned(app, auth, new_org, make_user, make_role):
+    org = new_org()
+    deputy, target = make_user(org, perms=DEPUTY + ['incidents:read']), make_user(org, perms=[])
+    role = make_role(org, ['incidents:read'])
+    client = auth(deputy)
+    assert client.post(f'/api/v1/users/{target.id}/roles', json={'role_id': str(role.id)}).status_code == 201
+    resp = client.post(f'/api/v1/users/{target.id}/roles', json={'role_id': str(role.id)})
+    assert resp.status_code == 409 and resp.get_json()['error'] == 'already_assigned'
+
+
 def test_assign_other_org_role_404(app, users, auth, org_b, make_role, make_user, new_org):
     foreign = make_role(org_b, ['incidents:read'])
     target = make_user(users['Administrator'].organization, perms=[])

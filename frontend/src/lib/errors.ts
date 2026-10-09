@@ -33,6 +33,15 @@ function keyList(v: unknown): string | undefined {
   return keys.length ? keys.join(', ') : undefined
 }
 
+/** `3 case notes, 1 tasks` from a `{table: count}` map (user_has_records), or undefined. */
+function recordCounts(v: unknown): string | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const parts = Object.entries(v as Record<string, unknown>)
+    .filter((e): e is [string, number] => typeof e[1] === 'number' && e[1] > 0)
+    .map(([table, n]) => `${n} ${table.replace(/_/g, ' ')}`)
+  return parts.length ? parts.join(', ') : undefined
+}
+
 function withKeys(text: string, label: string, keys: unknown): string {
   const list = keyList(keys)
   return list ? `${text.replace(/\.$/, '')}. ${label}: ${list}.` : text
@@ -70,6 +79,18 @@ function describeCode(
         title: 'MFA enrollment required',
         description: 'Set up multi-factor authentication to continue.',
       }
+    case 'already_assigned':
+      return {
+        title: 'Already assigned',
+        description: message ?? 'That assignment already exists.',
+      }
+    case 'user_has_records': {
+      const counts = recordCounts(details?.counts)
+      return {
+        title: 'User has authored records',
+        description: `This user has authored records${counts ? ` (${counts})` : ''}; deactivate the account instead.`,
+      }
+    }
     case 'conflict':
       return {
         title: 'Changed by someone else',

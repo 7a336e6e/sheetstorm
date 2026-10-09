@@ -376,7 +376,72 @@ def item_report(incident, item, entries, verification, generated_by) -> dict:
         'entries': annotated_entries(entries, verification),
         'verification': summary,
         'signing_key_id': custody_key_id(custody_signing_key()),
+        'referenced_by': referenced_by(item, generated_by),
     }
+
+
+# Provenance-bearing record types that may cite an evidence item: (ref type, model name, read permission).
+_PROVENANCE_REFERRERS = (
+    ('timeline_event', 'TimelineEvent', 'timeline:read'),
+    ('network_ioc', 'NetworkIndicator', 'network_iocs:read'),
+    ('host_ioc', 'HostBasedIndicator', 'host_iocs:read'),
+    ('malware', 'MalwareTool', 'malware:read'),
+)
+REFERENCED_BY_LIMIT = 500
+
+
+def referenced_by(item, user) -> dict:
+    """Records that cite this evidence item (W4-DEC, decision-log plan §3.5).
+
+    * events / IOCs whose provenance points at the item
+      (``source_evidence_id``) or at one of its artifacts (``source_artifact_id``);
+    * decisions and response actions whose ``links`` cite the item or one of
+      its artifacts.
+
+    Each kind is included only when ``user`` may read it; privileged decisions
+    only with ``decisions:read_privileged``. Labels are resolved server-side.
+    At most ``REFERENCED_BY_LIMIT`` rows per kind (``truncated`` says so).
+    """
+    from sqlalchemy import or_
+    from app import models
+    from app.services import decision_log_service as decisions
+    from app.services.evidence_refs import ref_types
+
+    def can(perm):
+        return user is not None and user.has_permission(perm)
+
+    artifact_ids = [r[0] for r in models.Artifact.query.with_entities(models.Artifact.id)
+                    .filter(models.Artifact.evidence_item_id == item.id).all()]
+    labels = ref_types()
+    out = {'truncated': False}
+
+    def rows(etype, query):
+        found = query.limit(REFERENCED_BY_LIMIT + 1).all()
+        if len(found) > REFERENCED_BY_LIMIT:
+            out['truncated'] = True
+            found = found[:REFERENCED_BY_LIMIT]
+        return [{'evidence_type': etype, 'id': str(r.id), 'label': labels[etype].label_for(r)} for r in found]
+
+    for etype, model_name, perm in _PROVENANCE_REFERRERS:
+        if not can(perm):
+            continue
+        model = getattr(models, model_name)
+        cond = [model.source_evidence_id == item.id]
+        if artifact_ids:
+            cond.append(model.source_artifact_id.in_(artifact_ids))
+        out[etype] = rows(etype, model.query.filter(model.incident_id == item.incident_id, or_(*cond)))
+
+    refs = [{'evidence_type': 'evidence_item', 'evidence_id': str(item.id)}]
+    refs += [{'evidence_type': 'artifact', 'evidence_id': str(a)} for a in artifact_ids]
+    if can('decisions:read'):
+        q = decisions.links_contain_query(models.IncidentDecision, item.incident_id, refs)
+        if not decisions.can_read_privileged(user):
+            q = q.filter(models.IncidentDecision.is_privileged.is_(False))
+        out['decision'] = rows('decision', q.order_by(models.IncidentDecision.number))
+    if can('response_actions:read'):
+        q = decisions.links_contain_query(models.ResponseAction, item.incident_id, refs)
+        out['response_action'] = rows('response_action', q.order_by(models.ResponseAction.number))
+    return out
 
 
 def entries_csv(rows) -> str:

@@ -1,0 +1,51 @@
+{#- Decision log appendix (autoescaped). Used by the report PDF appendix and
+    the decision-log PDF export. `payload` = decision_log_service.export_payload. -#}
+{%- macro ts(v) -%}{{ (v or '')[:16] | replace('T', ' ') }}{% if v %} UTC{% endif %}{%- endmacro -%}
+{%- macro who(rec, user_field, name_field) -%}
+{%- set u = (rec.users or {}).get(user_field) -%}
+{%- if u %}{{ u.name }}{% elif rec.get(name_field) %}{{ rec.get(name_field) }} (recorded){% endif -%}
+{%- endmacro -%}
+<div class="decision-log-appendix">
+<h2>Decisions &amp; Response Actions</h2>
+{% if payload.decisions %}
+<h3>Decisions</h3>
+<table>
+  <thead><tr><th>ID</th><th>Decided</th><th>Decision</th><th>Category</th><th>Status</th><th>Decided by</th><th>Approved by</th></tr></thead>
+  <tbody>
+  {% for d in payload.decisions %}
+    <tr>
+      <td>{{ d.display_id }}</td>
+      <td>{{ ts(d.decided_at) }}</td>
+      <td><strong>{{ d.title }}</strong><br>{{ d.decision }}{% if d.rationale %}<br><em>Rationale:</em> {{ d.rationale }}{% endif %}</td>
+      <td>{{ d.category | replace('_', ' ') }}</td>
+      <td>{{ d.status }}</td>
+      <td>{{ who(d, 'decided_by_user_id', 'decided_by_name') }}</td>
+      <td>{{ who(d, 'approved_by_user_id', 'approved_by_name') }}{% if d.approved_at %} · {{ ts(d.approved_at) }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if payload.response_actions %}
+<h3>Response actions</h3>
+<table>
+  <thead><tr><th>ID</th><th>Action</th><th>Target</th><th>Status</th><th>Authorized</th><th>Executed</th><th>Verified</th></tr></thead>
+  <tbody>
+  {% for a in payload.response_actions %}
+    <tr>
+      <td>{{ a.display_id }}</td>
+      <td><strong>{{ a.title }}</strong><br>{{ a.action_type | replace('_', ' ') }}{% if a.decision %} ({{ a.decision.display_id }}){% endif %}</td>
+      <td>{{ a.target_label or a.target_type }}</td>
+      <td>{{ a.status | replace('_', ' ') }}</td>
+      <td>{{ who(a, 'authorized_by_user_id', 'authorized_by_name') }}{% if a.authorized_at %} · {{ ts(a.authorized_at) }}{% endif %}</td>
+      <td>{{ who(a, 'executed_by_user_id', 'executed_by_name') }}{% if a.executed_at %} · {{ ts(a.executed_at) }}{% endif %}</td>
+      <td>{{ who(a, 'verified_by_user_id', 'verified_by_name') }}{% if a.verified_at %} · {{ ts(a.verified_at) }} ({{ a.verification_result }}){% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if not payload.decisions and not payload.response_actions %}
+<p>No decisions or response actions were recorded.</p>
+{% endif %}
+</div>

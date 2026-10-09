@@ -71,6 +71,11 @@ class Incident(BaseModel):
     # ledger triggers or its NO ACTION foreign keys.
     artifacts = relationship('Artifact', back_populates='incident', lazy='dynamic', passive_deletes='all')
     evidence_items = relationship('EvidenceItem', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    # Decision log (W4-DEC): head rows and their append-only revisions are
+    # removed only by the DB cascade of an audited purge (passive_deletes).
+    decisions = relationship('IncidentDecision', back_populates='incident', lazy='dynamic', passive_deletes='all')
+    response_actions = relationship('ResponseAction', back_populates='incident', lazy='dynamic',
+                                    passive_deletes='all')
     tasks = relationship('Task', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_nodes = relationship('AttackGraphNode', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')
     attack_graph_edges = relationship('AttackGraphEdge', back_populates='incident', lazy='dynamic', cascade='all, delete-orphan')

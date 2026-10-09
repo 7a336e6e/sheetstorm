@@ -25,6 +25,13 @@ describe('TAB_REGISTRY', () => {
     expect(byId.graph.keepMounted).toBe(false)
   })
 
+  it('has the post-incident review tab, visible to anyone who can read the incident', () => {
+    const review = TAB_REGISTRY.find((t) => t.id === 'review')
+    expect(review).toMatchObject({ label: 'Post-Incident Review', permission: 'incidents:read', keepMounted: true })
+    expect(resolveTab('review', only('incidents:read'))).toBe('review')
+    expect(resolveTab('review', only('tasks:read'))).toBe('overview')
+  })
+
   it('keeps the search deep-link tab ids', () => {
     const ids = TAB_REGISTRY.map((t) => t.id)
     ;['overview', 'events', 'hosts', 'accounts', 'network', 'host-iocs', 'malware', 'notes'].forEach((id) =>

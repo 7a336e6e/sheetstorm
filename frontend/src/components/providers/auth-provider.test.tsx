@@ -68,6 +68,13 @@ describe('route guards', () => {
     expect(isRouteAllowed('/dashboard/incidents/abc', [])).toBe(true)
   })
 
+  it('guards the metrics and improvements pages by their read permissions', () => {
+    expect(isRouteAllowed('/dashboard/metrics', ['metrics:read'])).toBe(true)
+    expect(isRouteAllowed('/dashboard/metrics', ['improvements:read', 'incidents:read'])).toBe(false)
+    expect(isRouteAllowed('/dashboard/improvements', ['improvements:read'])).toBe(true)
+    expect(isRouteAllowed('/dashboard/improvements', ['metrics:read'])).toBe(false)
+  })
+
   it('redirects an "Administrator" by name who lacks the permission (no role bypass)', () => {
     renderAt('/dashboard/admin/users', user(['Administrator'], ['incidents:read', 'audit_logs:read']))
     expect(replace).toHaveBeenCalledWith('/dashboard')

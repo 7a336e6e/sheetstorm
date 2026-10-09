@@ -6,8 +6,19 @@
  */
 import type { TLPLevel } from './index'
 
-/** IR milestones editable on the Overview, in the order they must occur. */
-export type MilestoneField = 'detected_at' | 'contained_at' | 'eradicated_at' | 'recovered_at' | 'closed_at'
+/**
+ * IR milestones editable on the Overview, in the order they must occur.
+ * `responded_at` (W3-RT-POST) is editable but outside the strict chain: it
+ * must only not precede `detected_at`.
+ */
+export type MilestoneField =
+  | 'first_malicious_at'
+  | 'detected_at'
+  | 'responded_at'
+  | 'contained_at'
+  | 'eradicated_at'
+  | 'recovered_at'
+  | 'closed_at'
 
 export interface SummaryLeadCounts {
   total: number

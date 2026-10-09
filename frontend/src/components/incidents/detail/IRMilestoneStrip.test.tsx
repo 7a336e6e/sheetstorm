@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { ApiError } from '@/lib/api'
 import type { Incident } from '@/types'
 import { mockApi, renderTab, resetTabTest, setRole } from '../test-utils'
@@ -8,8 +8,9 @@ import { mockApi, renderTab, resetTabTest, setRole } from '../test-utils'
 jest.mock('next/navigation', () => require('../test-utils').navigationMock)
 
 let IRMilestoneStrip: typeof import('./IRMilestoneStrip').IRMilestoneStrip
+let EDIT_LIFECYCLE_EVENT: string
 beforeAll(async () => {
-  ;({ IRMilestoneStrip } = await import('./IRMilestoneStrip'))
+  ;({ IRMilestoneStrip, EDIT_LIFECYCLE_EVENT } = await import('./IRMilestoneStrip'))
 })
 
 const incident = {
@@ -99,5 +100,66 @@ describe('IRMilestoneStrip', () => {
     fireEvent.change(input('Recovered'), { target: { value: '2026-01-06T00:00:00' } })
     fireEvent.click(screen.getByRole('button', { name: /save milestones/i }))
     expect((await screen.findByRole('alert')).textContent).toBe('Detected must not be after Recovered.')
+  })
+
+  it('shows First malicious and Responded steps and puts dwell on the step into Detected', () => {
+    setRole('viewer')
+    mockApi()
+    const withNew = { ...incident, first_malicious_at: '2026-01-02T00:00:00Z', responded_at: '2026-01-03T06:00:00Z' }
+    renderTab(<IRMilestoneStrip incident={withNew} firstActivity="2026-01-01T00:00:00Z" onSaved={() => {}} />)
+    expect(screen.getByTestId('milestone-first_malicious_at').textContent).toContain('First malicious activity')
+    expect(screen.getByTestId('milestone-first_malicious_at').textContent).toContain('+1d')
+    expect(screen.getByTestId('milestone-detected_at').textContent).toContain('Dwell 1d')
+    expect(screen.getByTestId('milestone-responded_at').textContent).toContain('+6h')
+    expect(screen.getByTestId('milestone-contained_at').textContent).toContain('+1d 6h')
+  })
+
+  it('edits the two new fields in the same dialog and PUTs only what changed', async () => {
+    setRole('responder')
+    const api = mockApi()
+    renderTab(<IRMilestoneStrip incident={incident} onSaved={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /edit milestones/i }))
+    fireEvent.change(input('First malicious activity'), { target: { value: '2026-01-02T00:00:00' } })
+    fireEvent.change(input('Responded'), { target: { value: '2026-01-03T01:00:00' } })
+    fireEvent.click(screen.getByRole('button', { name: /save milestones/i }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith(
+        '/incidents/i1',
+        { first_malicious_at: '2026-01-02T00:00:00.000Z', responded_at: '2026-01-03T01:00:00.000Z' },
+        { ifMatch: 5 }
+      )
+    )
+  })
+
+  it('blocks a responded time before the detected time', async () => {
+    setRole('responder')
+    const api = mockApi()
+    renderTab(<IRMilestoneStrip incident={incident} onSaved={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /edit milestones/i }))
+    fireEvent.change(input('Responded'), { target: { value: '2026-01-02T00:00:00' } })
+    fireEvent.click(screen.getByRole('button', { name: /save milestones/i }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Detected must not be after Responded.')
+    expect(api.put).not.toHaveBeenCalled()
+  })
+
+  it('opens the editor when the metrics card asks for it (editors only)', async () => {
+    setRole('responder')
+    mockApi()
+    renderTab(<IRMilestoneStrip incident={incident} onSaved={() => {}} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    act(() => {
+      window.dispatchEvent(new Event(EDIT_LIFECYCLE_EVENT))
+    })
+    expect(await screen.findByRole('dialog', { name: /edit ir milestones/i })).toBeInTheDocument()
+  })
+
+  it('ignores that request for a viewer', () => {
+    setRole('viewer')
+    mockApi()
+    renderTab(<IRMilestoneStrip incident={incident} onSaved={() => {}} />)
+    act(() => {
+      window.dispatchEvent(new Event(EDIT_LIFECYCLE_EVENT))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

@@ -20,6 +20,7 @@ import {
   BookOpen,
   Bug,
   CheckSquare,
+  ClipboardCheck,
   FileText,
   Fingerprint,
   Globe,
@@ -41,6 +42,7 @@ import { ArtifactsTab } from '@/components/incidents/ArtifactsTab'
 import { CaseNotesTab } from '@/components/incidents/CaseNotesTab'
 import { TasksTab } from '@/components/incidents/detail/TasksTab'
 import { IncidentPlaybookTab } from '@/components/incidents/detail/IncidentPlaybookTab'
+import { PostIncidentReviewTab } from '@/components/incidents/detail/PostIncidentReviewTab'
 import { EventsPanel, GraphPanel, MitrePanel, OverviewPanel } from './panels'
 
 export interface IncidentTabProps extends IncidentTabBaseProps {
@@ -76,6 +78,7 @@ export const TAB_REGISTRY: IncidentTabDef[] = [
   { id: 'malware', label: 'Malware', icon: Bug, permission: 'malware:read', component: MalwareToolsTab, keepMounted: true },
   { id: 'evidence', label: 'Artifacts', icon: FileText, permission: 'artifacts:read', component: ArtifactsTab, keepMounted: true },
   { id: 'notes', label: 'Notes', icon: MessageSquare, permission: 'incidents:read', component: CaseNotesTab, keepMounted: true },
+  { id: 'review', label: 'Post-Incident Review', icon: ClipboardCheck, permission: 'incidents:read', component: PostIncidentReviewTab, keepMounted: true },
 ]
 
 /** Old tab ids that still resolve (links, bookmarks, search results). */

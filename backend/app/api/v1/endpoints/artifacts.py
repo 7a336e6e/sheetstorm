@@ -752,7 +752,7 @@ def storage_stats():
 
     # Disk usage for local artifact storage
     disk_usage = None
-    local_path = '/app/artifacts'
+    local_path = current_app.config.get('LOCAL_ARTIFACT_DIR') or '/app/artifacts'
     try:
         usage = shutil.disk_usage(local_path)
         disk_usage = {

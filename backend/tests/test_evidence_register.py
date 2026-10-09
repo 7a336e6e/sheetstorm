@@ -587,6 +587,8 @@ def test_delete_is_a_tombstone(app, db, users, auth, make_incident, fake_storage
     entries = _ledger().entries(item=art.evidence_item)
     assert entries[-1].action == 'delete' and entries[-1].extra_data['hashes']['sha256'] == body['sha256']
     assert client.get('/api/v1/storage/stats').get_json()['total_artifacts'] == stats_before - 1
+    from app.models import Incident
+    assert db.session.get(Incident, inc.id).to_dict(include_counts=True)['counts']['artifacts'] == 0
 
     assert client.get(f'/api/v1/incidents/{inc.id}/artifacts').get_json()['items'] == []
     listed = client.get(f'/api/v1/incidents/{inc.id}/artifacts?include_deleted=true').get_json()['items']
@@ -598,6 +600,12 @@ def test_delete_is_a_tombstone(app, db, users, auth, make_incident, fake_storage
     assert [e['action'] for e in custody['chain_of_custody']] == ['upload', 'delete']
     exp = client.get(f'/api/v1/incidents/{inc.id}/artifacts/{aid}/custody/export').get_json()
     assert exp['chain_integrity_status'] == 'intact' and exp['deleted_at']
+
+
+def test_storage_stats_disk_usage_uses_local_artifact_dir(app, users, auth, monkeypatch, tmp_path):
+    monkeypatch.setitem(app.config, 'LOCAL_ARTIFACT_DIR', str(tmp_path))
+    stats = auth(users['Administrator']).get('/api/v1/storage/stats').get_json()
+    assert stats['disk_usage']['path'] == str(tmp_path)
 
 
 def test_download_and_verify_append_entries(app, db, users, auth, make_incident, fake_storage):

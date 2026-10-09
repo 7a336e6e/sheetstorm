@@ -54,15 +54,35 @@ def _current_token_epoch(user_id: str) -> int:
         return 0
 
 
-def _bump_token_epoch(user_id: str) -> None:
-    """Invalidate all existing tokens for a user by advancing their epoch."""
-    redis_client = _redis()
-    if redis_client is None:
-        return
+def _bump_token_epoch(user_id: str) -> int:
+    """Invalidate all existing tokens for a user by advancing their epoch.
+
+    Strict (raises SessionRevocationError when the token store is down); use
+    services.token_revocation directly in new code."""
+    from app.services.token_revocation import bump_token_epoch_strict
+    return bump_token_epoch_strict(user_id)
+
+
+# Bcrypt hash of a random throwaway secret, checked when the email is
+# unknown so the response time does not reveal whether an account exists.
+_DUMMY_HASH = None
+
+
+def _dummy_password_check(password) -> None:
+    global _DUMMY_HASH
+    import bcrypt
+    import secrets as _secrets
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = bcrypt.hashpw(_secrets.token_bytes(16), bcrypt.gensalt(rounds=12))
     try:
-        redis_client.incr(f'token_epoch:{user_id}')
+        bcrypt.checkpw((password or '').encode('utf-8'), _DUMMY_HASH)
     except Exception:
         pass
+
+
+def _invalid_credentials():
+    """The one 401 for unknown email, wrong password, locked or disabled."""
+    return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
 
 
 def _revoke_jti(jti, exp) -> None:
@@ -190,18 +210,26 @@ def login():
         return jsonify({'error': 'bad_request', 'message': 'Invalid request data'}), 400
 
     email = data.email.lower().strip()
-    
-    # Find user
+
+    # Login order (_integration.md C1): lifecycle lockout -> api-keys
+    # service-account reject -> security-policy MFA, expiry, session issue.
+    # Unknown, wrong-password, locked and disabled all get the same 401, and
+    # bcrypt always runs so timing does not tell them apart.
+    from app.services.user_lifecycle import register_failed_login, register_successful_login
+    from app.middleware.audit import log_security_event
+
     user = User.query.filter_by(email=email).first()
 
     if not user:
+        _dummy_password_check(data.password)
         log_auth_event('login', success=False, details={'email': email, 'reason': 'user_not_found'})
-        # Use generic message for security
-        return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+        return _invalid_credentials()
 
-    if not user.is_active:
-        log_auth_event('login', user=user, success=False, details={'reason': 'account_disabled'})
-        return jsonify({'error': 'unauthorized', 'message': 'Account is disabled'}), 401
+    if user.is_locked:
+        user.check_password(data.password)  # result discarded: a lock never reveals it
+        log_security_event('login_while_locked', resource_type='user', resource_id=user.id, user=user,
+                           details={'until': user.locked_until.isoformat()})
+        return _invalid_credentials()
 
     # Only reject non-local providers if the user has NO password hash
     # (i.e. they were created purely via OAuth and never set a password)
@@ -213,8 +241,13 @@ def login():
         }), 401
 
     if not user.check_password(data.password):
+        register_failed_login(user, 'invalid_password')
         log_auth_event('login', user=user, success=False, details={'reason': 'invalid_password'})
-        return jsonify({'error': 'unauthorized', 'message': 'Invalid email or password'}), 401
+        return _invalid_credentials()
+
+    if not user.is_active:
+        log_auth_event('login', user=user, success=False, details={'reason': 'account_disabled'})
+        return _invalid_credentials()
 
     # MFA check: if user has MFA enabled, require code
     if user.mfa_enabled and user.mfa_secret:
@@ -230,11 +263,12 @@ def login():
         import pyotp
         totp = pyotp.TOTP(user.mfa_secret)
         if not totp.verify(str(mfa_code), valid_window=1):
+            # The password was already proven, so the MFA error stays specific.
+            register_failed_login(user, 'invalid_mfa')
             log_auth_event('login', user=user, success=False, details={'reason': 'invalid_mfa_code'})
             return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
-    # Update last login
-    user.last_login = datetime.now(timezone.utc)
+    register_successful_login(user)
     db.session.commit()
 
     # Generate tokens
@@ -392,11 +426,22 @@ def change_password():
     valid, message = validate_password(new_password)
     if not valid:
         return jsonify({'error': 'bad_request', 'message': message}), 400
+    if user.must_change_password and user.check_password(new_password):
+        return jsonify({'error': 'bad_request', 'message': 'Choose a password different from the current one'}), 400
 
     user.set_password(new_password)
+    user.must_change_password = False
     # Invalidate every existing session for this user (revokes all outstanding
-    # access + refresh tokens via the token epoch).
-    _bump_token_epoch(identity)
+    # access + refresh tokens via the token epoch). Strict: if the token store
+    # is down nothing changes (503). No session:revoked event: this tab stays
+    # signed in with the tokens issued below.
+    from app.services.token_revocation import SessionRevocationError, revoke_all_sessions, \
+        revocation_failed_response
+    try:
+        revoke_all_sessions(user, 'password_changed', notify=False)
+    except SessionRevocationError:
+        db.session.rollback()
+        return revocation_failed_response()
     db.session.commit()
 
     log_auth_event('change_password', user=user, success=True)
@@ -909,6 +954,13 @@ def mfa_complete_oauth():
     if not user.mfa_enabled or not user.mfa_secret:
         return jsonify({'error': 'bad_request', 'message': 'MFA is not enabled for this user'}), 400
 
+    from app.services.user_lifecycle import register_failed_login, register_successful_login
+    if user.is_locked:
+        from app.middleware.audit import log_security_event
+        log_security_event('login_while_locked', resource_type='user', resource_id=user.id, user=user,
+                           details={'until': user.locked_until.isoformat(), 'flow': 'mfa_complete'})
+        return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
+
     totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(str(mfa_code), valid_window=1):
         # Check backup codes
@@ -920,11 +972,12 @@ def mfa_complete_oauth():
                 user.mfa_backup_codes = ','.join(codes)
                 backup_valid = True
         if not backup_valid:
+            register_failed_login(user, 'invalid_mfa')
             log_auth_event('mfa_complete_oauth', user=user, success=False, details={'reason': 'invalid_mfa_code'})
             return jsonify({'error': 'unauthorized', 'message': 'Invalid MFA code'}), 401
 
     # MFA verified — issue full tokens
-    user.last_login = datetime.now(timezone.utc)
+    register_successful_login(user)
     db.session.commit()
 
     access_token, refresh_token = issue_tokens(user)

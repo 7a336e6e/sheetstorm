@@ -248,6 +248,10 @@ def register_handlers(socketio):
             user = db.session.get(User, decoded.get('sub'))
             if not user or not user.is_active:
                 continue
+            # Restricted accounts (must change password, MFA enrollment) are anonymous.
+            from app.middleware.account_state import restriction_for
+            if restriction_for(user):
+                continue
             return user
         return None
 

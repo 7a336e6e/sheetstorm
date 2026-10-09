@@ -1,5 +1,6 @@
 """SQLAlchemy Models"""
 from app.models.user import User, Role, UserRole, PasswordHistory, Session
+from app.models.user_invite import UserInvite
 from app.models.organization import Organization
 from app.models.incident import Incident, IncidentAssignment, IncidentTeam
 from app.models.timeline import TimelineEvent
@@ -20,6 +21,7 @@ from app.models.playbook import Playbook, IncidentPlaybook
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
+    'UserInvite',
     'Organization',
     'Incident', 'IncidentAssignment', 'IncidentTeam',
     'TimelineEvent',

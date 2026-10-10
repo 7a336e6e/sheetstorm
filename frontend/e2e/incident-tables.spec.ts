@@ -100,7 +100,7 @@ test.describe('incident tables', () => {
 
   test('?tab=artifacts still opens the evidence tab', async ({ page }) => {
     await page.goto(`/dashboard/incidents/${incidentId}?tab=artifacts`)
-    await expect(page.getByRole('tab', { name: /artifacts/i })).toHaveAttribute('data-state', 'active')
+    await expect(page.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('data-state', 'active')
   })
 })
 

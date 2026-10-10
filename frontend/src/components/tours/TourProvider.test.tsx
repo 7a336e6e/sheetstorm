@@ -51,6 +51,18 @@ describe('TourProvider', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('never auto-starts in an automated browser (navigator.webdriver)', () => {
+    Object.defineProperty(window.navigator, 'webdriver', { value: true, configurable: true })
+    try {
+      setUser()
+      render(<TourProvider />)
+      act(() => jest.advanceTimersByTime(1000))
+      expect(screen.queryByRole('dialog')).toBeNull()
+    } finally {
+      delete (window.navigator as { webdriver?: boolean }).webdriver
+    }
+  })
+
   it('walks through the steps with Next and Back', () => {
     jest.spyOn(api, 'patch').mockResolvedValue({} as never)
     document.body.innerHTML = '<div data-tour="search"></div>'

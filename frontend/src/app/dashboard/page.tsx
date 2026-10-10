@@ -362,7 +362,7 @@ export default function DashboardPage() {
                   <div className="mx-auto w-12 h-12 rounded-md bg-muted flex items-center justify-center mb-4">
                     <Shield className="h-6 w-6 text-muted-foreground" />
                   </div>
-                  <h3 className="font-medium mb-1">No incidents yet</h3>
+                  <h3 className="text-base font-medium mb-1">No incidents yet</h3>
                   <p className="text-muted-foreground text-sm mb-4">
                     Create your first incident to get started
                   </p>
@@ -389,7 +389,7 @@ export default function DashboardPage() {
                           <SeverityBadge severity={incident.severity as any} />
                           <StatusBadge status={incident.status as any} />
                         </div>
-                        <h3 className="font-medium truncate">
+                        <h3 className="text-sm font-medium leading-snug truncate">
                           {incident.title}
                         </h3>
                         <p className="text-xs text-muted-foreground mt-0.5">

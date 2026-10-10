@@ -236,6 +236,7 @@ export function NetworkIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProps)
                 query={query}
                 columns={columns}
                 getRowId={(i) => i.id}
+                rowLabel={(i) => i.dns_ip}
                 ariaLabel="Network IOCs"
                 searchPlaceholder="Search IPs, domains..."
                 toolbar={

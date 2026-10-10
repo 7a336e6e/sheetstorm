@@ -94,7 +94,10 @@ function UploadForm({ onOpenChange, incidentId, initialFiles, attachTo, onUpload
 
   const addFiles = useCallback((list: FileList | File[] | null) => {
     if (!list || list.length === 0) return
-    setRows((prev) => [...prev, ...Array.from(list).map((file) => ({ file, status: 'queued' as const }))])
+    // Copy now: a FileList is live, and the input is cleared right after this
+    // call, before React may run the updater below.
+    const files = Array.from(list)
+    setRows((prev) => [...prev, ...files.map((file) => ({ file, status: 'queued' as const }))])
   }, [])
 
   const setupCaseFolder = async () => {

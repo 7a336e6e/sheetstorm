@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from sqlalchemy import create_engine, text
 
-EXPECTED_HEAD = 'add_decision_log'
+EXPECTED_HEAD = 'serialize_incident_numbers'
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

@@ -5,8 +5,9 @@
 #
 # - no fixed container names and no published ports except the proxy
 #   (E2E_PROXY_PORT, default 8080), so it can run next to another stack;
-# - sign-in rate limits loosened so Playwright can seed its role users quickly
-#   (the limits themselves are covered by the backend tests).
+# - sign-in, session and API-key rate limits loosened: Playwright seeds its role users
+#   quickly and its parallel workers share one account per role (the limits
+#   themselves are covered by the backend tests).
 services:
   database:
     container_name: !reset null
@@ -20,6 +21,10 @@ services:
     environment:
       RATE_LIMIT_AUTH_LOGIN: "300 per minute"
       RATE_LIMIT_AUTH_REFRESH: "300 per minute"
+      RATE_LIMIT_AUTH_ME: "600 per minute"
+      RATE_LIMIT_API_KEYS_WRITE: "600 per hour"
+      RATE_LIMIT_API_KEY_EXCHANGE: "300 per minute"
+      RATE_LIMIT_API_KEY_EXCHANGE_PREFIX: "600 per hour"
       APP_VERSION: e2e
   jobs:
     container_name: !reset null

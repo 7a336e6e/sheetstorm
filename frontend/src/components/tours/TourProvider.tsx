@@ -50,6 +50,12 @@ function markSeen(tourId: string) {
 /** Auto-start delay, so the page has rendered its anchors. */
 const START_DELAY_MS = 900
 
+/** Automated browsers (Playwright, Selenium: `navigator.webdriver`) never get
+ *  a tour started for them; "Page tour" still opens one on request. */
+function isAutomated(): boolean {
+  return typeof navigator !== 'undefined' && navigator.webdriver === true
+}
+
 export function TourProvider() {
   const pathname = usePathname()
   const user = useAuthStore((s) => s.user)
@@ -57,7 +63,7 @@ export function TourProvider() {
   const enabled = !!user && user.tours_enabled !== false && !user.must_change_password
 
   useEffect(() => {
-    if (!enabled || active) return
+    if (!enabled || active || isAutomated()) return
     const tour = tourForPath(pathname)
     if (!tour || (user?.preferences?.tours_seen ?? []).includes(tour.id)) return
     const timer = window.setTimeout(() => start(tour), START_DELAY_MS)

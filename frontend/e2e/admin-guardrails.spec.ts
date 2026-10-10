@@ -35,6 +35,11 @@ async function createUser(
   return { id, email, context }
 }
 
+/** A link in the sidebar navigation, by its exact name. */
+function sidebarLink(page: Page, name: string) {
+  return page.locator('nav').getByRole('link', { name, exact: true })
+}
+
 /** The users page (W2-LIFE-UI: server-paged DataTable) narrowed to one email; returns its row. */
 async function userRow(page: Page, email: string) {
   await page.goto(`/dashboard/admin/users?users.q=${encodeURIComponent(email)}`)
@@ -73,11 +78,11 @@ test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
       // The user sees no Admin section yet.
       const userPage = await user.context.newPage()
       await userPage.goto('/dashboard')
-      await expect(userPage.getByRole('link', { name: 'Activity' })).toHaveCount(0)
+      await expect(sidebarLink(userPage, 'Activity')).toHaveCount(0)
 
       // Assign the clone; the user's sidebar updates without a reload.
       await expectOk(await api.post(context, `/users/${user.id}/roles`, { role_id: cloneId }), 'assign clone')
-      await expect(userPage.getByRole('link', { name: 'Activity' })).toBeVisible({ timeout: 15_000 })
+      await expect(sidebarLink(userPage, 'Activity')).toBeVisible({ timeout: 15_000 })
     } finally {
       await api.delete(context, `/users/${user.id}`)
       if (cloneId) await api.delete(context, `/roles/${cloneId}`)
@@ -87,10 +92,12 @@ test.describe('admin guardrails', { tag: '@admin-guardrails' }, () => {
 
   test('a deputy cannot disable the Administrator nor grant the Administrator role', async ({ browser, context }) => {
     const roleName = `E2E Deputy ${stamp()}`
+    // Outranks a Viewer (it holds every Viewer permission) but not an Administrator.
+    const viewerPerms = (await rolesByName(context)).get('Viewer')?.permissions ?? []
     const roleRes = await expectOk(
       await api.post(context, '/roles', {
         name: roleName,
-        permissions: ['users:read', 'users:update', 'users:manage', 'roles:manage'],
+        permissions: [...new Set([...viewerPerms, 'users:read', 'users:update', 'users:manage', 'roles:manage'])],
       }),
       'create deputy role'
     )
@@ -196,7 +203,11 @@ test.describe('analyst', { tag: '@admin-guardrails' }, () => {
 
   test('sees no Admin navigation and is redirected away from settings', async ({ page }) => {
     await page.goto('/dashboard')
-    await expect(page.getByText('Admin', { exact: true })).toHaveCount(0)
+    await expect(sidebarLink(page, 'Dashboard')).toBeVisible()
+    // Analysts hold users:read, so the read-only Roles page is their only admin entry.
+    for (const name of ['Overview', 'Activity', 'Users', 'Teams', 'Settings']) {
+      await expect(sidebarLink(page, name)).toHaveCount(0)
+    }
     await page.goto('/dashboard/admin/settings')
     await expect(page).toHaveURL(/\/dashboard\/?$/)
   })

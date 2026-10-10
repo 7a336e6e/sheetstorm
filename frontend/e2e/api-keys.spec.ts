@@ -63,7 +63,7 @@ test.describe('admin: service account key lifecycle', { tag: '@api-keys' }, () =
       await page.getByRole('button', { name: 'Create service account' }).click()
       const saDialog = page.getByRole('dialog', { name: 'Create service account' })
       await saDialog.getByLabel('Name').fill(accountName)
-      await saDialog.getByRole('checkbox', { name: 'Analyst' }).check()
+      await saDialog.getByRole('checkbox', { name: 'Analyst', exact: true }).check()
       const created = page.waitForResponse(
         (r) => r.url().endsWith('/api/v1/service-accounts') && r.request().method() === 'POST'
       )

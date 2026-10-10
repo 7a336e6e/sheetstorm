@@ -51,6 +51,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     s.on('connect', () => {
       setStatus('connected')
+      // Events sent while this socket was not connected yet (between the
+      // page's /auth/me and the handshake, or during a reconnect) are lost:
+      // resync the user so a role change in that window is not missed.
+      void useAuthStore.getState().refreshUser()
     })
 
     // permissions_changed: the user's roles/permissions changed. Refetch

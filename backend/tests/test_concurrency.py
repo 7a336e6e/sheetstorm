@@ -151,3 +151,53 @@ def test_api_update_bumps_version(db, users, auth, make_incident):
     r = client.put(f'/api/v1/incidents/{inc.id}', json={'title': 'Renamed'})
     assert r.status_code == 200, r.get_json()
     assert r.get_json()['version'] == 2
+
+
+def test_concurrent_incidents_in_one_org_get_consecutive_numbers(app, db, org_a, users):
+    """Two transactions creating an incident in the same organization at once:
+    the second waits for the first's number lock instead of colliding on
+    idx_incidents_number_org (was an HTTP 500)."""
+    import threading
+    from sqlalchemy.orm import Session
+    from app.models import Incident
+
+    admin = users['Administrator']
+
+    def incident(title):
+        return Incident(organization_id=org_a.id, title=title, severity='low', status='open', phase=1,
+                        tlp='green', created_by=admin.id)
+
+    first, second = Session(db.engine), Session(db.engine)
+    result = {}
+    try:
+        one = incident('number race one')
+        first.add(one)
+        first.flush()  # number assigned; the org's number lock is held until commit
+
+        def create_second():
+            try:
+                two = incident('number race two')
+                second.add(two)
+                second.flush()
+                second.commit()
+                result['number'] = two.incident_number
+            except Exception as exc:  # noqa: BLE001 - reported below
+                second.rollback()
+                result['error'] = exc
+
+        worker = threading.Thread(target=create_second)
+        worker.start()
+        worker.join(1.0)
+        assert worker.is_alive(), result  # blocked on the lock, not failed
+        first.commit()
+        worker.join(15)
+        assert not worker.is_alive()
+        assert 'error' not in result, result['error']
+        assert result['number'] == one.incident_number + 1
+    finally:
+        first.rollback()
+        second.rollback()
+        db.session.execute(text("DELETE FROM incidents WHERE title IN ('number race one', 'number race two')"))
+        db.session.commit()
+        first.close()
+        second.close()

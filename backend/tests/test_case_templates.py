@@ -663,3 +663,49 @@ def test_playbook_definition_caps(admin):
     big = {'name': 'x', 'description': 'd' * (300 * 1024), 'definition': {}}
     assert admin.post(f'{API}/playbooks', json=big).status_code == 400
     assert admin.post(f'{API}/playbooks', json={'name': 'n' * 256}).status_code == 400
+
+
+# ── built-in activation per organization ───────────────────────────────────
+
+@pytest.fixture
+def _restore_builtins(app, db, users):
+    yield
+    from app.models import Organization
+    org = db.session.get(Organization, users['Administrator'].organization_id)
+    settings = dict(org.settings or {})
+    settings.pop('disabled_builtin_templates', None)
+    org.settings = settings
+    db.session.commit()
+
+
+def test_builtin_can_be_deactivated_per_org_only(admin, users, auth, make_incident, _restore_builtins):
+    url = f'{API}/case-templates/builtin:ransomware'
+    assert admin.put(url, json={'name': 'Renamed'}).status_code == 403  # still read-only
+    assert auth(users['Analyst']).put(url, json={'is_active': False}).status_code == 403
+
+    r = admin.put(url, json={'is_active': False})
+    assert r.status_code == 200 and r.get_json()['is_active'] is False
+    keys = [t['id'] for t in admin.get(f'{API}/case-templates').get_json()['items']]
+    assert 'builtin:ransomware' not in keys and 'builtin:generic-intrusion' in keys
+    listed = admin.get(f'{API}/case-templates?include_inactive=true').get_json()['items']
+    assert next(t for t in listed if t['id'] == 'builtin:ransomware')['is_active'] is False
+
+    inc = make_incident()
+    r = _apply(admin, inc, 'builtin:ransomware')
+    assert r.status_code == 409 and r.get_json()['error'] == 'template_inactive'
+
+    assert admin.put(url, json={'is_active': True}).get_json()['is_active'] is True
+    assert _apply(admin, inc, 'builtin:ransomware', dry_run=True).status_code == 200
+
+
+def test_builtin_deactivation_is_audited_and_survives_org_update(admin, users, db, _restore_builtins):
+    from app.models import AuditLog, Organization
+    assert admin.put(f'{API}/case-templates/builtin:generic-intrusion', json={'is_active': False}).status_code == 200
+    row = AuditLog.query.filter_by(action='update', resource_type='case_template').order_by(
+        AuditLog.created_at.desc()).first()
+    assert row.details['changes']['is_active'] == {'from': True, 'to': False}
+    # A normal organization settings update keeps the list.
+    assert admin.put(f'{API}/organization', json={'settings': {'auto_enrich_iocs': False}}).status_code == 200
+    org = db.session.get(Organization, users['Administrator'].organization_id)
+    db.session.refresh(org)
+    assert 'generic-intrusion' in org.settings['disabled_builtin_templates']

@@ -283,3 +283,65 @@ def user_admin_activity(user_id):
     body = paginate_response(q, la, serialize=lambda r: r.to_dict(), sortable=sortable, id_col=AuditLog.id,
                              extra={'scope': scope})
     return jsonify(body), 200
+
+
+# ── Guided tours ────────────────────────────────────────────────────────
+
+def _tours_body():
+    body = _body()
+    enabled, reset = body.get('enabled'), body.get('reset', False)
+    if (enabled is not None and not isinstance(enabled, bool)) or not isinstance(reset, bool) \
+            or (enabled is None and not reset):
+        return None
+    return enabled, reset
+
+
+def _apply_tours(user, enabled, reset):
+    prefs = dict(user.preferences or {})
+    if enabled is not None:
+        prefs['tours_enabled'] = enabled
+    if reset:
+        prefs['tours_seen'] = []
+    user.preferences = prefs  # reassign so the JSONB change is detected
+
+
+@api_bp.route('/users/<uuid:user_id>/tours', methods=['PUT'])
+@jwt_required()
+@require_permission('users:update')
+@audit_log('admin_action', 'tours_update', 'user')
+def update_user_tours(user_id):
+    """Switch guided tours on/off for one user (``enabled``), and/or replay
+    them from the start (``reset: true`` clears the tours they have seen)."""
+    _current, user = _target(user_id)
+    if user is None:
+        return _not_found()
+    parsed = _tours_body()
+    if parsed is None:
+        return jsonify({'error': 'validation_error',
+                        'message': 'Send enabled (true/false) and/or reset: true'}), 400
+    enabled, reset = parsed
+    before = {'tours_enabled': user.tours_enabled}
+    _apply_tours(user, enabled, reset)
+    record_changes(before, {'tours_enabled': user.tours_enabled}, reset=reset, target_email=user.email)
+    db.session.commit()
+    return jsonify(_user_payload(user)), 200
+
+
+@api_bp.route('/users/tours', methods=['PUT'])
+@jwt_required()
+@require_permission('users:manage')
+@audit_log('admin_action', 'tours_update_all', 'user')
+def update_all_user_tours():
+    """The same for every user of the organization."""
+    current = get_current_user()
+    parsed = _tours_body()
+    if parsed is None:
+        return jsonify({'error': 'validation_error',
+                        'message': 'Send enabled (true/false) and/or reset: true'}), 400
+    enabled, reset = parsed
+    users = User.query.filter_by(organization_id=current.organization_id).all()
+    for user in users:
+        _apply_tours(user, enabled, reset)
+    record_changes({}, {'tours_enabled': enabled}, reset=reset, users=len(users))
+    db.session.commit()
+    return jsonify({'updated': len(users), 'tours_enabled': enabled, 'reset': reset}), 200

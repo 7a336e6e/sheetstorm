@@ -23,6 +23,8 @@ export default function TemplatesPage() {
   const confirm = useConfirm()
   const [items, setItems] = useState<CaseTemplate[] | null>(null)
   const [editing, setEditing] = useState<CaseTemplate | null>(null)
+  /** Set while editing a fresh copy of a built-in ("Customize"). */
+  const [replaces, setReplaces] = useState<CaseTemplate | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -69,9 +71,24 @@ export default function TemplatesPage() {
     run(t.id, () => caseTemplatesApi.remove(t.id, t.version), 'Template deleted', 'delete the template')
   }
 
-  const openEditor = (t: CaseTemplate | null) => {
+  const openEditor = (t: CaseTemplate | null, replacesBuiltin: CaseTemplate | null = null) => {
     setEditing(t)
+    setReplaces(replacesBuiltin)
     setEditorOpen(true)
+  }
+
+  /** Built-ins stay as shipped: customizing makes an organization copy and opens it. */
+  const customize = async (t: CaseTemplate) => {
+    setBusy(t.id)
+    try {
+      const copy = await caseTemplatesApi.clone(t.id, t.name)
+      await load()
+      openEditor(copy, t)
+    } catch (err) {
+      notifyError(err, 'customize the template')
+    } finally {
+      setBusy(null)
+    }
   }
 
   return (
@@ -80,15 +97,16 @@ export default function TemplatesPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground lg:text-3xl">Case templates</h1>
           <p className="mt-1 text-muted-foreground">
-            Templates seed an incident with investigative questions, leads, a playbook and custom fields. Built-in templates are read-only; clone one to adapt it.
+            Templates seed an incident with investigative questions, leads, a playbook and custom fields. Built-in templates
+            stay as shipped: customize one to edit your organization&apos;s copy, and deactivate templates you don&apos;t use.
           </p>
         </div>
-        <Button onClick={() => openEditor(null)}>
+        <Button onClick={() => openEditor(null)} data-tour="templates-new">
           <Plus className="mr-1.5 h-4 w-4" /> New template
         </Button>
       </div>
 
-      <Card>
+      <Card data-tour="templates-table">
         <CardContent className="p-0">
           <Table aria-label="Case templates">
             <TableHeader>
@@ -122,21 +140,33 @@ export default function TemplatesPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => clone(t)} disabled={busy === t.id} aria-label={`Clone ${t.name}`}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => (t.is_builtin ? customize(t) : openEditor(t))}
+                        disabled={busy === t.id}
+                        aria-label={`${t.is_builtin ? 'Customize' : 'Edit'} ${t.name}`}
+                        title={t.is_builtin ? 'Customize (edits your organization\'s copy)' : 'Edit'}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => clone(t)} disabled={busy === t.id} aria-label={`Clone ${t.name}`} title="Clone">
                         <Copy className="h-4 w-4" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => toggleActive(t)}
+                        disabled={busy === t.id}
+                        aria-label={`${t.is_active ? 'Deactivate' : 'Activate'} ${t.name}`}
+                        title={t.is_active ? 'Deactivate (hide from pickers)' : 'Activate'}
+                      >
+                        <Power className={`h-4 w-4 ${t.is_active ? '' : 'text-muted-foreground'}`} />
+                      </Button>
                       {!t.is_builtin && (
-                        <>
-                          <Button variant="ghost" size="sm" onClick={() => openEditor(t)} aria-label={`Edit ${t.name}`}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => toggleActive(t)} disabled={busy === t.id} aria-label={`${t.is_active ? 'Deactivate' : 'Activate'} ${t.name}`}>
-                            <Power className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => remove(t)} disabled={busy === t.id} aria-label={`Delete ${t.name}`}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </>
+                        <Button variant="ghost" size="sm" onClick={() => remove(t)} disabled={busy === t.id} aria-label={`Delete ${t.name}`} title="Delete">
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       )}
                     </div>
                   </TableCell>
@@ -147,9 +177,17 @@ export default function TemplatesPage() {
         </CardContent>
       </Card>
 
-      <DfiqLibraryCard />
+      <div data-tour="templates-dfiq">
+        <DfiqLibraryCard />
+      </div>
 
-      <TemplateEditorDialog open={editorOpen} onOpenChange={setEditorOpen} template={editing} onSaved={load} />
+      <TemplateEditorDialog
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        template={editing}
+        replacesBuiltin={replaces}
+        onSaved={load}
+      />
     </div>
   )
 }

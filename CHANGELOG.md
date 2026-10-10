@@ -187,6 +187,15 @@
 
 ### New
 
+- **Guided tours:** a short walkthrough on the dashboard, incidents, incident,
+  users, settings, activity and case-template pages, shown once per page and
+  replayable from "Page tour" in the sidebar. Administrators switch tours on or
+  off (or replay them) per user from the Users page row menu, or for everyone
+  from "Guided tours" in the page header. Seen tours are kept per user.
+- **Case templates are editable:** built-ins stay as shipped, but "Customize"
+  creates your organization's copy and opens it in the editor (optionally
+  deactivating the built-in); any template, built-in included, can be
+  deactivated per organization. The editor has an example and a format reference.
 - **One-click DFIQ import:** platform administrators can import Google's DFIQ
   investigative questions (Apache-2.0) from Admin → Case Templates. The server
   downloads one pinned DFIQ commit from GitHub (or takes the same archive as an
@@ -322,6 +331,10 @@
 - **MCP:** 138 tools in 21 modules (server and bridge).
 
 ### Other fixes
+
+- The command palette (Ctrl/⌘ + K) no longer opens partly off-screen.
+- Date-time fields use the full field width, show the time zone on the label
+  line, and open the calendar/time picker on click.
 
 - **Upgrades of databases with orphaned rows:** `flask sheetstorm repair-orphans`
   reports (and with `--apply` repairs) rows whose foreign keys point at missing

@@ -12,7 +12,14 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { caseTemplatesApi } from '@/lib/endpoints/questions'
 import { notifyError, notifySuccess } from '@/lib/errors'
-import { TEMPLATE_KEY_RE, checkDefinition, formatDefinition } from '@/lib/template-definition'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DEFINITION_REFERENCE,
+  EXAMPLE_DEFINITION,
+  TEMPLATE_KEY_RE,
+  checkDefinition,
+  formatDefinition,
+} from '@/lib/template-definition'
 import type { CaseTemplate } from '@/types'
 
 interface Props {
@@ -20,16 +27,20 @@ interface Props {
   onOpenChange: (open: boolean) => void
   /** null = new template; otherwise an organization template with its definition. */
   template: CaseTemplate | null
+  /** The built-in this (freshly cloned) template customizes, if any. */
+  replacesBuiltin?: CaseTemplate | null
   onSaved: () => void
 }
 
-export function TemplateEditorDialog({ open, onOpenChange, template, onSaved }: Props) {
+export function TemplateEditorDialog({ open, onOpenChange, template, replacesBuiltin = null, onSaved }: Props) {
   const [key, setKey] = useState('')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [incidentType, setIncidentType] = useState('')
   const [source, setSource] = useState('')
   const [saving, setSaving] = useState(false)
+  const [showReference, setShowReference] = useState(false)
+  const [hideBuiltin, setHideBuiltin] = useState(true)
 
   useEffect(() => {
     if (!open) return
@@ -38,7 +49,15 @@ export function TemplateEditorDialog({ open, onOpenChange, template, onSaved }: 
     setDescription(template?.description ?? '')
     setIncidentType(template?.incident_type ?? '')
     setSource(formatDefinition(template?.definition))
+    setHideBuiltin(true)
   }, [open, template])
+
+  const insertExample = () => {
+    const current = checkDefinition(source).definition
+    const isEmpty = !current || (!current.questions?.length && !current.leads?.length && !current.custom_fields?.length)
+    if (!isEmpty && !window.confirm('Replace the current definition with the example?')) return
+    setSource(formatDefinition(EXAMPLE_DEFINITION))
+  }
 
   const check = useMemo(() => checkDefinition(source), [source])
   const keyOk = !!template || TEMPLATE_KEY_RE.test(key)
@@ -56,6 +75,9 @@ export function TemplateEditorDialog({ open, onOpenChange, template, onSaved }: 
       }
       if (template) await caseTemplatesApi.update(template.id, body, template.version)
       else await caseTemplatesApi.create({ ...body, key })
+      if (replacesBuiltin && hideBuiltin && replacesBuiltin.is_active) {
+        await caseTemplatesApi.update(replacesBuiltin.id, { is_active: false })
+      }
       notifySuccess(template ? 'Template saved' : 'Template created')
       onSaved()
       onOpenChange(false)
@@ -98,8 +120,44 @@ export function TemplateEditorDialog({ open, onOpenChange, template, onSaved }: 
               <Input id="tpl-desc" value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
           </div>
+          {replacesBuiltin && (
+            <div role="status" className="space-y-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
+              <p>
+                You are editing your organization&apos;s copy of the built-in <strong>{replacesBuiltin.name}</strong>. The
+                built-in itself stays as shipped.
+              </p>
+              {replacesBuiltin.is_active && (
+                <div className="flex items-center gap-2">
+                  <Checkbox id="tpl-hide-builtin" checked={hideBuiltin} onCheckedChange={(v) => setHideBuiltin(v === true)} />
+                  <label htmlFor="tpl-hide-builtin" className="text-sm">
+                    Deactivate the built-in so only this version is offered
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           <div className="space-y-1">
-            <Label htmlFor="tpl-def">Definition (JSON)</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="tpl-def">Definition (JSON)</Label>
+              <div className="flex gap-1">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowReference((v) => !v)} aria-expanded={showReference}>
+                  {showReference ? 'Hide format reference' : 'Format reference'}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={insertExample}>
+                  Insert example
+                </Button>
+              </div>
+            </div>
+            {showReference && (
+              <dl className="grid gap-1.5 rounded-md border border-border bg-muted/30 p-3 text-xs sm:grid-cols-[9rem_1fr]">
+                {DEFINITION_REFERENCE.map((r) => (
+                  <div key={r.field} className="contents">
+                    <dt className="font-mono text-foreground">{r.field}</dt>
+                    <dd className="text-muted-foreground">{r.text}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
             <Textarea
               id="tpl-def"
               value={source}

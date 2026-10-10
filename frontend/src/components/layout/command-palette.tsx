@@ -163,7 +163,7 @@ export function CommandPalette() {
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/70 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-[12vh] z-50 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-slate-900 shadow-2xl data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out"
+          className="fixed left-1/2 top-[12vh] z-50 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-slate-900 shadow-2xl data-[state=open]:animate-palette-in data-[state=closed]:animate-palette-out"
         >
           <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>
           {open && <PaletteBody onClose={() => setOpen(false)} />}
@@ -343,7 +343,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
           : null
 
   return (
-    <div className="flex max-h-[70vh] flex-col">
+    <div className="flex max-h-[76vh] flex-col">
       <div className="flex items-center gap-2 border-b border-white/10 px-3">
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <input

@@ -46,6 +46,11 @@ export const usersAdmin = {
   enable: (id: string) => api.post<{ user: AdminUser }>(`/users/${id}/enable`),
   forceLogout: (id: string) => api.post<{ message: string }>(`/users/${id}/force-logout`),
   unlock: (id: string) => api.post<{ user: AdminUser }>(`/users/${id}/unlock`),
+  /** Guided tours: switch on/off (`enabled`) and/or replay from the start (`reset`). */
+  setTours: (id: string, body: { enabled?: boolean; reset?: boolean }) =>
+    api.put<{ user: AdminUser }>(`/users/${id}/tours`, body),
+  setToursForEveryone: (body: { enabled?: boolean; reset?: boolean }) =>
+    api.put<{ updated: number }>('/users/tours', body),
   resetPassword: (id: string, mode: ResetPasswordMode, opts: { revokeSessions?: boolean } = {}) =>
     api.post<AdminResetResult>(`/users/${id}/reset-password`, {
       mode,

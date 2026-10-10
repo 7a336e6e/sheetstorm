@@ -190,7 +190,7 @@ function IncidentDetail() {
           </Link>
 
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-            <div className="space-y-3 min-w-0 flex-1">
+            <div className="space-y-3 min-w-0 flex-1" data-tour="incident-header">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-mono text-sm text-muted-foreground">
                   #{incident.incident_number}
@@ -200,7 +200,7 @@ function IncidentDetail() {
                 <PhaseBadge phase={incident.phase} />
                 <TLPBadge tlp={incident.tlp || 'amber'} />
                 <TimeModeToggle />
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" data-tour="incident-live">
                   <LiveStatusDot status={realtime.status} />
                   <PresenceAvatars users={realtime.presence} selfUserId={realtime.selfUserId} />
                 </div>
@@ -210,7 +210,7 @@ function IncidentDetail() {
                 <DescriptionBlock text={incident.description} />
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0" data-tour="incident-actions">
               {canGenerateReport && (
                 <Button variant="outline" onClick={() => setShowReportModal(true)}>
                   <Download className="mr-2 h-4 w-4" /> Generate Report
@@ -244,9 +244,9 @@ function IncidentDetail() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={(tab) => navigate(tab)} className="w-full">
-          <TabsList variant="underline" className="w-full justify-start flex-wrap h-auto gap-y-2">
+          <TabsList variant="underline" className="w-full justify-start flex-wrap h-auto gap-y-2" data-tour="incident-tabs">
             {visibleTabs.map(({ id, label, icon: Icon }) => (
-              <TabsTrigger key={id} variant="underline" value={id} className="gap-2">
+              <TabsTrigger key={id} variant="underline" value={id} className="gap-2" data-tour={`tab-${id}`}>
                 <Icon className="h-4 w-4" /> {label}
               </TabsTrigger>
             ))}

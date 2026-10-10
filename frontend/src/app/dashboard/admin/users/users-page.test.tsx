@@ -189,7 +189,7 @@ describe('Users admin page: gating', () => {
     const items = within(menu)
       .getAllByRole('menuitem')
       .map((i) => i.textContent)
-    expect(items).toEqual(['View details', 'Edit'])
+    expect(items).toEqual(['View details', 'Edit', 'Turn guided tours off', 'Replay guided tours'])
   })
 
   it('offers every action to an admin, but no account actions on your own row', async () => {
@@ -226,7 +226,7 @@ describe('Users admin page: gating', () => {
       within(menu)
         .getAllByRole('menuitem')
         .map((i) => i.textContent)
-    ).toEqual(['View details', 'Edit'])
+    ).toEqual(['View details', 'Edit', 'Turn guided tours off', 'Replay guided tours'])
   })
 
   it('badges service accounts and offers them no password reset', async () => {

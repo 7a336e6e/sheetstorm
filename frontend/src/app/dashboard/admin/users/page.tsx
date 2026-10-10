@@ -14,6 +14,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Cloud,
+  Compass,
   Eye,
   KeyRound,
   Loader2,
@@ -29,6 +30,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge, RoleBadge } from '@/components/ui/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DataTable, FilterSelect, type DataTableColumn, type RowAction } from '@/components/ui/data-table'
@@ -190,6 +192,38 @@ function UsersAdmin() {
     }
   }
 
+  const setTours = async (u: AdminUser, body: { enabled?: boolean; reset?: boolean }) => {
+    try {
+      await usersAdmin.setTours(u.id, body)
+      notifySuccess(
+        body.reset ? 'Guided tours will replay' : body.enabled ? 'Guided tours on' : 'Guided tours off',
+        `For ${who(u)}.`
+      )
+      refresh()
+    } catch (err) {
+      notifyUserError(err, 'change guided tours')
+    }
+  }
+
+  const setToursForEveryone = async (body: { enabled?: boolean; reset?: boolean }) => {
+    const what = body.reset ? 'Replay guided tours' : body.enabled ? 'Turn guided tours on' : 'Turn guided tours off'
+    const ok = await confirm({
+      title: `${what} for everyone?`,
+      description: body.reset
+        ? 'Every user sees each page tour again on their next visit.'
+        : `Applies to every user of your organization. You can still change single users from their row menu.`,
+      confirmLabel: what,
+    })
+    if (!ok) return
+    try {
+      const res = await usersAdmin.setToursForEveryone(body)
+      notifySuccess(what, `${res.updated} users updated.`)
+      refresh()
+    } catch (err) {
+      notifyUserError(err, 'change guided tours')
+    }
+  }
+
   const unlock = async (u: AdminUser) => {
     try {
       await usersAdmin.unlock(u.id)
@@ -339,7 +373,16 @@ function UsersAdmin() {
     const actions: RowAction[] = [
       { label: 'View details', icon: Eye, onSelect: () => setDrawerUser(u) },
       { label: 'Edit', icon: Pencil, permission: 'users:update', onSelect: () => setEditUser(u) },
+      {
+        label: u.tours_enabled === false ? 'Turn guided tours on' : 'Turn guided tours off',
+        icon: Compass,
+        permission: 'users:update',
+        onSelect: () => void setTours(u, { enabled: u.tours_enabled === false }),
+      },
     ]
+    if (u.tours_enabled !== false) {
+      actions.push({ label: 'Replay guided tours', icon: Compass, permission: 'users:update', onSelect: () => void setTours(u, { reset: true }) })
+    }
     if (me?.id === u.id) return actions // self rules: no account actions on your own row
     if (u.is_locked) {
       actions.push({ label: 'Unlock', icon: Unlock, permission: 'users:manage', onSelect: () => void unlock(u) })
@@ -436,6 +479,7 @@ function UsersAdmin() {
   )
 
   const usersTable = (
+    <div data-tour="users-table">
     <DataTable
       query={query}
       columns={columns}
@@ -461,6 +505,7 @@ function UsersAdmin() {
       pageSizes={[25, 50, 100]}
       empty={{ title: 'No users yet', description: 'Invite or add your first team member.' }}
     />
+    </div>
   )
 
   return (
@@ -470,7 +515,22 @@ function UsersAdmin() {
           <h1 className="text-2xl font-semibold">Users</h1>
           <p className="mt-1 text-sm text-muted-foreground">Accounts, access, invites and account state</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" data-tour="users-actions">
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-tour="users-tours">
+                  <Compass className="mr-2 h-4 w-4" />
+                  Guided tours
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => void setToursForEveryone({ enabled: true })}>Turn on for everyone</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void setToursForEveryone({ enabled: false })}>Turn off for everyone</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void setToursForEveryone({ reset: true })}>Replay for everyone</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {canManage && (
             <Button variant="outline" onClick={() => void syncSupabase()} disabled={syncing}>
               {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Cloud className="mr-2 h-4 w-4" />}
@@ -492,7 +552,7 @@ function UsersAdmin() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6" aria-label="User statistics">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6" aria-label="User statistics" data-tour="users-stats">
         <StatCard label="Total" value={stats?.total} />
         <StatCard label="Active" value={stats?.active} />
         <StatCard label="Disabled" value={stats?.disabled} />

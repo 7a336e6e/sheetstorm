@@ -142,6 +142,9 @@ test.describe('analyst: personal key from the profile', { tag: '@api-keys' }, ()
     const dialog = page.getByRole('dialog', { name: 'Create API key' })
     await dialog.getByLabel('Name').fill(keyName)
     await dialog.getByRole('button', { name: 'MCP analyst' }).click()
+    // Pinpoints which input was lost if the submit button stays disabled.
+    await expect(dialog.getByLabel('Name')).toHaveValue(keyName)
+    await expect(dialog.getByRole('checkbox', { checked: true }).first()).toBeVisible()
     await dialog.getByRole('button', { name: 'Create key' }).click()
     const first = await readAndDismissSecret(page, 'API key created')
 

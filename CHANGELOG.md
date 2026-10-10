@@ -347,6 +347,9 @@
 - The dashboard's TLP tiles wrap `TLP:AMBER+STRICT` instead of overflowing.
 - `NGINX_RESOLVER` is passed to the proxy container (`docker-compose.yml`) and
   documented.
+- The bundled proxy no longer hard-codes a server name: it is the default
+  server for any host name (the public name lives in `FRONTEND_URL` /
+  `CORS_ORIGINS` and in whatever terminates TLS in front of it).
 - Frontend unit tests run in a fixed time zone with daylight saving
   (`America/New_York`), so they pass on any machine and the DST tests always run.
 

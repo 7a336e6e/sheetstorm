@@ -33,7 +33,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "frontend"]
 
   # pip: security updates only. Python deps are hash-locked (*.lock, installed
   # with --require-hashes) and Dependabot only edits the inputs
@@ -58,7 +57,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "backend"]
 
   - package-ecosystem: "pip"
     directory: "/mcp-server"
@@ -75,7 +73,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "mcp"]
 
   - package-ecosystem: "pip"
     directory: "/mcp-bridge"
@@ -92,7 +89,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "mcp"]
 
   # Digest-pinned base images (FROM image:tag@sha256:...) in every Dockerfile
   # and the image: lines in docker-compose.yml.
@@ -119,7 +115,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "docker"]
 
   - package-ecosystem: "docker-compose"
     directory: "/"
@@ -139,7 +134,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "docker"]
 
   # No workflows exist yet; this keeps future actions pinned/updated.
   - package-ecosystem: "github-actions"
@@ -160,4 +154,3 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    labels: ["dependencies", "ci"]

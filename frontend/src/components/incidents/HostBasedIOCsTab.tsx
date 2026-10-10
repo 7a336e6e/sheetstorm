@@ -257,6 +257,7 @@ export function HostBasedIOCsTab({ incidentId, focusRowId }: IncidentTabBaseProp
                 query={query}
                 columns={columns}
                 getRowId={(item) => item.id}
+                rowLabel={(item) => item.artifact_value}
                 ariaLabel="Host-based IOCs"
                 searchPlaceholder="Search IOCs..."
                 toolbar={

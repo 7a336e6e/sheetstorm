@@ -187,6 +187,26 @@
 
 ### New
 
+- **Continuous integration:** every pull request and push to `main` runs:
+  - the backend suite on real PostgreSQL and Redis;
+  - the MCP server and bridge suites;
+  - frontend type checks, lint, unit tests and the production build;
+  - Playwright against a full Docker stack;
+  - a backup → `down -v` → restore round trip.
+- **Release images:** tagging `vX.Y.Z` publishes multi-arch (amd64 + arm64)
+  images of every service to `ghcr.io/7a336e6e/sheetstorm-*`, with signed
+  build-provenance attestations, SBOM, and a GitHub Release built from this
+  changelog.
+  - `./start.sh --version X.Y.Z` (or `docker-compose.images.yml`) runs them
+    instead of building from source.
+  - Platform admins see the release version and commit in System status.
+- **Backup and restore:** `scripts/backup.sh` writes a checksummed database
+  dump, evidence archive and manifest. `scripts/restore.sh <dir> --yes`
+  verifies the checksums, refuses a backup from a newer schema, restores both,
+  migrates forward and verifies the audit chain. See
+  `assets/docs/operations.md`.
+- **Contributor docs:** `CONTRIBUTING.md`, issue and pull-request templates.
+
 - **Guided tours:** a short walkthrough on the dashboard, incidents, incident,
   users, settings, activity and case-template pages, shown once per page and
   replayable from "Page tour" in the sidebar. Administrators switch tours on or
@@ -332,6 +352,28 @@
 
 ### Other fixes
 
+- **Live updates on any port.** The proxy now forwards the host with its
+  port. Behind a proxy published on a port other than 8080 (for example
+  `http://localhost:8090`), live updates were refused as cross-origin unless
+  `CORS_ORIGINS` listed that origin.
+- **Simultaneous incident creation.** Two incidents created at the same moment
+  in one organization no longer collide on the incident number (HTTP 500).
+  Numbers are now allocated under a per-organization lock (migration
+  `serialize_incident_numbers`).
+- **"Choose files" in the evidence upload dialog.** It sometimes did nothing:
+  the selected files were read after the file input had been cleared.
+- **No sign-out on a rate limit or server error.** A rate limit (429), a server
+  error or a network failure while checking the session no longer signs the
+  user out; only a refused session (401) does. The session also resyncs the
+  user's permissions when the live connection is established, so a role change
+  made while a page was loading is no longer missed.
+- **Named row menus.** The row menus of the incident tables are named after the
+  row ("Actions for WS-FINANCE-01") instead of "Actions for row 3", for screen
+  readers and keyboard users.
+- **Automated browsers.** Guided tours no longer start automatically in
+  automated browsers (Playwright, Selenium). "Page tour" still opens one.
+- **Recent incidents on the dashboard.** Titles use the body text size instead
+  of the heading size.
 - The command palette (Ctrl/⌘ + K) no longer opens partly off-screen.
 - The proxy re-resolves the frontend/backend/MCP containers at runtime
   (`resolver` from the container's DNS, override with `NGINX_RESOLVER`), so

@@ -202,9 +202,19 @@ Before adding a dependency or merging a bump:
   `.dockerignore`; never `COPY` them.
 - `.env` and `.mcp.json` hold live secrets and are git-ignored. Prefer
   `${env:VAR}` substitution in `.mcp.json` over inline tokens.
-- In future CI: least-privilege `permissions:`, actions pinned by commit SHA,
-  no `pull_request_target` with checkout of PR code, npm publishing (if ever)
-  via trusted publishing (OIDC), not tokens.
+- CI (`.github/workflows/`) follows the same rules:
+  - workflows get a read-only token by default; only the release jobs get
+    `packages: write`, `id-token: write` and `attestations: write`;
+  - every action is pinned by commit SHA, and Dependabot's `github-actions`
+    entry bumps them;
+  - checkouts don't persist credentials, and nothing uses
+    `pull_request_target`;
+  - the release publishes with the short-lived `GITHUB_TOKEN`, never a stored
+    token.
+- Release images get GitHub build-provenance attestations (Sigstore, keyless)
+  plus BuildKit SBOM and provenance, so users can verify an image came from
+  this repository's release workflow:
+  `gh attestation verify oci://ghcr.io/7a336e6e/sheetstorm-backend:<version> --owner 7a336e6e`.
 
 ### 8. Recommended (optional) tools
 

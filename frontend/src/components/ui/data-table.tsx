@@ -79,6 +79,8 @@ export interface DataTableProps<T> {
   /** Create button; also what the `n` shortcut runs. */
   primaryAction?: { label: string; onSelect: () => void; permission: string | string[] }
   rowActions?: (r: T) => RowAction[]
+  /** Names the row for assistive tech ("Actions for <label>"); default "row N". */
+  rowLabel?: (r: T) => string
   onRowClick?: (r: T) => void
   /** Scrolled into view and highlighted (deep links). */
   focusedRowId?: string | null
@@ -272,6 +274,7 @@ export function DataTable<T>({
   toolbar,
   primaryAction,
   rowActions,
+  rowLabel,
   onRowClick,
   focusedRowId,
   selectable = false,
@@ -617,7 +620,7 @@ export function DataTable<T>({
                             {actions.length > 0 && (
                               <RowMenu
                                 actions={actions}
-                                rowLabel={`row ${index + 1}`}
+                                rowLabel={rowLabel?.(row) || `row ${index + 1}`}
                                 open={menuRowId === id}
                                 onOpenChange={(open) => setMenuRowId(open ? id : null)}
                               />

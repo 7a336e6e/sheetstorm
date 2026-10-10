@@ -1,0 +1,40 @@
+# Override for throwaway test stacks (CI e2e job, local backup round trips):
+#
+#   COMPOSE_PROJECT_NAME=sheetstorm-ci COMPOSE_FILE=docker-compose.yml:ci/compose.e2e.yml \
+#     docker compose up -d --build --wait
+#
+# - no fixed container names and no published ports except the proxy
+#   (E2E_PROXY_PORT, default 8080), so it can run next to another stack;
+# - sign-in, session and API-key rate limits loosened: Playwright seeds its role users
+#   quickly and its parallel workers share one account per role (the limits
+#   themselves are covered by the backend tests).
+services:
+  database:
+    container_name: !reset null
+    ports: !reset []
+  redis:
+    container_name: !reset null
+    ports: !reset []
+  backend:
+    container_name: !reset null
+    ports: !reset []
+    environment:
+      RATE_LIMIT_AUTH_LOGIN: "300 per minute"
+      RATE_LIMIT_AUTH_REFRESH: "300 per minute"
+      RATE_LIMIT_AUTH_ME: "600 per minute"
+      RATE_LIMIT_API_KEYS_WRITE: "600 per hour"
+      RATE_LIMIT_API_KEY_EXCHANGE: "300 per minute"
+      RATE_LIMIT_API_KEY_EXCHANGE_PREFIX: "600 per hour"
+      APP_VERSION: e2e
+  jobs:
+    container_name: !reset null
+  frontend:
+    container_name: !reset null
+    ports: !reset []
+  mcp-server:
+    container_name: !reset null
+    ports: !reset []
+  proxy:
+    container_name: !reset null
+    ports: !override
+      - "127.0.0.1:${E2E_PROXY_PORT:-8080}:80"

@@ -136,7 +136,8 @@ test.describe('live collaboration @collab', () => {
 
       await expectOk(await api.delete(a!, `/incidents/${incidentId}/assignments/${assignmentId}`), 'remove assignment')
       await expect(page).toHaveURL(/\/dashboard\/incidents\/?$/, { timeout: LIVE_TIMEOUT })
-      await expect(page.getByText('Access to this incident ended')).toBeVisible()
+      // first(): Radix Toast also renders a hidden screen-reader copy for a moment.
+      await expect(page.getByText('Access to this incident ended').first()).toBeVisible()
     } finally {
       await op?.close()
     }

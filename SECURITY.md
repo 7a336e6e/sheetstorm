@@ -18,7 +18,10 @@ before publishing details.
 
 ## Supported versions
 
-Only the latest `main` branch receives security fixes.
+Security fixes go to `main` and ship in the next release. Only the latest
+release is supported; upgrade to it (see
+[assets/docs/operations.md](assets/docs/operations.md#upgrading)) to receive
+fixes.
 
 ## Supply chain
 

@@ -5,11 +5,16 @@ set -e
 
 MODE="prod"  # default to production
 
+RELEASE=""  # empty: build from source; X.Y.Z: run the published images
+
 usage() {
-    echo "Usage: $0 [--dev | --prod]"
+    echo "Usage: $0 [--dev | --prod] [--version X.Y.Z]"
     echo ""
     echo "  --dev   Development mode  — skips cronjob setup, builds with no cache"
     echo "  --prod  Production mode   — installs daily MITRE data update cronjob (default)"
+    echo "  --version X.Y.Z  Pull and run the published release images instead of"
+    echo "                   building from source (writes SHEETSTORM_VERSION and"
+    echo "                   COMPOSE_FILE to .env; see assets/docs/operations.md)"
     exit 1
 }
 
@@ -17,6 +22,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --dev)  MODE="dev";  shift ;;
         --prod) MODE="prod"; shift ;;
+        --version)
+            [[ "${2:-}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "--version needs X.Y.Z"; usage; }
+            RELEASE="${2#v}"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -99,11 +107,18 @@ ensure_key JWT_SECRET_KEY gen_hex
 ensure_key FERNET_KEY gen_fernet
 ensure_key CUSTODY_SIGNING_KEY gen_hex
 
-# ─── Build & start containers ────────────────────────────────────────────────
+# ─── Build (or pull) & start containers ──────────────────────────────────────
 
 echo ""
-echo "Building containers..."
-docker compose build
+if [ -n "$RELEASE" ]; then
+    set_env SHEETSTORM_VERSION "$RELEASE"
+    set_env COMPOSE_FILE "docker-compose.yml:docker-compose.images.yml"
+    echo "Pulling release images ${RELEASE}..."
+    docker compose pull
+else
+    echo "Building containers..."
+    docker compose build
+fi
 
 echo ""
 echo "Starting services..."

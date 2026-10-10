@@ -326,6 +326,7 @@ export function CompromisedAccountsTab({ incidentId, focusRowId }: IncidentTabBa
                 query={query}
                 columns={columns}
                 getRowId={(a) => a.id}
+                rowLabel={(a) => a.account_name}
                 ariaLabel="Compromised accounts"
                 searchPlaceholder="Search accounts, hosts, domains..."
                 toolbar={

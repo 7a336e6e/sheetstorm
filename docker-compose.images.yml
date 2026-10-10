@@ -1,0 +1,31 @@
+# Run the published release images instead of building from source:
+#
+#   SHEETSTORM_VERSION=1.0.0 docker compose -f docker-compose.yml -f docker-compose.images.yml pull
+#   SHEETSTORM_VERSION=1.0.0 docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
+#
+# (or put SHEETSTORM_VERSION in .env and export
+#  COMPOSE_FILE=docker-compose.yml:docker-compose.images.yml)
+#
+# Images: ghcr.io/<owner>/sheetstorm-*, multi-arch (amd64, arm64), with build
+# provenance attestations - verify before upgrading:
+#   gh attestation verify oci://ghcr.io/7a336e6e/sheetstorm-backend:1.0.0 --owner 7a336e6e
+# SHEETSTORM_REGISTRY overrides the registry/owner (e.g. a private mirror).
+services:
+  database:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-database:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}
+  backend:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-backend:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}
+  jobs:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-backend:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}
+  frontend:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-frontend:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}
+  mcp-server:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-mcp-server:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}
+  proxy:
+    build: !reset null
+    image: ${SHEETSTORM_REGISTRY:-ghcr.io/7a336e6e}/sheetstorm-proxy:${SHEETSTORM_VERSION:?set SHEETSTORM_VERSION (e.g. 1.0.0)}

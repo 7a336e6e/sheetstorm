@@ -1,0 +1,133 @@
+# Continuous integration: every pull request and every push to main.
+#
+# Hardening: read-only token, actions pinned by commit SHA (Dependabot keeps
+# them current), no credentials persisted in the checkout, no
+# pull_request_target. Everything the jobs install comes from lockfiles:
+# npm ci --ignore-scripts and hash-locked pip (assets/docs/supply-chain.md).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same digest-pinned image as scripts/verify-wp.sh.
+  PY_IMAGE: python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Real PostgreSQL + Redis, the full Alembic chain from an empty database.
+      - name: pytest (Docker)
+        run: backend/tests/run_in_docker.sh -q
+
+  mcp:
+    name: MCP tests (${{ matrix.package }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [mcp-server, mcp-bridge]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pytest
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/${{ matrix.package }}:/src:ro" \
+            -e PIP_DISABLE_PIP_VERSION_CHECK=1 -e PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint sh "$PY_IMAGE" -c '
+              cp -r /src /work && cd /work &&
+              pip install -q --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r requirements-dev.lock &&
+              PYTHONPATH=/work exec python -m pytest -q -p no:cacheprovider tests'
+
+  frontend:
+    name: Frontend (types, lint, unit tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts --legacy-peer-deps --no-fund --no-audit
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test -- --ci
+      - run: npm run build
+
+  e2e:
+    name: End-to-end (Docker stack, Playwright, backup/restore)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT_NAME: sheetstorm-ci
+      COMPOSE_FILE: docker-compose.yml:ci/compose.e2e.yml
+      E2E_BASE_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Throwaway secrets (.env)
+        run: python3 ci/make-env.py .env
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 600
+      - name: Seed and bootstrap the admin
+        run: |
+          docker compose exec -T backend python -c "from app.seed import seed_all; seed_all()"
+          python3 ci/bootstrap-admin.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Playwright
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts --legacy-peer-deps --no-fund --no-audit
+          npx playwright install --with-deps chromium
+      - name: Playwright
+        working-directory: frontend
+        env:
+          CI: "1"
+        run: npx playwright test
+      - name: Backup / restore round trip
+        run: ci/backup-roundtrip.sh
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --timestamps > compose-logs.txt 2>&1 || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: e2e-diagnostics
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+            compose-logs.txt
+          retention-days: 7
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans

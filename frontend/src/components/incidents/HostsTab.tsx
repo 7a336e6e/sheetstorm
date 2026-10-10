@@ -346,6 +346,7 @@ export function HostsTab({ incidentId, focusRowId }: IncidentTabBaseProps) {
                 query={query}
                 columns={columns}
                 getRowId={(h) => h.id}
+                rowLabel={(h) => h.hostname}
                 ariaLabel="Compromised hosts"
                 searchPlaceholder="Search hosts, IPs..."
                 toolbar={

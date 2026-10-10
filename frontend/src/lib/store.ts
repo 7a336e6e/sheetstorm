@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import api from './api'
+import api, { isApiError } from './api'
 import { invalidate } from './query-cache'
 import { supabase, getSupabase } from './supabase'
 import { isTimeMode, type TimeMode } from './time'
@@ -165,8 +165,16 @@ export const useAuthStore = create<AuthState>()(
         try {
           const user = await api.get<User>('/auth/me')
           set({ user, isAuthenticated: true, isLoading: false })
-        } catch {
-          set({ user: null, isAuthenticated: false, isLoading: false })
+        } catch (err) {
+          // Only a refused session (401) signs the user out. A rate limit,
+          // server error or network failure keeps the persisted user: the
+          // next request settles it (a real 401 then logs out as usual).
+          const refused = isApiError(err) && err.status === 401
+          if (refused || !get().user) {
+            set({ user: null, isAuthenticated: false, isLoading: false })
+          } else {
+            set({ isAuthenticated: true, isLoading: false })
+          }
         }
       },
 

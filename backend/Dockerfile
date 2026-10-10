@@ -43,6 +43,13 @@ RUN chmod +x /app/entrypoint.sh && mkdir -p /app/artifacts \
 # Switch to non-root user
 USER appuser
 
+# Release metadata (set by .github/workflows/release.yml; empty for local
+# builds). Shown to platform admins in the system status.
+ARG SHEETSTORM_VERSION=""
+ARG SHEETSTORM_COMMIT=""
+ENV SHEETSTORM_IMAGE_VERSION=${SHEETSTORM_VERSION} \
+    SHEETSTORM_IMAGE_COMMIT=${SHEETSTORM_COMMIT}
+
 EXPOSE 5000
 
 # Entrypoint applies DB migrations, then runs the server command.

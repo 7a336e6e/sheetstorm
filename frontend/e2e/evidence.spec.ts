@@ -79,13 +79,15 @@ test.describe('evidence: custody workflow', { tag: '@evidence' }, () => {
     // Check out to a brand-new external party.
     await page.getByRole('menuitem', { name: /Check out/ }).click()
     const checkOut = page.getByRole('dialog', { name: /Check out EV-/ })
-    await checkOut.getByRole('radio', { name: 'New party' }).check({ force: true })
+    // The radios are visually hidden inside their labels: click the label.
+    await checkOut.getByRole('radiogroup', { name: 'Recipient type' }).getByText('New party', { exact: true }).click()
+    await expect(checkOut.getByRole('radio', { name: 'New party' })).toBeChecked()
     await checkOut.getByLabel('Party name').fill('E2E Forensics Lab')
     await checkOut.getByLabel('Purpose').fill('Forensic imaging')
     await checkOut.getByRole('button', { name: 'Check out' }).click()
 
     // ...and acknowledge receipt right away.
-    await checkOut.getByRole('button', { name: 'Acknowledge now' }).click()
+    await page.getByRole('dialog', { name: /EV-\d+ checked out/ }).getByRole('button', { name: 'Acknowledge now' }).click()
     const ack = page.getByRole('dialog', { name: /Acknowledge receipt of EV-/ })
     await ack.getByLabel(/Full name/).fill('Lab Technician')
     await ack.getByRole('button', { name: 'Acknowledge' }).click()
@@ -120,6 +122,8 @@ test.describe('evidence: custody workflow', { tag: '@evidence' }, () => {
     await page.goto(`/dashboard/incidents/${incidentId}?tab=evidence`)
     await page.getByRole('button', { name: 'Upload file' }).click()
     const dialog = page.getByRole('dialog', { name: 'Upload files' })
+    // Wait for the dialog to finish opening before handing it a file.
+    await expect(dialog.getByRole('button', { name: 'Choose files' })).toBeVisible()
     await dialog.getByLabel('Files to upload').setInputFiles({
       name: `e2e-${stamp()}.txt`,
       mimeType: 'text/plain',
@@ -175,7 +179,8 @@ test.describe('evidence: legal hold (administrator)', { tag: '@evidence' }, () =
     const hold = page.getByRole('dialog', { name: 'Place legal hold' })
     await hold.getByLabel('Reason').fill('E2E matter 24-001')
     await hold.getByRole('button', { name: 'Place hold' }).click()
-    await expect(drawer.getByText('Legal hold', { exact: true })).toBeVisible()
+    // The hold badge (the custody timeline also gains a "Legal hold" entry).
+    await expect(drawer.locator('[data-hold="indefinite"]')).toBeVisible()
 
     // Dispose is disabled while held.
     await drawer.getByRole('button', { name: /^Actions for EV-/ }).click()
@@ -187,13 +192,14 @@ test.describe('evidence: legal hold (administrator)', { tag: '@evidence' }, () =
     await page.getByRole('dialog', { name: 'Release legal hold?' }).getByRole('button', { name: 'Release hold' }).click()
     await expect(drawer.getByText('No hold')).toBeVisible()
 
+    // Read the EV number while the drawer is accessible (modals on top hide it).
+    const number = (await drawer.getByText(/^EV-\d{4}$/).first().textContent()) ?? ''
     await drawer.getByRole('button', { name: /^Actions for EV-/ }).click()
     await page.getByRole('menuitem', { name: /Dispose/ }).click()
     const dispose = page.getByRole('dialog', { name: /Dispose of EV-/ })
     await dispose.getByLabel('Reason').fill('Retention period over')
     await dispose.getByRole('button', { name: 'Dispose…' }).click()
     const confirm = page.getByRole('dialog', { name: /Dispose of EV-\d+\?/ })
-    const number = (await drawer.getByText(/^EV-\d{4}$/).first().textContent()) ?? ''
     const go = confirm.getByRole('button', { name: 'Dispose', exact: true })
     await expect(go).toBeDisabled()
     await confirm.getByRole('textbox').fill(number.trim())

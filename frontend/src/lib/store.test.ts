@@ -10,7 +10,8 @@ jest.mock('./api', () => {
     post: jest.fn(),
     onUnauthorized: jest.fn(),
   }
-  return { __esModule: true, default: client, api: client }
+  const isApiError = (e: unknown) => !!e && typeof (e as { status?: unknown }).status === 'number'
+  return { __esModule: true, default: client, api: client, isApiError }
 })
 
 // No Supabase in unit tests: the store must fall back to local auth only.
@@ -79,6 +80,26 @@ describe('useAuthStore', () => {
     mockedApi.post.mockRejectedValueOnce(Object.assign(new Error('Invalid credentials'), { status: 401 }))
 
     await expect(useAuthStore.getState().login('analyst@example.test', 'bad')).rejects.toThrow('Invalid credentials')
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
+  it('checkAuth signs out only when the server refuses the session (401)', async () => {
+    useAuthStore.setState({ user: analyst, isAuthenticated: true })
+    mockedApi.get.mockRejectedValueOnce({ status: 429, message: 'Too many requests' })
+    await useAuthStore.getState().checkAuth()
+    expect(useAuthStore.getState()).toMatchObject({ user: analyst, isAuthenticated: true, isLoading: false })
+
+    mockedApi.get.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await useAuthStore.getState().checkAuth()
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+
+    mockedApi.get.mockRejectedValueOnce({ status: 401, message: 'Unauthorized' })
+    await useAuthStore.getState().checkAuth()
+    expect(useAuthStore.getState()).toMatchObject({ user: null, isAuthenticated: false })
+
+    // Without a cached user any failure means "not signed in".
+    mockedApi.get.mockRejectedValueOnce({ status: 503, message: 'Unavailable' })
+    await useAuthStore.getState().checkAuth()
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
   })
 

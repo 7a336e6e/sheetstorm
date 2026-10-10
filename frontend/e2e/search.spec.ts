@@ -19,6 +19,8 @@ test.describe('command palette and search page', () => {
     ).json()) as { id: string }
 
     await page.goto('/dashboard')
+    // Shortcuts are bound once the app shell has mounted (after the session check).
+    await expect(page.getByRole('button', { name: /^Search/ }).first()).toBeVisible()
     await page.keyboard.press('ControlOrMeta+k')
     const input = page.getByRole('combobox', { name: 'Search or jump to' })
     await expect(input).toBeFocused()
@@ -61,6 +63,7 @@ test.describe('command palette and search page', () => {
 
   test('`?` opens the shortcuts help and `g i` goes to incidents', async ({ page }) => {
     await page.goto('/dashboard')
+    await expect(page.getByRole('button', { name: /^Search/ }).first()).toBeVisible()
     await page.keyboard.press('Shift+?')
     await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
     await page.keyboard.press('Escape')

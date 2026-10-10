@@ -60,6 +60,24 @@ describe('SocketProvider', () => {
     expect(mockSocket.connect).toHaveBeenCalledTimes(1)
   })
 
+  it('resyncs the user on every connect (events sent before the handshake are lost)', () => {
+    const refreshUser = jest.fn(async () => {})
+    act(() => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'u@x', name: 'U', roles: [], permissions: [] },
+        isAuthenticated: true,
+        refreshUser,
+      })
+    })
+    render(
+      <SocketProvider>
+        <div />
+      </SocketProvider>
+    )
+    act(() => mockHandlers.get('connect')!())
+    act(() => mockHandlers.get('connect')!())
+    expect(refreshUser).toHaveBeenCalledTimes(2)
+  })
 })
 
 // One handler for session:revoked (W2-RT-FE + W2-LIFE-UI): per-reason copy,

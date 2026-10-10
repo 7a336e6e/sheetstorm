@@ -155,6 +155,21 @@ describe('DataTable', () => {
     expect(onEdit).toHaveBeenCalledWith('h1')
   })
 
+  it('names each row menu after the row when rowLabel is given', () => {
+    setPermissions(['hosts:update'])
+    const rowActions = () => [{ label: 'Edit', onSelect: jest.fn(), permission: 'hosts:update' }]
+    const { rerender } = render(
+      <DataTable query={makeQuery()} columns={columns} getRowId={(h) => h.id} ariaLabel="Hosts" rowActions={rowActions} />
+    )
+    expect(screen.getAllByRole('button', { name: /actions for/i }).map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Actions for row 1', 'Actions for row 2', 'Actions for row 3'])
+    rerender(
+      <DataTable query={makeQuery()} columns={columns} getRowId={(h) => h.id} ariaLabel="Hosts" rowActions={rowActions}
+        rowLabel={(h) => h.hostname} />
+    )
+    expect(screen.getByRole('button', { name: 'Actions for DC-01' })).toBeTruthy()
+  })
+
   it('gates the primary action', () => {
     const onSelect = jest.fn()
     setPermissions(['hosts:read'])

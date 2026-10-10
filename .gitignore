@@ -101,3 +101,6 @@ GEMINI.md
 /agents/
 /playbooks/
 .plans/
+
+# scripts/backup.sh default output (case data: never commit)
+backups/

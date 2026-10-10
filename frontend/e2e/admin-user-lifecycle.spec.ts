@@ -85,7 +85,9 @@ test.describe('user lifecycle admin', { tag: '@admin-user-lifecycle' }, () => {
       await dialog.getByRole('checkbox', { name: 'Analyst', exact: true }).check()
       await dialog.getByRole('button', { name: 'Create invite' }).click()
       await expect(dialog.getByText(`Anyone with this link can join as ${email}`)).toBeVisible()
-      const link = await dialog.getByLabel('Invite link').inputValue()
+      const linkField = dialog.getByRole('textbox', { name: 'Invite link', exact: true })
+      await expect(linkField).toBeVisible()
+      const link = await linkField.inputValue()
       expect(link).toMatch(/\/auth\/invite#token=/)
       await dialog.getByRole('button', { name: 'Done' }).click()
 
@@ -146,7 +148,9 @@ test.describe('user lifecycle admin', { tag: '@admin-user-lifecycle' }, () => {
       const dialog = page.getByRole('dialog')
       await dialog.getByLabel(/temporary password/i).check()
       await dialog.getByRole('button', { name: 'Reset password' }).click()
-      const temp = await dialog.getByLabel('Temporary password').inputValue()
+      const tempField = dialog.getByRole('textbox', { name: 'Temporary password', exact: true })
+      await expect(tempField).toBeVisible()
+      const temp = await tempField.inputValue()
       expect(temp.length).toBeGreaterThanOrEqual(12)
       await dialog.getByRole('button', { name: 'Done' }).click()
       await expect(dialog).toHaveCount(0)
@@ -185,7 +189,7 @@ test.describe('user lifecycle admin', { tag: '@admin-user-lifecycle' }, () => {
       await page.getByRole('dialog').getByRole('button', { name: 'Force logout' }).click()
       const result = page.getByRole('dialog', { name: /results/i })
       await expect(result.getByTestId('bulk-summary')).toHaveText('3 succeeded, 0 skipped, 0 failed')
-      await result.getByRole('button', { name: 'Close' }).click()
+      await result.getByRole('button', { name: 'Close', exact: true }).first().click()
 
       // Their sessions are dead.
       const res = await api.get(users[0].context, '/auth/me')

@@ -38,14 +38,21 @@ test.describe('audit admin (Administrator)', { tag: '@audit-admin' }, () => {
       await page.getByLabel('Resource ID').press('Enter')
       await expect(page).toHaveURL(new RegExp(`audit\\.f\\.resource_id=${role.id}`))
 
-      const row = page.getByRole('row').filter({ hasText: /Update Role/i }).first()
+      // Event cell: "Update" + "Admin" badge; resource cell: "Role".
+      const updateRow = () =>
+        page
+          .getByRole('row')
+          .filter({ has: page.getByRole('gridcell', { name: /^Update\b/ }) })
+          .filter({ has: page.getByRole('gridcell', { name: 'Role', exact: true }) })
+          .first()
+      const row = updateRow()
       await row.getByRole('button', { name: 'Expand row' }).click()
       const changes = page.getByRole('table', { name: 'Changes' })
       await expect(changes.getByRole('list', { name: 'added' })).toContainText('reports:read')
 
       // The filtered view survives a reload (state is in the URL).
       await page.reload()
-      await expect(page.getByRole('row').filter({ hasText: /Update Role/i }).first()).toBeVisible()
+      await expect(updateRow()).toBeVisible()
     } finally {
       await api.delete(context, `/roles/${role.id}`)
     }

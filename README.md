@@ -89,12 +89,9 @@ ATT&CK matrix, evidence, notes, decisions and actions, and the post-incident rev
 
 ### Attack graph and MITRE ATT&CK
 
-<table>
-<tr>
-<td width="50%"><img src="assets/screenshots/attack-graph.png" alt="Attack graph of a ransomware intrusion" /></td>
-<td width="50%"><img src="assets/screenshots/mitre.png" alt="MITRE ATT&CK matrix and attack chain" /></td>
-</tr>
-</table>
+<p align="center">
+  <img src="assets/screenshots/attack-graph.png" alt="Attack graph of a ransomware intrusion: VPN login with a service account, RDP to a workstation, discovery against the domain controller, lateral movement to the file server, encryption and exfiltration" width="100%" />
+</p>
 
 - **Attack graph** generated from hosts, accounts, indicators, malware and the timeline, then
   edited by hand. Regenerating only adds what is missing and keeps your layout. Export as PNG.
@@ -102,6 +99,8 @@ ATT&CK matrix, evidence, notes, decisions and actions, and the post-incident rev
   technique suggestions from an organization-scoped pattern model.
 - **Response overlay.** Show decisions and response actions on the timeline next to attacker
   activity.
+
+<img src="assets/screenshots/mitre.png" alt="MITRE ATT&CK matrix and attack chain" width="100%" />
 
 ### Evidence and chain of custody
 

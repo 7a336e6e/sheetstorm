@@ -192,8 +192,7 @@
   - the MCP server and bridge suites;
   - frontend type checks, lint, unit tests and the production build;
   - Playwright against a full Docker stack;
-  - a backup → `down -v` → restore round trip;
-  - a dependency review.
+  - a backup → `down -v` → restore round trip.
 - **Release images:** tagging `vX.Y.Z` publishes multi-arch (amd64 + arm64)
   images of every service to `ghcr.io/7a336e6e/sheetstorm-*`, with signed
   build-provenance attestations, SBOM, and a GitHub Release built from this

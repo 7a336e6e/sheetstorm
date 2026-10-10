@@ -210,9 +210,7 @@ Before adding a dependency or merging a bump:
   - checkouts don't persist credentials, and nothing uses
     `pull_request_target`;
   - the release publishes with the short-lived `GITHUB_TOKEN`, never a stored
-    token;
-  - `dependency-review` fails a pull request that adds a dependency with a
-    known moderate-or-worse advisory.
+    token.
 - Release images get GitHub build-provenance attestations (Sigstore, keyless)
   plus BuildKit SBOM and provenance, so users can verify an image came from
   this repository's release workflow:

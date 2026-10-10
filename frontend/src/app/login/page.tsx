@@ -94,9 +94,11 @@ function LoginPageInner() {
   const isPasswordValid = meetsPasswordRules(regPassword, passwordRules)
   const passwordsMatch = regPassword === regConfirmPassword && regConfirmPassword.length > 0
 
+  // GitHub through Supabase when the frontend is built with Supabase (the
+  // original flow), otherwise through the backend's GitHub OAuth app.
   const handleGitHubLogin = async () => {
     setGithubLoading(true)
-    if (ssoOptions.github) {
+    if (!supabaseGithub && ssoOptions.github) {
       try {
         const { url } = await api.get<{ url: string }>('/auth/github')
         window.location.assign(url)

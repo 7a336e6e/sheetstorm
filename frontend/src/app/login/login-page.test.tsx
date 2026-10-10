@@ -12,6 +12,8 @@ jest.mock('next/navigation', () => ({
   usePathname: () => '/login',
 }))
 jest.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: jest.fn() }), toast: jest.fn() }))
+const mockSignInWithOAuth = jest.fn(async (..._args: unknown[]) => ({ error: null }))
+jest.mock('@/lib/supabase', () => ({ supabase: { auth: { signInWithOAuth: (...a: unknown[]) => mockSignInWithOAuth(...a) } } }))
 jest.mock('@/hooks/use-password-policy', () => ({
   usePasswordPolicy: () => ({ min_length: 12, require_upper: false, require_lower: false, require_digit: false, require_symbol: false }),
 }))
@@ -29,6 +31,7 @@ beforeEach(() => {
   global.fetch = jest.fn(async () => ({ json: async () => ({ registration_enabled: false }) })) as unknown as typeof fetch
   jest.spyOn(api, 'get').mockImplementation((async (endpoint: string) => {
     if (endpoint === '/auth/sso/providers') return ssoOptions
+    if (endpoint === '/auth/github') return { url: '#github-authorize', state: 's' }
     throw new Error(`unexpected GET ${endpoint}`)
   }) as unknown as typeof api.get)
 })
@@ -66,6 +69,33 @@ describe('login page: single sign-on', () => {
     ssoOptions = { providers: [], github: true }
     await renderPage()
     expect(await screen.findByRole('button', { name: /GitHub/ })).toBeTruthy()
+  })
+
+  it('GitHub goes through Supabase when the frontend has it, else through the backend app', async () => {
+    ssoOptions = { providers: [], github: true }
+    const saved = process.env.NEXT_PUBLIC_SUPABASE_URL
+    try {
+      process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://project.supabase.example'
+      await renderPage()
+      await act(async () => {
+        fireEvent.click(await screen.findByRole('button', { name: /GitHub/ }))
+      })
+      expect(mockSignInWithOAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github' }))
+      expect(api.get).not.toHaveBeenCalledWith('/auth/github')
+      cleanup()
+
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL
+      mockSignInWithOAuth.mockClear()
+      await renderPage()
+      await act(async () => {
+        fireEvent.click(await screen.findByRole('button', { name: /GitHub/ }))
+      })
+      expect(api.get).toHaveBeenCalledWith('/auth/github')
+      expect(mockSignInWithOAuth).not.toHaveBeenCalled()
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL
+      else process.env.NEXT_PUBLIC_SUPABASE_URL = saved
+    }
   })
 
   it('explains a refused sign-in from its error code only', async () => {

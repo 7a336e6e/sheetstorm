@@ -89,8 +89,10 @@ class BaseConfig:
     AUDIT_PURGE_BATCH_SIZE = int(os.getenv('AUDIT_PURGE_BATCH_SIZE', '10000'))
 
     # Build metadata shown in the admin system status (platform admins only).
-    APP_VERSION = os.getenv('APP_VERSION', '')
-    GIT_COMMIT = os.getenv('GIT_COMMIT', '')
+    # Released images bake SHEETSTORM_IMAGE_*; an explicit APP_VERSION /
+    # GIT_COMMIT (compose passes them, empty by default) still wins.
+    APP_VERSION = os.getenv('APP_VERSION') or os.getenv('SHEETSTORM_IMAGE_VERSION', '')
+    GIT_COMMIT = os.getenv('GIT_COMMIT') or os.getenv('SHEETSTORM_IMAGE_COMMIT', '')
 
     # Local artifact storage directory (used when S3 is not configured).
     LOCAL_ARTIFACT_DIR = os.getenv('LOCAL_ARTIFACT_DIR', '/app/artifacts')

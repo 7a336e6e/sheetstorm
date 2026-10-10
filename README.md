@@ -9,6 +9,8 @@ A structured, collaborative replacement for the incident-response spreadsheet:
 timelines, hosts, indicators, evidence and decisions in one place, with an audit trail that holds up afterwards.
 
 <p>
+  <a href="https://github.com/7a336e6e/sheetstorm/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/7a336e6e/sheetstorm/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
+  <a href="https://github.com/7a336e6e/sheetstorm/releases"><img src="https://img.shields.io/github/v/release/7a336e6e/sheetstorm?include_prereleases&sort=semver&style=flat-square&color=4D82CB" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4D82CB?style=flat-square" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Next.js-16-18181B?style=flat-square&logo=nextdotjs" alt="Next.js 16" />
   <img src="https://img.shields.io/badge/Flask-3.1-18181B?style=flat-square&logo=flask" alt="Flask 3.1" />
@@ -217,6 +219,12 @@ choose a new password at first sign-in. Add further users from **Admin → Users
 
 **Requirements:** Docker with Compose v2, 2 GB RAM (4 GB recommended).
 
+**Prefer prebuilt images?** `./start.sh --version 1.0.0` pulls the signed multi-arch
+release images from `ghcr.io` instead of building. Check the
+[releases](https://github.com/7a336e6e/sheetstorm/releases) for the current version, and
+see [Operations](assets/docs/operations.md#install-from-source-or-from-release-images)
+for how to verify the images.
+
 > Plain HTTP works on `localhost` only. For any other host name, terminate TLS in front of
 > the proxy (load balancer, Caddy, a tunnel, ...) and set `FRONTEND_URL` and `CORS_ORIGINS` to
 > the `https://` origin. Auth cookies are `Secure`, so signing in over `http://<lan-ip>` fails.
@@ -244,10 +252,14 @@ deployment presets for common reverse proxies and CDNs, is in
 
 ## Operations
 
-- **Upgrades.** Back up first, then `git pull && docker compose up -d --build`. The backend
-  applies migrations on start and refuses to serve a schema it could not migrate.
-- **Backups.** The `postgres_data` and `artifacts_data` volumes plus `.env` (especially
-  `FERNET_KEY` and `CUSTODY_SIGNING_KEY`).
+- **Backups.** `scripts/backup.sh` writes a checksummed database dump and evidence archive.
+  `scripts/restore.sh <dir> --yes` restores it and then verifies the audit chain. Keep `.env`
+  safe separately: without `FERNET_KEY`, `CUSTODY_SIGNING_KEY` and `AUDIT_CHAIN_KEY` a
+  restore cannot decrypt credentials or verify signatures. CI runs the round trip on every
+  change. Details are in [Operations](assets/docs/operations.md#backups).
+- **Upgrades.** Back up first, then `git pull && docker compose up -d --build`, or bump
+  `SHEETSTORM_VERSION` for release images. The backend applies migrations on start and
+  refuses to serve a schema it could not migrate.
 - **Maintenance commands** (run with `docker compose exec backend flask sheetstorm <command>`):
 
   | Command | Purpose |
@@ -260,6 +272,8 @@ deployment presets for common reverse proxies and CDNs, is in
 
 - **Tests.** Backend: `./backend/tests/run_in_docker.sh`. Frontend: `npm test`,
   `npx tsc --noEmit` and `npm run lint` in `frontend/`. Everything: `scripts/verify-wp.sh --all`.
+  [CI](.github/workflows/ci.yml) runs all of these on every pull request, together with
+  Playwright against a full Docker stack and the backup and restore round trip.
 
 ## Security
 
@@ -270,7 +284,8 @@ for outbound requests, and encrypted integration credentials.
 
 The dependency pipeline is hardened against supply-chain attacks: `npm ci` without install
 scripts, a 7-day release-age cooldown, exact pins, hash-locked Python requirements and
-digest-pinned base images. See [Supply-chain security](assets/docs/supply-chain.md).
+digest-pinned base images. CI actions are pinned by commit, and release images carry
+signed build-provenance attestations. See [Supply-chain security](assets/docs/supply-chain.md).
 Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Documentation
@@ -281,7 +296,9 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 | [API reference](assets/docs/api-reference.md) | REST endpoints |
 | [WebSocket events](assets/docs/websocket-events.md) | Real-time events and rooms |
 | [Configuration](assets/docs/configuration.md) | Every environment variable and deployment presets |
+| [Operations](assets/docs/operations.md) | Release images, upgrades, backup and restore |
 | [Development](assets/docs/development.md) | Local setup, testing and contributing |
+| [Contributing](CONTRIBUTING.md) | How to propose changes and what CI checks |
 | [MCP server](assets/docs/mcp-server-roadmap.md) | MCP tools and integration |
 | [Supply-chain security](assets/docs/supply-chain.md) | Dependency policy and compromise playbook |
 | [Roadmap](assets/docs/roadmap.md) | What is planned |
@@ -301,7 +318,8 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 ## Contributing
 
 Contributions are welcome. Please open an issue to discuss larger changes first, then fork,
-branch, and open a pull request. Dependency changes must follow the
+branch, and open a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) covers the setup, the
+tests CI runs and the ground rules. Dependency changes must follow the
 [supply-chain policy](assets/docs/supply-chain.md).
 
 ## License

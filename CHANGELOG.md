@@ -187,6 +187,27 @@
 
 ### New
 
+- **Continuous integration:** every pull request and push to `main` runs:
+  - the backend suite on real PostgreSQL and Redis;
+  - the MCP server and bridge suites;
+  - frontend type checks, lint, unit tests and the production build;
+  - Playwright against a full Docker stack;
+  - a backup → `down -v` → restore round trip;
+  - a dependency review.
+- **Release images:** tagging `vX.Y.Z` publishes multi-arch (amd64 + arm64)
+  images of every service to `ghcr.io/7a336e6e/sheetstorm-*`, with signed
+  build-provenance attestations, SBOM, and a GitHub Release built from this
+  changelog.
+  - `./start.sh --version X.Y.Z` (or `docker-compose.images.yml`) runs them
+    instead of building from source.
+  - Platform admins see the release version and commit in System status.
+- **Backup and restore:** `scripts/backup.sh` writes a checksummed database
+  dump, evidence archive and manifest. `scripts/restore.sh <dir> --yes`
+  verifies the checksums, refuses a backup from a newer schema, restores both,
+  migrates forward and verifies the audit chain. See
+  `assets/docs/operations.md`.
+- **Contributor docs:** `CONTRIBUTING.md`, issue and pull-request templates.
+
 - **Guided tours:** a short walkthrough on the dashboard, incidents, incident,
   users, settings, activity and case-template pages, shown once per page and
   replayable from "Page tour" in the sidebar. Administrators switch tours on or

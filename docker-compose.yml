@@ -228,6 +228,9 @@ services:
       # Header carrying the client IP: X-Forwarded-For, X-Real-IP,
       # CF-Connecting-IP or True-Client-IP.
       REAL_IP_HEADER: ${REAL_IP_HEADER:-X-Forwarded-For}
+      # DNS server(s) nginx uses to re-resolve the upstream containers after
+      # they are recreated. Empty = the container's own resolver (Docker DNS).
+      NGINX_RESOLVER: ${NGINX_RESOLVER:-}
     ports:
       - "8080:80"
     depends_on:

@@ -133,9 +133,10 @@ function TourOverlay({ onClose }: { onClose: (tourId: string) => void }) {
 
   const cardStyle = useMemo(() => {
     if (!rect || typeof window === 'undefined') return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const left = Math.min(Math.max(12, rect.left), vw - CARD_W - 12)
+    // Keep clear of the page scrollbar (clientWidth excludes it; the 24px margin covers inner scroll areas).
+    const vw = document.documentElement.clientWidth || window.innerWidth
+    const vh = document.documentElement.clientHeight || window.innerHeight
+    const left = Math.min(Math.max(12, rect.left), vw - CARD_W - 24)
     const below = rect.top + rect.height + 12
     const top = below + 200 < vh ? below : Math.max(12, rect.top - 212)
     return { top, left }

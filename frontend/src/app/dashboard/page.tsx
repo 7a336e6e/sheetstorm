@@ -270,7 +270,7 @@ export default function DashboardPage() {
                   return (
                     <div key={tlp} className={`p-3 rounded-lg ${style.bg} border border-black/10 dark:border-white/10 text-center`}>
                       <div className={`text-lg font-bold ${style.text}`}>{count}</div>
-                      <div className={`text-[10px] font-mono ${style.text}`}>TLP:{style.label}</div>
+                      <div className={`text-[10px] font-mono ${style.text}`}>TLP:{style.label.replace('+', '+\u200b')}</div>
                     </div>
                   )
                 })}

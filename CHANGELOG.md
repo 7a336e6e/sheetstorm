@@ -339,6 +339,16 @@
   restarted.
 - Date-time fields use the full field width, show the time zone on the label
   line, and open the calendar/time picker on click.
+- The attack graph canvas grows with the window (at least 600px), so fit to
+  screen keeps nodes readable on large screens; edge labels show up to 200px
+  with the full text on hover.
+- Native scrollbars, pickers and form controls follow the dark theme.
+- The events table keeps host names and MITRE tactics on one line.
+- The dashboard's TLP tiles wrap `TLP:AMBER+STRICT` instead of overflowing.
+- `NGINX_RESOLVER` is passed to the proxy container (`docker-compose.yml`) and
+  documented.
+- Frontend unit tests run in a fixed time zone with daylight saving
+  (`America/New_York`), so they pass on any machine and the DST tests always run.
 
 - **Upgrades of databases with orphaned rows:** `flask sheetstorm repair-orphans`
   reports (and with `--apply` repairs) rows whose foreign keys point at missing

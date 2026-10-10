@@ -47,7 +47,8 @@ describe('new incident form', () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
         '/incidents',
-        expect.objectContaining({ title: 'Phishing wave', tlp: 'amber', detected_at: '2026-01-02T03:04:05.000Z' })
+        // The field is in the browser's local zone by default.
+        expect.objectContaining({ title: 'Phishing wave', tlp: 'amber', detected_at: new Date('2026-01-02T03:04:05').toISOString() })
       )
     )
     const body = api.post.mock.calls[0][1] as Record<string, unknown>

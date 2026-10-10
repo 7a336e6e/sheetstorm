@@ -859,7 +859,8 @@ function GraphInner({ incidentId }: { incidentId: string }) {
   ]
 
   return (
-    <div className="relative h-[600px] rounded-lg border border-black/10 dark:border-white/10 overflow-hidden">
+    // At least 600px; on taller screens the canvas grows so the graph stays readable at fit-to-screen.
+    <div className="relative h-[max(600px,calc(100dvh_-_14rem))] rounded-lg border border-black/10 dark:border-white/10 overflow-hidden">
       {/* Regenerate: merge (default) or rebuild */}
       <Dialog open={isRegenerateOpen} onOpenChange={setIsRegenerateOpen}>
         <DialogContent className="max-w-md">

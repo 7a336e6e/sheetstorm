@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="0 0 112 112" role="img" aria-label="SheetStorm">
+  <defs>
+    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6FA3E6"/>
+      <stop offset="1" stop-color="#4D82CB"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="108" height="108" rx="26" fill="#18181B" stroke="#2E2E33" stroke-width="2"/>
+  <g transform="translate(26 24) scale(2.5)" fill="none" stroke="url(#stroke)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+    <path d="M12.8 7.5 10 12.4h4l-2.8 4.9"/>
+  </g>
+</svg>

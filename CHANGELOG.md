@@ -208,9 +208,11 @@ First tagged release. Release images are published to `ghcr.io/7a336e6e/sheetsto
     identity provider's MFA applies.
   - **Testing:** tested against a mock provider in CI and verified against
     Keycloak 26.7. See `assets/docs/sso.md`.
-  - **Login page fixes:** the GitHub button now uses the backend OAuth app when
-    it is configured (Supabase otherwise) and is hidden when neither is. The
-    disabled "Azure AD" and "Okta" placeholder buttons are gone.
+  - **Login page fixes:** the GitHub button still signs in through Supabase
+    when the frontend is built with Supabase. Otherwise it now uses the
+    backend's GitHub OAuth app (before, it simply failed), and it is hidden
+    when neither is configured. The disabled "Azure AD" and "Okta" placeholder
+    buttons are gone.
 - **Continuous integration:** every pull request and push to `main` runs:
   - the backend suite on real PostgreSQL and Redis;
   - the MCP server and bridge suites;

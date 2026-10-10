@@ -172,6 +172,13 @@ class BaseConfig:
     # Frontend URL (for OAuth redirects etc.)
     FRONTEND_URL = os.getenv('FRONTEND_URL', '')
 
+    # OpenID Connect SSO (services/sso_service.py). Public origin under which
+    # /api/v1 is reachable, for the callback URL registered at the IdP
+    # (default: FRONTEND_URL, else the request's origin).
+    SSO_REDIRECT_BASE_URL = os.getenv('SSO_REDIRECT_BASE_URL', '')
+    # Allow http:// issuers and IdP endpoints (labs and tests only).
+    SSO_ALLOW_HTTP_ISSUERS = _env_bool('SSO_ALLOW_HTTP_ISSUERS', False)
+
     # File uploads
     MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max upload
 

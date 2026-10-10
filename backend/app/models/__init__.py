@@ -27,6 +27,7 @@ from app.models.question import InvestigativeQuestion, QuestionLead
 from app.models.case_template import CaseTemplate, IncidentCaseTemplate
 from app.models.post_incident import IncidentReview, ImprovementAction, ReminderLog
 from app.models.decision_log import IncidentDecision, ResponseAction, DecisionLogRevision
+from app.models.sso import SsoProvider, UserIdentity
 
 __all__ = [
     'User', 'Role', 'UserRole', 'PasswordHistory', 'Session',
@@ -57,4 +58,5 @@ __all__ = [
     'CaseTemplate', 'IncidentCaseTemplate',
     'IncidentReview', 'ImprovementAction', 'ReminderLog',
     'IncidentDecision', 'ResponseAction', 'DecisionLogRevision',
+    'SsoProvider', 'UserIdentity',
 ]

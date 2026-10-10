@@ -585,6 +585,12 @@ def is_privileged(user) -> bool:
 def mfa_required(user, policy=None) -> bool:
     if user is None or getattr(user, 'is_service_account', False):
         return False
+    # SSO-only users whose identity providers enforce MFA themselves
+    # (sso_providers.mfa_mode idp / idp_amr) are not asked for SheetStorm TOTP.
+    if not user.password_hash and user.auth_provider == 'oidc':
+        from app.services.sso_service import idp_handles_mfa
+        if idp_handles_mfa(user):
+            return False
     policy = policy or get_policy(user.organization_id)
     scope = policy.mfa.required_for
     return scope == 'all' or (scope == 'privileged' and is_privileged(user))

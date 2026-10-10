@@ -33,7 +33,7 @@ const TAB_CONFIG = [
     // Read-only without admin:manage (MitrePatternManager gates editing).
     { value: 'mitre-patterns', label: 'MITRE Patterns', icon: FileCode2, anyOf: ['incidents:read', 'admin:manage'] },
     { value: 'notifications', label: 'Notifications', icon: Bell, anyOf: ['integrations:read'] },
-    { value: 'authentication', label: 'Authentication', icon: Shield, anyOf: ['integrations:read'] },
+    { value: 'authentication', label: 'Authentication', icon: Shield, anyOf: ['integrations:read', 'users:manage'] },
     { value: 'audit-retention', label: 'Audit Retention', icon: ScrollText, anyOf: ['organizations:manage'] },
     { value: 'api-keys', label: 'API Keys', icon: KeyRound, anyOf: ['api_keys:manage'] },
 ]

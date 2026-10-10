@@ -4,10 +4,12 @@
 #     docker compose up -d --build --wait
 #
 # - no fixed container names and no published ports except the proxy
-#   (E2E_PROXY_PORT, default 8080), so it can run next to another stack;
-# - sign-in, session and API-key rate limits loosened: Playwright seeds its role users
-#   quickly and its parallel workers share one account per role (the limits
-#   themselves are covered by the backend tests).
+#   (E2E_PROXY_PORT, default 8080) and the mock OpenID Connect provider
+#   (E2E_OIDC_PORT, default 9000), so it can run next to another stack;
+# - per-account rate limits loosened (sign-in, session, API keys, MFA, audit
+#   and custody checks): Playwright seeds its role users quickly, its parallel
+#   workers share one account per role, and reruns on one stack add up (the
+#   limits themselves are covered by the backend tests).
 services:
   database:
     container_name: !reset null
@@ -25,7 +27,16 @@ services:
       RATE_LIMIT_API_KEYS_WRITE: "600 per hour"
       RATE_LIMIT_API_KEY_EXCHANGE: "300 per minute"
       RATE_LIMIT_API_KEY_EXCHANGE_PREFIX: "600 per hour"
+      RATE_LIMIT_AUTH_PASSWORD_CHANGE: "600 per hour"
+      RATE_LIMIT_MFA_ENROLL: "600 per hour"
+      RATE_LIMIT_MFA_VERIFY: "600 per hour"
+      RATE_LIMIT_AUDIT_EXPORT: "600 per hour"
+      RATE_LIMIT_AUDIT_INTEGRITY: "600 per hour"
+      RATE_LIMIT_CUSTODY_VERIFY: "600 per minute"
       APP_VERSION: e2e
+      # SSO e2e specs: the mock IdP below speaks plain http on the compose network.
+      SSO_ALLOW_HTTP_ISSUERS: "true"
+      OUTBOUND_URL_ALLOWLIST: mock-oidc
   jobs:
     container_name: !reset null
   frontend:
@@ -38,3 +49,12 @@ services:
     container_name: !reset null
     ports: !override
       - "127.0.0.1:${E2E_PROXY_PORT:-8080}:80"
+  # Test-only OpenID Connect provider (ci/mock-oidc) for frontend/e2e/sso.spec.ts.
+  # The backend reaches it as http://mock-oidc:9000, the browser on the host port.
+  mock-oidc:
+    build: ./ci/mock-oidc
+    environment:
+      MOCK_OIDC_ISSUER: http://mock-oidc:9000
+      MOCK_OIDC_PUBLIC_URL: http://localhost:${E2E_OIDC_PORT:-9000}
+    ports:
+      - "127.0.0.1:${E2E_OIDC_PORT:-9000}:9000"

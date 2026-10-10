@@ -44,6 +44,7 @@ from app.api.v1.endpoints import user_admin
 from app.api.v1.endpoints import auth_lifecycle
 from app.api.v1.endpoints import system
 from app.api.v1.endpoints import question_library_admin
+from app.api.v1.endpoints import sso
 
 # Restricted-account gate (must-change-password, MFA enrollment): one
 # before_request for the whole API.

@@ -78,6 +78,44 @@ password_expires_at}`. While `mfa_enrollment_required` is true every route excep
 exempt). `/auth/mfa/disable` answers `403 mfa_required_by_policy` when the policy requires MFA for
 the user.
 
+## Single sign-on (OpenID Connect)
+
+Setup guide: [Single sign-on](sso.md).
+
+| Method | Endpoint | Description | Rate Limit |
+|--------|----------|-------------|------------|
+| GET | `/auth/sso/providers` | Public: `{providers: [{slug, name, preset, start_url}], github}` for the login page | 30/minute |
+| GET | `/auth/sso/<slug>/start?next=/path` | Browser navigation: 302 to the identity provider (sets the state cookie) | 30/minute |
+| GET | `/auth/sso/<slug>/callback` | The redirect URI. 302 to `next` with session cookies, to `/login?sso=mfa` (TOTP step via `POST /auth/mfa/complete`) or to `/login?sso_error=<code>` | 30/minute |
+| GET | `/admin/sso-providers` | Providers of the caller's organization, plus `redirect_uri_template` (`users:manage`) | — |
+| POST | `/admin/sso-providers` | Create (`users:manage`; role mappings need `roles:manage` and the roles' permissions) | — |
+| GET/PUT/DELETE | `/admin/sso-providers/<id>` | Read, partial update (`client_secret`: omit = keep, `""` = clear), delete (identity links go, users stay) | — |
+| POST | `/admin/sso-providers/<id>/test` | Fetch discovery and keys, report `{ok, checks: [{name, ok, warning, detail}]}` | 30/minute |
+
+Provider fields:
+
+- **Identity:** `slug` (3-40, `[a-z0-9-]`, global), `display_name`, `preset`
+  (`entra` `okta` `keycloak` `google` `authentik` `auth0` `generic`),
+  `issuer`, `client_id`, `client_secret` (write-only; responses carry
+  `has_client_secret`) and `token_auth_method` (`client_secret_basic`
+  `client_secret_post` `none`).
+- **Claims:** `scopes` (must include `openid`), `email_claims` (ordered),
+  `name_claim` and `groups_claim` (a name or dotted path).
+- **Roles:** `role_mappings` (`[{group, role_id}]`), `default_role_id` and
+  `role_sync` (`first_login` `every_login`).
+- **Access:** `allowed_groups`, `allowed_domains`, `is_enabled`,
+  `show_on_login`, `auto_provision`, `link_existing` and
+  `require_email_verified`.
+- **MFA:** `mfa_mode` (`sheetstorm` `idp` `idp_amr`).
+
+Errors:
+
+- `400 validation_error` with `fields`;
+- `400 unknown_role`;
+- `403 forbidden` (mapping roles without `roles:manage`);
+- `403 privilege_escalation` (roles with permissions the caller lacks);
+- `409 duplicate_slug`.
+
 ## Incidents
 
 | Method | Endpoint                                  | Description                    |

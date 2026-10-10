@@ -15,12 +15,16 @@ import { Input, PasswordInput } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
-import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github } from 'lucide-react'
+import { ArrowRight, Loader2, CheckCircle2, KeyRound, Github, ShieldCheck } from 'lucide-react'
 import { SheetStormLogo } from '@/components/landing/SheetStormLogo'
 import { readSessionRevokedReason, sessionRevokedMessage } from '@/components/users/session-revoked'
 import { PasswordChecklist, PasswordRulesHint } from '@/components/settings/PasswordChecklist'
 import { meetsPasswordRules } from '@/lib/endpoints/security'
 import { usePasswordPolicy } from '@/hooks/use-password-policy'
+import { ssoProviders, ssoStartHref } from '@/lib/endpoints/sso'
+import { safeNextPath, ssoErrorMessage } from '@/lib/sso'
+import { api } from '@/lib/api'
+import type { SsoLoginProviders, User } from '@/types'
 
 /** Muted notices for `/login?reason=…` (e.g. after the socket `session:revoked` event). */
 const LOGIN_NOTICES: Record<string, string> = {
@@ -53,6 +57,21 @@ function LoginPageInner() {
     return reason ? sessionRevokedMessage(reason) : null
   })
   const notice = revokedCopy ?? LOGIN_NOTICES[reasonParam]
+  // Single sign-on: refused sign-ins come back as ?sso_error=<code>; with
+  // SheetStorm TOTP enrolled the callback sends ?sso=mfa (the pre-auth token
+  // is an httpOnly cookie, so only the code is posted).
+  const ssoError = ssoErrorMessage(searchParams.get('sso_error'))
+  const ssoMfa = searchParams.get('sso') === 'mfa'
+  const nextPath = safeNextPath(searchParams.get('next'))
+  const [ssoOptions, setSsoOptions] = useState<SsoLoginProviders>({ providers: [], github: false })
+  const [ssoMfaCode, setSsoMfaCode] = useState('')
+  const [ssoMfaBusy, setSsoMfaBusy] = useState(false)
+  const supabaseGithub = !!process.env.NEXT_PUBLIC_SUPABASE_URL
+  const showGithub = ssoOptions.github || supabaseGithub
+
+  useEffect(() => {
+    ssoProviders.loginOptions().then(setSsoOptions).catch(() => {})
+  }, [])
 
   // Login state
   const [isLoading, setIsLoading] = useState(false)
@@ -77,6 +96,16 @@ function LoginPageInner() {
 
   const handleGitHubLogin = async () => {
     setGithubLoading(true)
+    if (ssoOptions.github) {
+      try {
+        const { url } = await api.get<{ url: string }>('/auth/github')
+        window.location.assign(url)
+      } catch {
+        toast({ title: 'GitHub SSO unavailable', description: 'Could not initiate GitHub sign-in.', variant: 'destructive' })
+        setGithubLoading(false)
+      }
+      return
+    }
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
@@ -99,6 +128,25 @@ function LoginPageInner() {
       })
     } finally {
       setGithubLoading(false)
+    }
+  }
+
+  const handleSsoMfa = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSsoMfaBusy(true)
+    try {
+      const res = await api.post<{ user: User }>('/auth/mfa/complete', { mfa_code: ssoMfaCode })
+      useAuthStore.setState({ user: res.user, isAuthenticated: true, isLoading: false })
+      router.push(nextPath)
+    } catch (error) {
+      setSsoMfaCode('')
+      toast({
+        title: 'Verification failed',
+        description: error instanceof Error ? error.message : 'Invalid code. If it keeps failing, sign in again.',
+        variant: 'destructive',
+      })
+    } finally {
+      setSsoMfaBusy(false)
     }
   }
 
@@ -236,6 +284,46 @@ function LoginPageInner() {
               {notice}
             </p>
           )}
+          {ssoError && !ssoMfa && (
+            <p role="alert" data-testid="sso-error" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {ssoError}
+            </p>
+          )}
+
+          {ssoMfa ? (
+            <form onSubmit={handleSsoMfa} className="space-y-4" data-testid="sso-mfa-form">
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold tracking-tight">Two-step verification</h3>
+                <p className="text-sm text-muted-foreground">
+                  Your identity provider signed you in. Enter the code from your authenticator app (or a backup code)
+                  to finish.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sso-mfa-code" className="flex items-center gap-2">
+                  <KeyRound className="h-4 w-4" />
+                  Authenticator Code
+                </Label>
+                <Input
+                  id="sso-mfa-code"
+                  type="text"
+                  value={ssoMfaCode}
+                  onChange={(e) => setSsoMfaCode(e.target.value.replace(/[^0-9A-Fa-f]/g, '').slice(0, 8))}
+                  required
+                  disabled={ssoMfaBusy}
+                  className="h-11 font-mono text-center text-lg tracking-widest"
+                  autoComplete="one-time-code"
+                  autoFocus
+                />
+              </div>
+              <Button type="submit" className="w-full h-11" disabled={ssoMfaBusy || ssoMfaCode.length < 6}>
+                {ssoMfaBusy ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : 'Verify and continue'}
+              </Button>
+              <Button type="button" variant="link" className="w-full" onClick={() => router.replace('/login')}>
+                Start over
+              </Button>
+            </form>
+          ) : (
 
           <Tabs defaultValue={initialTab} className="w-full">
             {registrationEnabled ? (
@@ -328,37 +416,49 @@ function LoginPageInner() {
                   </Button>
                 </form>
 
-                {/* SSO Divider */}
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-border" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-4 text-muted-foreground font-medium">Corporate SSO</span>
-                  </div>
-                </div>
+                {(showGithub || ssoOptions.providers.length > 0) && (
+                  <>
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-border" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-background px-4 text-muted-foreground font-medium">Single sign-on</span>
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <Button
-                    variant="outline"
-                    className="h-10 border-primary/10 hover:border-primary/30 bg-primary/5"
-                    onClick={handleGitHubLogin}
-                    disabled={githubLoading || isLoading}
-                  >
-                    {githubLoading ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Github className="mr-2 h-4 w-4" />
-                    )}
-                    GitHub
-                  </Button>
-                  <Button variant="outline" className="h-10 border-primary/10 hover:border-primary/30 bg-primary/5" disabled>
-                    Azure AD
-                  </Button>
-                  <Button variant="outline" className="h-10 border-primary/10 hover:border-primary/30 bg-primary/5" disabled>
-                    Okta
-                  </Button>
-                </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="sso-buttons">
+                      {ssoOptions.providers.map((p) => (
+                        <Button
+                          key={p.slug}
+                          asChild
+                          variant="outline"
+                          className="h-10 border-primary/10 hover:border-primary/30 bg-primary/5"
+                        >
+                          <a href={ssoStartHref(p.start_url, searchParams.get('next'))}>
+                            <ShieldCheck className="mr-2 h-4 w-4" />
+                            <span className="truncate">{p.name}</span>
+                          </a>
+                        </Button>
+                      ))}
+                      {showGithub && (
+                        <Button
+                          variant="outline"
+                          className="h-10 border-primary/10 hover:border-primary/30 bg-primary/5"
+                          onClick={handleGitHubLogin}
+                          disabled={githubLoading || isLoading}
+                        >
+                          {githubLoading ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Github className="mr-2 h-4 w-4" />
+                          )}
+                          GitHub
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </TabsContent>
 
@@ -463,6 +563,7 @@ function LoginPageInner() {
             </TabsContent>
             )}
           </Tabs>
+          )}
         </div>
       </div>
     </div>

@@ -78,6 +78,10 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-}
       FRONTEND_URL: ${FRONTEND_URL:-}
+      # OpenID Connect SSO: public origin of /api/v1 for the IdP callback URL
+      # (default FRONTEND_URL), and http:// issuers for labs only.
+      SSO_REDIRECT_BASE_URL: ${SSO_REDIRECT_BASE_URL:-}
+      SSO_ALLOW_HTTP_ISSUERS: ${SSO_ALLOW_HTTP_ISSUERS:-false}
       # Comma-separated browser origins allowed to call the API with credentials.
       # Required when serving from anything other than localhost.
       CORS_ORIGINS: ${CORS_ORIGINS:-}

@@ -145,6 +145,11 @@ ATT&CK matrix, evidence, notes, decisions and actions, and the post-incident rev
 - **Roles and teams.** Six built-in roles with granular permissions, custom roles, teams and
   TLP-based incident visibility. Archived incidents are read-only and invisible without the
   archive permission, even through an old link.
+- **Single sign-on** with any OpenID Connect provider, with presets for:
+  - Microsoft Entra ID, Okta, Keycloak, Google Workspace, authentik and Auth0;
+  - group-to-role mapping, just-in-time accounts and account linking;
+  - a choice of whether SheetStorm or the identity provider enforces MFA.
+  See [Single sign-on](assets/docs/sso.md).
 - **Security policy.** Password rules and history, lockout, MFA enforcement, session
   lifetimes and self-registration (closed by default).
 - **Rate limits** per route group, editable or switched off from the admin dashboard.
@@ -297,6 +302,7 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 | [WebSocket events](assets/docs/websocket-events.md) | Real-time events and rooms |
 | [Configuration](assets/docs/configuration.md) | Every environment variable and deployment presets |
 | [Operations](assets/docs/operations.md) | Release images, upgrades, backup and restore |
+| [Single sign-on](assets/docs/sso.md) | OpenID Connect setup for Entra ID, Okta, Keycloak, Google and others |
 | [Development](assets/docs/development.md) | Local setup, testing and contributing |
 | [Contributing](CONTRIBUTING.md) | How to propose changes and what CI checks |
 | [MCP server](assets/docs/mcp-server-roadmap.md) | MCP tools and integration |

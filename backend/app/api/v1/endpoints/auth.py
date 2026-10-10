@@ -1043,11 +1043,14 @@ def mfa_complete_oauth():
 
     This is called after GitHub/Supabase OAuth returns mfa_required.
     The frontend sends the pre_auth_token + mfa_code to get full access tokens.
+    After OpenID Connect SSO the pre-auth token is not in the body but in the
+    httpOnly ``sheetstorm_sso_mfa`` cookie set by the callback.
     """
     import pyotp
+    from app.services.sso_service import MFA_COOKIE
 
     data = request.get_json() or {}
-    pre_auth_token = data.get('pre_auth_token', '')
+    pre_auth_token = data.get('pre_auth_token') or request.cookies.get(MFA_COOKIE, '')
     mfa_code = data.get('mfa_code', '')
 
     if not pre_auth_token or not mfa_code:
@@ -1110,6 +1113,9 @@ def mfa_complete_oauth():
         'refresh_token': refresh_token,
         'user': _user_payload(user),
     })
+    if request.cookies.get(MFA_COOKIE):
+        resp.delete_cookie(MFA_COOKIE, path='/', secure=current_app.config.get('JWT_COOKIE_SECURE', True),
+                           httponly=True, samesite='Strict')
     return _auth_cookies(resp, access_token, refresh_token), 200
 
 

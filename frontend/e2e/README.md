@@ -22,6 +22,14 @@ npm run test:e2e                       # full suite
 - `/auth/login` is limited to 5/min per IP: the first seeding run waits out
   429s (about 2-3 minutes). Later runs reuse the states.
 
+## Single sign-on (`@sso`)
+
+`sso.spec.ts` signs in through `ci/mock-oidc`, a small test identity provider
+that the CI e2e stack (`ci/compose.e2e.yml`) starts next to SheetStorm. The
+specs skip when it is not reachable. Set `E2E_OIDC_PUBLIC_URL` (default
+`http://localhost:9000`) and `E2E_OIDC_ISSUER` (default
+`http://mock-oidc:9000`) if you run it elsewhere.
+
 ## Second organization (cross-org specs)
 
 There is no API to create organizations. On a **test** stack, bootstrap org B once:

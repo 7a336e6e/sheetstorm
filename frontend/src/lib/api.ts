@@ -127,6 +127,7 @@ const NO_REFRESH_ENDPOINTS = [
   '/auth/supabase',
   '/auth/mfa/complete',
   '/auth/github',
+  '/auth/sso',
   '/auth/registration-status',
 ]
 

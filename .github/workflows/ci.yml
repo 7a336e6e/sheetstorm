@@ -79,6 +79,26 @@ jobs:
       - run: npm test -- --ci
       - run: npm run build
 
+  bundle:
+    name: Release bundle and shell scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: shellcheck -S warning start.sh deploy/install.sh scripts/backup.sh scripts/restore.sh ci/*.sh
+      # The bundle every release ships (docker-compose.yml generated from the
+      # source stack): it must build and be a valid compose file.
+      - name: Build and validate the release bundle
+        run: |
+          ci/release-assets.sh 0.0.0-ci dist
+          cd dist
+          sha256sum -c SHA256SUMS
+          SECRET_KEY=x JWT_SECRET_KEY=x FERNET_KEY=x docker compose -f docker-compose.yml config -q
+          tar -tzf sheetstorm-0.0.0-ci.tar.gz
+
   e2e:
     name: End-to-end (Docker stack, Playwright, backup/restore)
     runs-on: ubuntu-24.04

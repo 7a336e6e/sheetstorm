@@ -3,13 +3,44 @@
 Running SheetStorm with Docker Compose: installing from source or from the
 published images, upgrading, backing up and restoring.
 
-## Install from source or from release images
+## Install from a release or from source
 
-**From source** (default): `./start.sh`, or `docker compose up -d --build`
-once `.env` exists. See the [README](../../README.md#quick-start).
+**From a release** (recommended for running SheetStorm). Every release on
+GitHub carries three assets:
 
-**From release images.** Every release publishes multi-arch (amd64 + arm64)
-images to the GitHub Container Registry:
+| Asset | Contents |
+|---|---|
+| `sheetstorm-X.Y.Z.tar.gz` (and `sheetstorm.tar.gz`, the same file) | `docker-compose.yml`, `.env.example`, `install.sh`, `README.md`, `scripts/backup.sh` and `scripts/restore.sh` in a `sheetstorm/` directory |
+| `docker-compose.yml` | The same compose file on its own |
+| `SHA256SUMS` | Checksums of the above |
+
+```bash
+curl -fsSLO https://github.com/7a336e6e/sheetstorm/releases/download/v1.0.1/sheetstorm-1.0.1.tar.gz
+tar -xzf sheetstorm-1.0.1.tar.gz && cd sheetstorm && ./install.sh
+```
+
+The compose file runs the release's images and is generated from the
+repository's `docker-compose.yml`, so the stack is the same as a source
+install. Its project name is fixed (`sheetstorm`), which keeps the same Docker
+volumes wherever you unpack it. `-p` or `COMPOSE_PROJECT_NAME` gives a second
+instance its own volumes.
+
+`install.sh` does the following:
+1. **First run:** creates `.env` with fresh random secrets: the database
+   password, `SECRET_KEY`, `JWT_SECRET_KEY`, `FERNET_KEY`,
+   `CUSTODY_SIGNING_KEY`, `AUDIT_CHAIN_KEY` and `API_KEY_PEPPER`.
+2. **Later runs:** keeps the existing `.env` and fills in only empty core keys.
+   On an existing install without `CUSTODY_SIGNING_KEY`, it sets that key to
+   the current `SECRET_KEY`, so earlier custody signatures keep verifying.
+3. **A database volume exists but `.env` is missing:** warns, and generates
+   neither a database password nor an audit key.
+4. Pulls the images and starts the stack (`up --wait`).
+5. Creates the first administrator on a fresh database.
+
+`./start.sh` uses the same `.env` logic.
+
+**Images.** Every release publishes multi-arch (amd64 + arm64) images to the
+GitHub Container Registry:
 
 | Image | Service |
 |---|---|
@@ -20,21 +51,17 @@ images to the GitHub Container Registry:
 | `ghcr.io/7a336e6e/sheetstorm-mcp-server` | `mcp-server` |
 
 Tags: `X.Y.Z` (immutable), `X.Y` (latest patch) and `latest` (latest stable
-release). Pin an exact version in production. Use a checkout of the same
-release tag for the compose files and scripts:
+release). Pin an exact version in production.
 
-```bash
-git clone --branch v1.0.0 https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
-cp .env.example .env              # then set the secrets, or run ./start.sh once
-echo 'SHEETSTORM_VERSION=1.0.0' >> .env
-echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.images.yml' >> .env
-docker compose pull && docker compose up -d
-docker compose exec backend python -c "from app.seed import seed_all; seed_all()"   # first install only
-```
+`SHEETSTORM_VERSION` and `SHEETSTORM_REGISTRY` in `.env` override the bundle's
+image tag and registry (for example a mirror).
 
-`COMPOSE_FILE` in `.env` makes every later `docker compose` command (and the
-backup scripts) use the release images. `SHEETSTORM_REGISTRY` points at a
-mirror instead of `ghcr.io/7a336e6e`.
+**From source:** run `./start.sh`, or `docker compose up -d --build` once
+`.env` exists. See the [README](../../README.md#quick-start).
+
+`./start.sh --version X.Y.Z` runs the release images from a source checkout.
+It sets `SHEETSTORM_VERSION` and
+`COMPOSE_FILE=docker-compose.yml:docker-compose.images.yml` in `.env`.
 
 The frontend image is built with `NEXT_PUBLIC_API_URL=/api/v1` (the bundled
 proxy). Supabase sign-in needs build-time `NEXT_PUBLIC_SUPABASE_*` values, so
@@ -43,11 +70,13 @@ build the frontend from source if you use it.
 ### Verifying an image
 
 Each image carries a GitHub build-provenance attestation (Sigstore-signed,
-bound to the release workflow run) plus BuildKit SBOM and provenance. Check
-an image before you run or upgrade to it:
+bound to the release workflow run) plus BuildKit SBOM and provenance. The
+bundle files are attested too. Check them before you run or upgrade:
 
 ```bash
-gh attestation verify oci://ghcr.io/7a336e6e/sheetstorm-backend:1.0.0 --owner 7a336e6e
+gh attestation verify oci://ghcr.io/7a336e6e/sheetstorm-backend:1.0.1 --owner 7a336e6e
+gh attestation verify sheetstorm-1.0.1.tar.gz --owner 7a336e6e
+sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 A successful check proves the image was built by this repository's
@@ -59,9 +88,13 @@ A successful check proves the image was built by this repository's
 1. Read the release notes: [CHANGELOG.md](../../CHANGELOG.md) lists behavior
    changes and upgrade notes per version.
 2. Back up (below).
-3. Source install: `git pull && docker compose up -d --build`. Image
-   install: `git checkout vX.Y.Z`, set `SHEETSTORM_VERSION=X.Y.Z`, then
-   `docker compose pull && docker compose up -d`.
+3. Upgrade the way you installed:
+   - **Release bundle:** unpack the new bundle over the same directory (your
+     `.env` is kept) and run `./install.sh`. The newest one is always
+     `https://github.com/7a336e6e/sheetstorm/releases/latest/download/sheetstorm.tar.gz`.
+   - **Source:** `git pull && docker compose up -d --build`.
+   - **Source checkout on release images:** `git checkout vX.Y.Z`, set
+     `SHEETSTORM_VERSION=X.Y.Z`, then `docker compose pull && docker compose up -d`.
 
 The backend applies database migrations on start and refuses to run against a
 schema it could not migrate (the container exits; check `docker compose logs

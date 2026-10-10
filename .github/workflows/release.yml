@@ -185,13 +185,71 @@ jobs:
           subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
+  bundle:
+    name: Release bundle
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # docker-compose.yml (pinned to this version), sheetstorm-VERSION.tar.gz
+      # (compose file, .env.example, install.sh, backup/restore), the same
+      # archive as sheetstorm.tar.gz (stable "latest" download URL), SHA256SUMS.
+      - run: ci/release-assets.sh "$VERSION" dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-bundle
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: Install from the bundle
+    needs: [prepare, bundle, publish]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-bundle
+          path: dist
+      # What a user does: unpack, ./install.sh. Pulls the images just pushed.
+      - name: Install
+        run: |
+          mkdir -p "$RUNNER_TEMP/install"
+          tar -xzf "dist/sheetstorm-$VERSION.tar.gz" -C "$RUNNER_TEMP/install"
+          cd "$RUNNER_TEMP/install/sheetstorm"
+          # The one-time admin password of this throwaway stack stays out of the log.
+          ./install.sh 2>&1 | sed 's/\(Generated password[^:]*:\).*/\1 [redacted]/'
+      - name: Check the running release
+        working-directory: ${{ runner.temp }}/install/sheetstorm
+        run: |
+          curl -fsS http://localhost:8080/api/v1/health
+          curl -fsS -o /dev/null http://localhost:8080/login
+          reported="$(docker compose exec -T backend python -c "from app import create_app; print(create_app().config['APP_VERSION'])" 2>/dev/null | tail -n 1)"
+          echo "reported version: $reported"
+          [ "$reported" = "$VERSION" ]
+      - name: Tear down
+        if: always()
+        working-directory: ${{ runner.temp }}/install/sheetstorm
+        run: docker compose down -v --remove-orphans || true
+
   release:
     name: GitHub Release
-    needs: [prepare, publish]
+    needs: [prepare, publish, bundle, smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
@@ -201,6 +259,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-bundle
+          path: dist
+      # Provenance for the bundle files listed in SHA256SUMS.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
       - name: Release notes
         run: |
           # The CHANGELOG section for this version; a prerelease without one
@@ -212,21 +278,39 @@ jobs:
           }
           notes="$(section "$VERSION")"
           [ -z "$notes" ] && [ "$PRERELEASE" = true ] && notes="$(section Unreleased)"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION"
           {
             echo "$notes"
             echo
-            echo "## Container images"
+            echo "## Install"
             echo
-            echo "Run them with \`SHEETSTORM_VERSION=$VERSION docker compose -f docker-compose.yml -f docker-compose.images.yml up -d\` (see the README)."
+            echo "Docker with Compose v2 is all you need; no source checkout:"
+            echo
+            echo '```bash'
+            echo "curl -fsSLO $base/sheetstorm-$VERSION.tar.gz"
+            echo "tar -xzf sheetstorm-$VERSION.tar.gz && cd sheetstorm && ./install.sh"
+            echo '```'
+            echo
+            echo "Upgrading: back up (\`scripts/backup.sh\`), unpack the new bundle over the same directory (your \`.env\` is kept) and run \`./install.sh\` again."
+            echo "\`docker-compose.yml\` alone is also attached, for existing Compose setups."
+            echo
+            echo "## Verify"
+            echo
+            echo '```bash'
+            echo "sha256sum -c SHA256SUMS --ignore-missing"
+            echo "gh attestation verify sheetstorm-$VERSION.tar.gz --owner ${GITHUB_REPOSITORY_OWNER}"
+            echo "gh attestation verify oci://$REGISTRY/sheetstorm-backend:$VERSION --owner ${GITHUB_REPOSITORY_OWNER}"
+            echo '```'
+            echo
+            echo "Images (linux/amd64 and linux/arm64):"
             echo
             for i in backend frontend proxy database mcp-server; do
               echo "- \`$REGISTRY/sheetstorm-$i:$VERSION\`"
             done
-            echo
-            echo "Verify: \`gh attestation verify oci://$REGISTRY/sheetstorm-backend:$VERSION --owner ${GITHUB_REPOSITORY_OWNER}\`"
           } > notes.md
       - name: Create release
         run: |
           flags=(--verify-tag --title "SheetStorm $VERSION" --notes-file notes.md)
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)
-          gh release create "v$VERSION" "${flags[@]}"
+          gh release create "v$VERSION" "${flags[@]}" \
+            dist/docker-compose.yml "dist/sheetstorm-$VERSION.tar.gz" dist/sheetstorm.tar.gz dist/SHA256SUMS

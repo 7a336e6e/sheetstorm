@@ -40,36 +40,19 @@ echo "==================================="
 
 mkdir -p data/postgres data/redis
 
-# ─── Check for .env file ─────────────────────────────────────────────────────
-
-if [ ! -f .env ]; then
-    echo "Creating .env from .env.example..."
-    cp .env.example .env
-    echo "WARNING: Please update .env with secure values before production use!"
-fi
-
-# ─── Generate keys if not set ─────────────────────────────────────────────────
-# Only empty / "changeme*" placeholder values are replaced. An existing real value
-# is NEVER overwritten: rotating SECRET_KEY / JWT_SECRET_KEY invalidates sessions,
+# ─── .env and secrets ────────────────────────────────────────────────────────
+# Shared with the release bundle (deploy/install.sh): on the first run .env is
+# created from .env.example with fresh random secrets (database password,
+# signing and audit keys, API key pepper); on later runs only empty or
+# "changeme" values of SECRET_KEY, JWT_SECRET_KEY, FERNET_KEY and
+# CUSTODY_SIGNING_KEY are filled in. An existing real value is NEVER
+# overwritten: rotating SECRET_KEY / JWT_SECRET_KEY invalidates sessions,
 # CUSTODY_SIGNING_KEY breaks chain-of-custody verification and FERNET_KEY makes
 # stored integration credentials undecryptable.
 
-# Print the value of KEY from .env (last occurrence, surrounding quotes stripped).
-get_env() {
-    local line
-    line=$(grep -E "^$1=" .env | tail -n 1) || true
-    line=${line#*=}
-    line=${line%$'\r'}
-    case "$line" in
-        \"*\") line=${line#\"}; line=${line%\"} ;;
-        \'*\') line=${line#\'}; line=${line%\'} ;;
-    esac
-    printf '%s' "$line"
-}
+bash deploy/install.sh --env-only
 
 # Set KEY=VALUE in .env (portable across BSD/GNU: awk + temp file, no `sed -i`).
-# Only the line that starts exactly with "KEY=" is replaced; appended if missing.
-# The value is passed via the environment so no character needs escaping.
 set_env() {
     local tmp
     tmp=$(mktemp "${TMPDIR:-/tmp}/sheetstorm-env.XXXXXX")
@@ -82,30 +65,6 @@ set_env() {
     cat "$tmp" > .env   # keep the original file's mode/ownership
     rm -f "$tmp"
 }
-
-gen_hex() {
-    python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32
-}
-
-gen_fernet() {
-    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null \
-        || openssl rand -base64 32 | tr '+/' '-_'
-}
-
-# ensure_key NAME GENERATOR — generate NAME only when empty or a placeholder.
-ensure_key() {
-    local name="$1" generator="$2" current
-    current=$(get_env "$name")
-    if [ -z "$current" ] || [[ "$current" == changeme* ]]; then
-        echo "Generating $name..."
-        set_env "$name" "$($generator)"
-    fi
-}
-
-ensure_key SECRET_KEY gen_hex
-ensure_key JWT_SECRET_KEY gen_hex
-ensure_key FERNET_KEY gen_fernet
-ensure_key CUSTODY_SIGNING_KEY gen_hex
 
 # ─── Build (or pull) & start containers ──────────────────────────────────────
 

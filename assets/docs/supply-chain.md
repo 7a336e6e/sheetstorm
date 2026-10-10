@@ -30,8 +30,9 @@ detected and unpublished within hours to a few days.
 
 ### 2. No install scripts (allowlist only)
 
-- `frontend/.npmrc` (and the root `.npmrc`) set `ignore-scripts=true`, and the
-  Dockerfile also passes `--ignore-scripts` explicitly.
+- `frontend/.npmrc` sets `ignore-scripts=true`, and the Dockerfile also passes
+  `--ignore-scripts` explicitly. The root `.npmrc` applies the same settings to
+  any npm command run from the repository root (there is no root package).
 - Verified on 2026-10-08: nothing in the frontend tree needs an install
   script. Packages that declare one and why it is safe to skip:
 
@@ -39,7 +40,6 @@ detected and unpublished within hours to a few days.
   |---|---|---|
   | `unrs-resolver` | `postinstall: napi-postinstall ... check` | Prebuilt binary ships as an optional dependency (`@unrs/resolver-binding-*`); the script only checks for it |
   | `fsevents` (macOS, optional) | implicit `node-gyp` (binding.gyp) | Ships a prebuilt `fsevents.node` |
-  | `msw` (root `shadcn` CLI only) | `postinstall` copies a service worker | Not used by the app |
 
   `next` (`@next/swc-*`) and `sharp` (`@img/sharp-*`) use per-platform
   optional dependencies and have no install scripts. `tsc --noEmit`, `eslint`,

@@ -1,6 +1,13 @@
 /** @jest-environment node */
 import { describe, expect, it } from '@jest/globals'
-import { EMPTY_DEFINITION, TEMPLATE_KEY_RE, checkDefinition, formatDefinition, templateSummaryText } from './template-definition'
+import {
+  EMPTY_DEFINITION,
+  EXAMPLE_DEFINITION,
+  TEMPLATE_KEY_RE,
+  checkDefinition,
+  formatDefinition,
+  templateSummaryText,
+} from './template-definition'
 
 const valid = {
   schema_version: 1,
@@ -57,4 +64,8 @@ it('template keys and summaries', () => {
   expect(templateSummaryText({ summary: { questions: 5, leads: 3, custom_fields: 2, playbook: 'builtin:x' } })).toBe(
     '5 questions · 3 leads · 2 custom fields · playbook'
   )
+})
+
+it('the editor example is a valid definition', () => {
+  expect(checkDefinition(formatDefinition(EXAMPLE_DEFINITION)).errors).toEqual([])
 })

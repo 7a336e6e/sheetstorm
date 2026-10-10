@@ -14,6 +14,11 @@ const nextJest = require('next/jest')
 
 const createJestConfig = nextJest({ dir: './' })
 
+// One fixed zone with daylight saving for every run, so results do not depend
+// on the machine and the DST tests in src/lib/time.test.ts always run
+// (workers inherit this from the parent process).
+process.env.TZ = 'America/New_York'
+
 /** @type {import('jest').Config} */
 const config = {
   testEnvironment: 'jsdom',

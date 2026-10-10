@@ -97,3 +97,50 @@ export function templateSummaryText(t: Pick<CaseTemplate, 'summary'>): string {
   if (s.playbook) parts.push('playbook')
   return parts.join(' · ')
 }
+
+/**
+ * A complete, valid example (shown in the editor). Library refs are SheetStorm
+ * core questions (`ss:SSQ-…`); `dfiq:Q…` refs work once DFIQ is imported.
+ */
+export const EXAMPLE_DEFINITION: CaseTemplateDefinition = {
+  schema_version: 1,
+  defaults: { severity: 'high', tlp: 'amber', classification: 'phishing' },
+  questions: [
+    { ref: 'ss:SSQ-001' },
+    { ref: 'ss:SSQ-005', priority: 'critical' },
+    {
+      key: 'bec-mailbox-rules',
+      question: 'Were mailbox forwarding or inbox rules created by the attacker?',
+      facet: 'Email',
+      phase: 2,
+      priority: 'high',
+    },
+  ],
+  leads: [
+    {
+      key: 'review-mailbox-audit',
+      title: 'Review the mailbox audit log of the affected users',
+      phase: 2,
+      priority: 'high',
+      task_type: 'investigative_lead',
+      investigation_direction: 'Look for new inbox rules, forwarding and logins from new countries.',
+      answers: ['ss:SSQ-001', 'bec-mailbox-rules'],
+    },
+  ],
+  playbook: { builtin: 'picerl-generic' },
+  custom_fields: [
+    { key: 'ticket_id', label: 'Ticket ID', type: 'text' },
+    { key: 'business_unit', label: 'Business unit', type: 'select', options: ['Finance', 'HR', 'IT'], required: true },
+    { key: 'notified_regulator', label: 'Regulator notified', type: 'boolean' },
+  ],
+}
+
+/** One line per field for the editor's format reference. */
+export const DEFINITION_REFERENCE: { field: string; text: string }[] = [
+  { field: 'schema_version', text: 'Always 1.' },
+  { field: 'defaults', text: 'Optional severity (low…critical), tlp (white, green, amber, amber_strict, red) and classification, applied when chosen for a new incident.' },
+  { field: 'questions[]', text: 'Either { "ref": "ss:SSQ-001" } from the question library (or "dfiq:Q…" once DFIQ is imported), or your own { "key", "question" }. Optional facet, phase (1–6), priority.' },
+  { field: 'leads[]', text: 'Starter tasks: key, title, optional phase, priority, task_type, investigation_direction, and "answers": the question refs/keys the lead helps answer.' },
+  { field: 'playbook', text: '{ "builtin": "picerl-generic" | "ransomware" }, { "playbook_id": "<uuid>" } for one of your playbooks, or null.' },
+  { field: 'custom_fields[]', text: 'Extra incident fields: key (a-z, 0-9, _), label, type (text, number, boolean, date, select), options for select, required.' },
+]

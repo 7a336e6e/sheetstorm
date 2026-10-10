@@ -8,6 +8,8 @@ export type UserStatusFilter = 'active' | 'disabled' | 'locked' | 'must_change_p
 
 /** A user as the admin list / detail returns it (`to_dict`, plus `to_admin_dict` fields with users:manage). */
 export interface AdminUser extends User {
+  /** Guided tours on (default) unless an admin switched them off. */
+  tours_enabled?: boolean
   is_verified?: boolean
   mfa_enabled?: boolean
   is_locked?: boolean

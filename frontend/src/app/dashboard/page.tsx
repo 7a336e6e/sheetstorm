@@ -136,7 +136,7 @@ export default function DashboardPage() {
           </h1>
           <p className="text-sm text-muted-foreground">{currentDate}</p>
         </div>
-        <Link href="/dashboard/incidents/new">
+        <Link href="/dashboard/incidents/new" data-tour="new-incident">
           <Button>
             <Plus className="mr-2 h-4 w-4" />
             New Incident
@@ -145,7 +145,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4" data-tour="dashboard-stats">
         {isLoading ? (
           <>
             {[1,2,3,4,5,6].map(i => <SkeletonStatCard key={i} />)}
@@ -270,7 +270,7 @@ export default function DashboardPage() {
                   return (
                     <div key={tlp} className={`p-3 rounded-lg ${style.bg} border border-black/10 dark:border-white/10 text-center`}>
                       <div className={`text-lg font-bold ${style.text}`}>{count}</div>
-                      <div className={`text-[10px] font-mono ${style.text}`}>TLP:{style.label}</div>
+                      <div className={`text-[10px] font-mono ${style.text}`}>TLP:{style.label.replace('+', '+\u200b')}</div>
                     </div>
                   )
                 })}

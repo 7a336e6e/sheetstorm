@@ -127,6 +127,7 @@ The bundled nginx proxy (`proxy/`) decides the client IP that the backend uses f
 |----------|---------|-------------|
 | `TRUSTED_PROXY_CIDRS` | empty | Comma/space-separated IPs or CIDRs (IPv4 and IPv6) of the proxies nginx may trust. Validated at container start: an invalid entry (or `/0`) stops the container with an error. |
 | `REAL_IP_HEADER` | `X-Forwarded-For` | Header carrying the client IP. One of `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `True-Client-IP`. |
+| `NGINX_RESOLVER` | empty | DNS server(s) nginx uses to re-resolve the upstream containers at runtime (every 10 s), so recreating the frontend, backend or MCP server never leaves the proxy answering 502. Empty uses the nameservers of the proxy container (Docker's embedded DNS). |
 
 The nginx realip config is rendered from these at container start (`proxy/docker-entrypoint-realip.sh`) with `real_ip_recursive on`, so a chain such as `client, proxy1, proxy2` resolves to the first address that is not a trusted proxy. `X-Forwarded-Proto`, `X-Forwarded-Host`-derived scheme and CDN geo headers (`CF-IPCountry`, ...) are only believed when the connecting peer is trusted; HSTS is only sent when the effective scheme is HTTPS.
 

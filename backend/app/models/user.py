@@ -226,6 +226,7 @@ class User(BaseModel):
             'teams': self.teams,
             'organization_id': str(self.organization_id) if self.organization_id else None,
             'preferences': dict(self.preferences or {}),
+            'tours_enabled': self.tours_enabled,
             'is_locked': self.is_locked,
             'locked_until': self.locked_until.isoformat() if self.is_locked else None,
             'must_change_password': bool(self.must_change_password),
@@ -235,6 +236,12 @@ class User(BaseModel):
         if include_permissions:
             data['permissions'] = self.permissions
         return data
+
+    @property
+    def tours_enabled(self) -> bool:
+        """Guided tours (per-page walkthroughs) on unless an admin switched them
+        off for this user (preferences.tours_enabled; not user-writable)."""
+        return (self.preferences or {}).get('tours_enabled', True) is not False
 
     def to_admin_dict(self, include_permissions=False):
         """to_dict plus account-state details for holders of users:manage."""

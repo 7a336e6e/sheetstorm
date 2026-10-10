@@ -165,6 +165,7 @@ function IncidentsList() {
         <p className="mt-1 text-muted-foreground">Manage and track security incidents</p>
       </div>
 
+      <div data-tour="incidents-table">
       <DataTable
         query={query}
         columns={columns}
@@ -199,6 +200,7 @@ function IncidentsList() {
           description: 'Incidents you create or are assigned to appear here.',
         }}
       />
+      </div>
     </div>
   )
 }

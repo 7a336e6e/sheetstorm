@@ -466,6 +466,10 @@ def get_current_user():
 PREFERENCE_KEYS = {
     'display_timezone': ('utc', 'local'),
 }
+# List-valued preference: ids of the guided tours the user finished or
+# skipped. (`tours_enabled` is admin-only: PUT /users/<id>/tours.)
+TOUR_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,63}$')
+MAX_TOURS_SEEN = 200
 
 
 @api_bp.route('/auth/me/preferences', methods=['PATCH'])
@@ -480,12 +484,19 @@ def update_my_preferences():
         return jsonify({'error': 'unauthorized', 'message': 'Account not found or disabled'}), 401
 
     data = json_body()
-    unknown = sorted(set(data) - set(PREFERENCE_KEYS))
+    unknown = sorted(set(data) - set(PREFERENCE_KEYS) - {'tours_seen'})
     if unknown:
         return jsonify({'error': 'bad_request', 'message': f'Unknown preference keys: {unknown}'}), 400
     if not data:
         return jsonify({'error': 'bad_request', 'message': 'No preferences provided'}), 400
     for key, value in data.items():
+        if key == 'tours_seen':
+            if (not isinstance(value, list) or len(value) > MAX_TOURS_SEEN
+                    or not all(isinstance(t, str) and TOUR_ID_RE.match(t) for t in value)):
+                return jsonify({'error': 'bad_request',
+                                'message': 'tours_seen must be a list of tour ids'}), 400
+            data[key] = sorted(set(value))
+            continue
         check_choice(value, PREFERENCE_KEYS[key], key)
 
     # Reassign (not mutate) so SQLAlchemy sees the JSONB change.

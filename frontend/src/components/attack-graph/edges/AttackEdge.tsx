@@ -94,7 +94,10 @@ function AttackEdge({
             }}
             className="nodrag nopan"
           >
-            <div className="bg-card/90 backdrop-blur-sm text-[9px] text-muted-foreground px-1.5 py-0.5 rounded border border-border max-w-[120px] truncate">
+            <div
+              className="bg-card/90 backdrop-blur-sm text-[9px] text-muted-foreground px-1.5 py-0.5 rounded border border-border max-w-[200px] truncate"
+              title={mitreTactic ? `${label} [${mitreTactic}]` : label}
+            >
               {label}
               {mitreTactic && (
                 <span className="ml-1 text-purple-400">

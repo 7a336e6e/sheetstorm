@@ -53,7 +53,9 @@ export const DateTimeInput = React.forwardRef<HTMLInputElement, DateTimeInputPro
     const describedBy = [rest['aria-describedby'], showZone ? zoneId : undefined].filter(Boolean).join(' ') || undefined
 
     return (
-      <div className="flex w-full items-center gap-2">
+      // The zone sits on the label line (right-aligned, above the field) so
+      // the input keeps the full column width for the whole timestamp.
+      <div className="relative w-full">
         <Input
           {...rest}
           ref={ref}
@@ -61,14 +63,27 @@ export const DateTimeInput = React.forwardRef<HTMLInputElement, DateTimeInputPro
           step={step}
           value={draft}
           aria-describedby={describedBy}
-          className={cn('min-w-0 flex-1', className)}
+          className={cn('w-full [color-scheme:dark]', className)}
+          onClick={(e) => {
+            rest.onClick?.(e)
+            // Open the calendar/time picker on any click, not only on the icon.
+            try {
+              e.currentTarget.showPicker?.()
+            } catch {
+              /* not allowed (e.g. disabled or not a user gesture): typing still works */
+            }
+          }}
           onChange={(e) => {
             setDraft(e.target.value)
             onChange(fromInputValue(e.target.value, mode))
           }}
         />
         {showZone && (
-          <span id={zoneId} className="shrink-0 whitespace-nowrap text-xs text-muted-foreground" suppressHydrationWarning>
+          <span
+            id={zoneId}
+            className="pointer-events-none absolute bottom-full right-0 mb-1.5 whitespace-nowrap text-[11px] leading-none text-muted-foreground"
+            suppressHydrationWarning
+          >
             {zone}
           </span>
         )}

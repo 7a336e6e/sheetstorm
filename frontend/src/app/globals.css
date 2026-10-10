@@ -65,6 +65,8 @@
 
   /* Dark theme — deep charcoal, NOT navy */
   .dark {
+    /* Native scrollbars, pickers and form controls follow the dark theme. */
+    color-scheme: dark;
     /* Backgrounds: deep charcoal with subtle blue warmth */
     --background: 240 6% 9%;
     --foreground: 220 14% 89%;

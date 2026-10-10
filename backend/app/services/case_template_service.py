@@ -129,6 +129,34 @@ def parse_ref(ref):
         return None
 
 
+DISABLED_BUILTINS_KEY = 'disabled_builtin_templates'
+
+
+def disabled_builtins(org_id) -> set:
+    """Keys of the built-in templates this organization switched off. Stored
+    in ``organizations.settings`` (not an OrgSettings field: it is written
+    only through PUT /case-templates/builtin:<key>)."""
+    from app.models import Organization
+    org = db.session.get(Organization, org_id) if org_id else None
+    keys = ((org.settings or {}) if org is not None else {}).get(DISABLED_BUILTINS_KEY) or []
+    return {k for k in keys if isinstance(k, str)}
+
+
+def set_builtin_active(org, key, active: bool) -> bool:
+    """Switch a built-in template on/off for ``org`` (caller commits).
+    Returns the previous active state."""
+    settings = dict(org.settings or {})
+    disabled = set(settings.get(DISABLED_BUILTINS_KEY) or [])
+    was_active = key not in disabled
+    if active:
+        disabled.discard(key)
+    else:
+        disabled.add(key)
+    settings[DISABLED_BUILTINS_KEY] = sorted(disabled)
+    org.settings = settings  # reassign: JSON column change detection
+    return was_active
+
+
 def resolve(org_id, ref, *, require_active=True) -> Optional[ResolvedTemplate]:
     """The template addressed by ``ref`` ("builtin:<key>" or an org template
     uuid of ``org_id``), or None if it does not exist. With ``require_active``
@@ -141,6 +169,8 @@ def resolve(org_id, ref, *, require_active=True) -> Optional[ResolvedTemplate]:
         data = builtin_templates.get_case_template(ident)
         if data is None:
             return None
+        if require_active and ident in disabled_builtins(org_id):
+            raise TemplateError('This template is deactivated for your organization', 'template_inactive', 409)
         return ResolvedTemplate('builtin', ident, data['name'], 1,
                                 CaseTemplateDefinition.model_validate(data['definition']))
     row = CaseTemplate.query.filter_by(id=ident, organization_id=org_id).first()

@@ -72,7 +72,7 @@ function SettingsInner() {
                 <p className="text-sm text-muted-foreground">You don&apos;t have access to any settings.</p>
             ) : (
             <Tabs value={current} onValueChange={setTab}>
-                <TabsList className="flex-wrap h-auto gap-1">
+                <TabsList className="flex-wrap h-auto gap-1" data-tour="settings-tabs">
                     {tabs.map(({ value, label, icon: Icon }) => (
                         <TabsTrigger key={value} value={value} className="gap-1.5">
                             <Icon className="h-4 w-4" />

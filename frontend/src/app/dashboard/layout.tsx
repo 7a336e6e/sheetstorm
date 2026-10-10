@@ -12,6 +12,7 @@ import { SocketProvider } from '@/components/providers/socket-provider'
 import { ConflictProvider } from '@/components/providers/conflict-provider'
 import { PrimaryActionProvider } from '@/lib/primary-action'
 import { CommandPalette } from '@/components/layout/command-palette'
+import { TourProvider } from '@/components/tours/TourProvider'
 import { ShortcutsHelp } from '@/components/layout/shortcuts-help'
 import { Loader2, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -80,6 +81,7 @@ export default function DashboardLayout({
       {/* Global keyboard layer: mod+K palette, `?` help, g-chords, `n` */}
       <CommandPalette />
       <ShortcutsHelp />
+      <TourProvider />
       </PrimaryActionProvider>
       </ConflictProvider>
     </SocketProvider>

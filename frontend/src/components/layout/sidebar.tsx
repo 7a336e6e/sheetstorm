@@ -22,6 +22,7 @@ import {
   BookOpen,
   BarChart3,
   ListChecks,
+  Compass,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -29,6 +30,7 @@ import { Suspense, useState, useEffect, useMemo } from 'react'
 import { useSocketEvent } from '@/hooks/use-socket'
 import { NotificationPanel } from '@/components/layout/NotificationPanel'
 import { useCommandPalette } from '@/components/layout/command-palette'
+import { useCurrentTour, useTourStore } from '@/components/tours/TourProvider'
 import { adminNavigation, visibleAdminItems } from '@/components/layout/nav-config'
 import { useNotificationStore } from '@/lib/feature-stores'
 import type { Notification } from '@/types'
@@ -55,6 +57,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [collapsed, setCollapsed] = useState(false)
   const [notifPanelOpen, setNotifPanelOpen] = useState(false)
   const openPalette = useCommandPalette((s) => s.setOpen)
+  const currentTour = useCurrentTour()
+  const startTour = useTourStore((s) => s.start)
   const unreadCount = useNotificationStore((s) => s.unreadCount)
   const refreshUnreadCount = useNotificationStore((s) => s.refreshUnreadCount)
   const onSocketNotification = useNotificationStore((s) => s.onSocketNotification)
@@ -107,6 +111,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
       <div className="px-2 pt-3">
         <button
           type="button"
+          data-tour="search"
           onClick={() => {
             onNavigate?.()
             openPalette(true)
@@ -130,7 +135,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
-        <div className="space-y-1">
+        <div className="space-y-1" data-tour="nav-main">
           {filteredNavigation.map((item) => {
             const isActive = item.href === '/dashboard'
               ? pathname === '/dashboard'
@@ -223,6 +228,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                   size="icon-sm"
                   className="text-muted-foreground hover:text-foreground relative"
                   onClick={() => setNotifPanelOpen(true)}
+                  data-tour="notifications"
                   aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
                 >
                   <Bell className="h-4 w-4" />
@@ -239,6 +245,20 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             </>
           )}
         </div>
+        {currentTour.enabled && currentTour.tour && (
+          <Button
+            variant="ghost"
+            className={cn(
+              "text-muted-foreground hover:text-foreground w-full",
+              collapsed ? "justify-center px-0" : "justify-start"
+            )}
+            onClick={() => currentTour.tour && startTour(currentTour.tour)}
+            title="Show this page's guided tour"
+          >
+            <Compass className={cn("h-4 w-4", !collapsed && "mr-2")} />
+            {!collapsed && "Page tour"}
+          </Button>
+        )}
         <Button
           variant="ghost"
           className={cn(

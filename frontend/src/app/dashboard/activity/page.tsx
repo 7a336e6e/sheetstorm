@@ -248,7 +248,7 @@ function ActivityInner() {
               Show {newCount} new
             </Button>
           )}
-          <AuditExportMenu filters={apiFilters} />
+          <div data-tour="activity-export"><AuditExportMenu filters={apiFilters} /></div>
         </div>
       </div>
 
@@ -262,7 +262,7 @@ function ActivityInner() {
       {showFilters && (
         <Card>
           <CardContent className="pt-6">
-            <AuditFilterBar query={query} facets={facets} />
+            <div data-tour="activity-filters"><AuditFilterBar query={query} facets={facets} /></div>
           </CardContent>
         </Card>
       )}

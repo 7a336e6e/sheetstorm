@@ -618,16 +618,17 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
         {
             id: 'host', header: 'Host', sortKey: 'hostname', hideBelow: 'md',
             cell: (event) => event.host || event.hostname ? (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 whitespace-nowrap">
                     <Server className="h-3 w-3 text-muted-foreground" />
                     {event.host?.hostname || event.hostname}
                 </div>
             ) : '-',
         },
         {
-            id: 'activity', header: 'Activity', className: 'max-w-[400px]',
+            id: 'activity', header: 'Activity',
+            // The cap sits on the content: table cells ignore max-width in auto layout.
             cell: (event) => (
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 max-w-[400px]">
                     <span className="truncate" title={event.activity}>{event.activity}</span>
                     {event.is_ioc && <Badge variant="critical" className="text-[10px] px-1.5 py-0 shrink-0">IOC</Badge>}
                 </div>
@@ -641,7 +642,7 @@ export function EventsTable({ incidentId, focusRowId }: IncidentTabBaseProps) {
                     <div className="flex flex-col gap-1 items-start">
                         {mappings.length > 0 ? mappings.map((m, i) => (
                             <div key={i} className="flex items-center gap-1.5">
-                                <Badge variant="outline" className={`text-[10px] ${tacticColors[m.tactic?.toLowerCase()] || ''}`}>{m.tactic}</Badge>
+                                <Badge variant="outline" className={`whitespace-nowrap text-[10px] ${tacticColors[m.tactic?.toLowerCase()] || ''}`}>{m.tactic}</Badge>
                                 {m.technique && <span className="text-xs font-mono text-muted-foreground">{m.technique}</span>}
                             </div>
                         )) : <span className="text-xs text-muted-foreground">—</span>}

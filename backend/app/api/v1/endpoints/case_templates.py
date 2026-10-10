@@ -79,8 +79,12 @@ def list_case_templates():
     with_def = (request.args.get('include_definition') or '').lower() in ('true', '1')
     include_inactive = ((request.args.get('include_inactive') or '').lower() in ('true', '1')
                         and user.has_permission('templates:manage'))
-    items = [_item(t, with_definition=with_def)
-             for t in sorted(builtin_templates.load_case_templates().values(), key=lambda t: t['name'].casefold())]
+    disabled = cts.disabled_builtins(user.organization_id)
+    items = []
+    for t in sorted(builtin_templates.load_case_templates().values(), key=lambda t: t['name'].casefold()):
+        active = t['key'] not in disabled
+        if active or include_inactive:
+            items.append({**_item(t, with_definition=with_def), 'is_active': active})
     query = CaseTemplate.query.filter_by(organization_id=user.organization_id)
     if not include_inactive:
         query = query.filter_by(is_active=True)
@@ -102,7 +106,8 @@ def get_case_template(template_ref):
         data = builtin_templates.get_case_template(found)
         if data is None:
             return _not_found()
-        item = _item(data, with_definition=True)
+        item = {**_item(data, with_definition=True),
+                'is_active': found not in cts.disabled_builtins(user.organization_id)}
         row = None
     else:
         if not found.is_active and not user.has_permission('templates:manage'):
@@ -155,9 +160,7 @@ def update_case_template(template_ref):
     if kind is None or (kind == 'org' and row is None):
         return _not_found()
     if kind == 'builtin':
-        if builtin_templates.get_case_template(row) is None:
-            return _not_found()
-        return jsonify({'error': 'forbidden', 'message': 'Built-in templates are read-only; clone one instead'}), 403
+        return _update_builtin(user, row)
     try:
         body = cts.validate_body(_body(), CaseTemplateUpdate, user.organization_id)
     except TemplateError as exc:
@@ -182,6 +185,26 @@ def update_case_template(template_ref):
     if conflict:
         return conflict, conflict.status_code
     return set_etag(jsonify(_org_item(row)), row), 200
+
+
+def _update_builtin(user, key):
+    """Built-ins are read-only except ``{is_active}``: an organization can
+    switch one off (e.g. after customizing a copy). Anything else is 403."""
+    from app.models import Organization
+    data = builtin_templates.get_case_template(key)
+    if data is None:
+        return _not_found()
+    body = _body()
+    if not isinstance(body, dict) or set(body) - {'is_active', 'expected_version'} \
+            or not isinstance(body.get('is_active'), bool):
+        return jsonify({'error': 'forbidden',
+                        'message': 'Built-in templates are read-only; customize a copy instead. '
+                                   'Only is_active can be changed.'}), 403
+    org = db.session.get(Organization, user.organization_id)
+    was_active = cts.set_builtin_active(org, key, body['is_active'])
+    record_changes({'is_active': was_active}, {'is_active': body['is_active']}, template=f'builtin:{key}')
+    db.session.commit()
+    return jsonify({**_item(data, with_definition=False), 'is_active': body['is_active']}), 200
 
 
 @api_bp.route('/case-templates/<string:template_ref>', methods=['DELETE'])

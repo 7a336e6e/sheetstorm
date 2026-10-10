@@ -16,7 +16,9 @@ export interface User {
   organization_id?: string
   mfa_enabled?: boolean
   must_change_password?: boolean
-  preferences?: { display_timezone?: TimeMode }
+  preferences?: { display_timezone?: TimeMode; tours_seen?: string[] }
+  /** Guided tours on for this user (admins switch it on the Users page). */
+  tours_enabled?: boolean
   /**
    * Security-policy status (W3-SEC) from sign-in and /auth/me. While
    * `mfa_enrollment_required` is set the API only serves MFA enrollment, so

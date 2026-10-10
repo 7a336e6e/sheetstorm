@@ -74,6 +74,11 @@ for tok in $(printf '%s' "$CIDRS" | tr ',' ' '); do
 done
 set +f
 
+RESOLVER="${NGINX_RESOLVER:-$(awk '$1 == "nameserver" { printf "%s ", ($2 ~ /:/ ? "[" $2 "]" : $2) }' /etc/resolv.conf 2>/dev/null)}"
+RESOLVER="$(printf '%s' "$RESOLVER" | sed 's/[[:space:]]*$//')"
+[ -n "$RESOLVER" ] || RESOLVER=127.0.0.11  # Docker's embedded DNS
+case "$RESOLVER" in *[!0-9A-Za-z.:\[\]\ _-]*) fail "invalid NGINX_RESOLVER '$RESOLVER'" ;; esac
+
 TMP="$OUT.tmp"
 {
     echo "# Generated at container start by docker-entrypoint-realip.sh - do not edit."
@@ -95,6 +100,10 @@ TMP="$OUT.tmp"
         done
     fi
     echo "}"
+    # Re-resolve upstream names (frontend/backend/mcp-server) at runtime, so a
+    # recreated container with a new IP does not leave the proxy answering 502.
+    # NGINX_RESOLVER overrides; default: the container's own DNS server(s).
+    echo "resolver $RESOLVER valid=10s ipv6=off;"
 } > "$TMP"
 mv "$TMP" "$OUT"
 

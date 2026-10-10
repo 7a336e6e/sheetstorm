@@ -21,6 +21,11 @@ export function UserStatusBadges({ user }: { user: AdminUser }) {
       )}
       {user.must_change_password && <Badge variant="outline">Must change password</Badge>}
       {user.mfa_enabled && <Badge variant="default">MFA</Badge>}
+      {user.tours_enabled === false && (
+        <Badge variant="outline" title="Guided tours are switched off for this user">
+          Tours off
+        </Badge>
+      )}
       {user.is_service_account === true && (
         <Badge variant="info" title="API-key-only account; it cannot sign in interactively">
           Service account

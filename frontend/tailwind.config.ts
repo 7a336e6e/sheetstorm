@@ -111,6 +111,15 @@ const config: Config = {
           from: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
           to: { opacity: "0", transform: "translate(-50%, -48%) scale(0.96)" },
         },
+        // Top-anchored overlays (command palette): centred horizontally only.
+        "palette-in": {
+          from: { opacity: "0", transform: "translate(-50%, -8px) scale(0.98)" },
+          to: { opacity: "1", transform: "translate(-50%, 0) scale(1)" },
+        },
+        "palette-out": {
+          from: { opacity: "1", transform: "translate(-50%, 0) scale(1)" },
+          to: { opacity: "0", transform: "translate(-50%, -8px) scale(0.98)" },
+        },
         "data-flow": {
           "0%": { left: "-8px", opacity: "0" },
           "15%": { opacity: "1" },
@@ -153,6 +162,8 @@ const config: Config = {
         "overlay-out": "overlay-out 150ms cubic-bezier(0.16, 1, 0.3, 1)",
         "dialog-in": "dialog-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "dialog-out": "dialog-out 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards",
+        "palette-in": "palette-in 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards",
+        "palette-out": "palette-out 120ms cubic-bezier(0.16, 1, 0.3, 1) forwards",
         "data-flow": "data-flow 6s linear infinite",
         "orbit": "orbit var(--orbit-duration, 20s) linear infinite",
         "pulse-ring": "pulse-ring 3s ease-in-out infinite",

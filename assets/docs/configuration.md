@@ -89,6 +89,8 @@ Registered jobs: `purge-audit-logs` and `verify-audit-chain` (daily; see [Audit 
 | `S3_BUCKET` / `S3_REGION` | `sheetstorm-artifacts` / `us-east-1` | Bucket and region |
 | `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REDIRECT_URI`, `GOOGLE_DRIVE_FOLDER_ID` | empty | Google Drive evidence storage |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | empty | GitHub SSO |
+| `SSO_REDIRECT_BASE_URL` | empty | Public origin under which `/api/v1` is reachable, used for the OpenID Connect redirect URI. Defaults to `FRONTEND_URL`, then the request's origin. Only needed when the API is served from another origin than the UI. Providers themselves are configured in the UI ([Single sign-on](sso.md)) |
+| `SSO_ALLOW_HTTP_ISSUERS` | `false` | Accept `http://` identity providers (local Keycloak labs, tests). Never in production |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | empty | Supabase SSO (backend) |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | empty | Supabase SSO (frontend, build-time) |
 | `SLACK_WEBHOOK_URL` | empty | Slack webhook for notifications |

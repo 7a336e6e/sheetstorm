@@ -730,3 +730,86 @@ export * from './evidence'
 export * from './decisions'
 export * from './questions'
 export * from './rate-limits'
+
+// ── OpenID Connect single sign-on (/admin/sso-providers, /auth/sso/*) ──
+
+export type SsoPreset = 'entra' | 'okta' | 'keycloak' | 'google' | 'authentik' | 'auth0' | 'generic'
+export type SsoTokenAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'none'
+export type SsoRoleSync = 'first_login' | 'every_login'
+export type SsoMfaMode = 'sheetstorm' | 'idp' | 'idp_amr'
+
+export interface SsoRoleMapping {
+  group: string
+  role_id: string
+}
+
+/** Fields an admin edits; `client_secret` is write-only (omit = keep, "" = clear). */
+export interface SsoProviderInput {
+  slug: string
+  display_name: string
+  preset: SsoPreset
+  issuer: string
+  client_id: string
+  client_secret?: string
+  token_auth_method: SsoTokenAuthMethod
+  scopes: string
+  email_claims: string[]
+  name_claim: string
+  groups_claim: string | null
+  role_mappings: SsoRoleMapping[]
+  default_role_id: string | null
+  allowed_groups: string[]
+  allowed_domains: string[]
+  is_enabled: boolean
+  show_on_login: boolean
+  auto_provision: boolean
+  link_existing: boolean
+  require_email_verified: boolean
+  role_sync: SsoRoleSync
+  mfa_mode: SsoMfaMode
+}
+
+export interface SsoProvider extends Omit<SsoProviderInput, 'client_secret'> {
+  id: string
+  organization_id: string
+  has_client_secret: boolean
+  identity_count: number
+  redirect_uri: string
+  start_url: string
+  created_at: string | null
+  updated_at: string | null
+  last_login_at: string | null
+}
+
+export interface SsoProviderList {
+  items: SsoProvider[]
+  /** Callback URL with `{slug}` for the provider's slug (register it at the IdP). */
+  redirect_uri_template: string
+  allow_http_issuers: boolean
+}
+
+export interface SsoCheck {
+  name: string
+  ok: boolean
+  warning: boolean
+  detail: string
+}
+
+export interface SsoTestReport {
+  ok: boolean
+  checks: SsoCheck[]
+  redirect_uri: string
+}
+
+/** A sign-in button on the login page (GET /auth/sso/providers). */
+export interface SsoLoginProvider {
+  slug: string
+  name: string
+  preset: SsoPreset
+  start_url: string
+}
+
+export interface SsoLoginProviders {
+  providers: SsoLoginProvider[]
+  github: boolean
+}

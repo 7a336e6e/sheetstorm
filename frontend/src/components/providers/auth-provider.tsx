@@ -34,7 +34,7 @@ export const routeGuards: RouteGuard[] = [
   { path: '/dashboard/admin/users', anyOf: ['users:create', 'users:update', 'users:manage'] },
   { path: '/dashboard/admin/roles', anyOf: ['roles:manage', 'users:read'] },
   { path: '/dashboard/admin/teams', anyOf: ['teams:create', 'teams:update', 'teams:delete'] },
-  { path: '/dashboard/admin/settings', anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'] },
+  { path: '/dashboard/admin/settings', anyOf: ['organizations:manage', 'integrations:read', 'admin:manage', 'users:manage'] },
   { path: '/dashboard/admin/archived-incidents', anyOf: ['incidents:archive'] },
   { path: '/dashboard/admin/overview', anyOf: ['organizations:manage'] },
   { path: '/dashboard/admin/templates', anyOf: ['templates:manage'] },

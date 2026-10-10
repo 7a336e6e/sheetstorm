@@ -66,6 +66,7 @@ GROUPS: dict[str, GroupDef] = {
     'auth_password_change': GroupDef('5 per hour', 'Changing one\'s own password.', 'auth', True, ('POST /auth/change-password',)),
     'auth_sso_supabase': GroupDef('10 per minute', 'Supabase single sign-on.', 'auth', True, ('POST /auth/supabase',)),
     'auth_sso_github': GroupDef('20 per minute', 'GitHub OAuth redirect and callback.', 'auth', True, ('GET /auth/github', 'POST /auth/github/callback')),
+    'auth_sso': GroupDef('30 per minute', 'OpenID Connect single sign-on: provider list, redirect, callback and admin tests.', 'auth', True, ('GET /auth/sso/providers', 'GET /auth/sso/<slug>/start', 'GET /auth/sso/<slug>/callback', 'POST /admin/sso-providers/<id>/test')),
     'mfa_enroll': GroupDef('5 per hour', 'MFA setup and disable.', 'auth', True, ('POST /auth/mfa/setup', 'POST /auth/mfa/disable')),
     'mfa_verify': GroupDef('10 per hour', 'MFA code verification.', 'auth', True, ('POST /auth/mfa/verify',)),
     'mfa_complete': GroupDef('10 per minute', 'MFA step after SSO sign-in.', 'auth', True, ('POST /auth/mfa/complete',)),

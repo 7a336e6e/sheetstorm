@@ -1,7 +1,10 @@
 /**
- * Authentication tab: OAuth provider configs. Only types the backend can log
- * in with (`login_supported`, today GitHub) can be added; existing rows of
- * other types (Google, Azure) are shown as unused and can only be deleted.
+ * Authentication tab: OpenID Connect single sign-on providers
+ * (`users:manage`, see SsoProvidersSection) and the OAuth app integrations
+ * (`integrations:*`). Only OAuth types the backend can log in with
+ * (`login_supported`, today GitHub) can be added; existing rows of other
+ * types (Google, Azure) are shown as unused and can only be deleted: use an
+ * OpenID Connect provider for Google Workspace and Entra ID instead.
  */
 
 "use client"
@@ -18,6 +21,7 @@ import { api } from '@/lib/api'
 import { notifyError, notifySuccess } from '@/lib/errors'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { PermissionGate, usePermission } from '@/components/auth/permission-gate'
+import { SsoProvidersSection } from './SsoProvidersSection'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
   DialogFooter, DialogBody,
@@ -66,6 +70,17 @@ const FIELD_LABELS: Record<string, string> = {
 const SECRET_FIELDS = new Set(['client_secret'])
 
 export function AuthenticationTab() {
+  const canSso = usePermission('users:manage')
+  const canOAuth = usePermission('integrations:read')
+  return (
+    <div className="space-y-10">
+      {canSso && <SsoProvidersSection />}
+      {canOAuth && <OAuthAppsSection />}
+    </div>
+  )
+}
+
+function OAuthAppsSection() {
   const confirm = useConfirm()
   const canUpdate = usePermission('integrations:update')
   const canCreate = usePermission('integrations:create')
@@ -154,9 +169,9 @@ export function AuthenticationTab() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h3 className="text-lg font-medium">Authentication</h3>
+          <h3 className="text-lg font-medium">OAuth apps</h3>
           <p className="text-sm text-muted-foreground">
-            SSO providers for single sign-on · {integrations.filter(i => i.is_enabled && loginSupported(i.type)).length} active
+            Sign-in with a GitHub account · {integrations.filter(i => i.is_enabled && loginSupported(i.type)).length} active
           </p>
         </div>
         {supportedTypes.length > 0 && (
@@ -171,9 +186,9 @@ export function AuthenticationTab() {
         <CardContent className="p-4 flex items-start gap-3">
           <Lock className="h-5 w-5 text-cyan-400 mt-0.5 shrink-0" />
           <div className="text-sm">
-            <p className="font-medium text-cyan-400">Single Sign-On (SSO)</p>
+            <p className="font-medium text-cyan-400">GitHub sign-in</p>
             <p className="text-muted-foreground mt-0.5">
-              When an OAuth provider is enabled, users see a &quot;Sign in with...&quot; button on the login page. Users are auto-provisioned on first login. Local email/password login always remains available.
+              When the GitHub app is enabled, the login page shows a GitHub button. New users are created only while self-registration is open. Local email/password login always remains available. For Microsoft Entra ID, Google Workspace, Okta or Keycloak, add an identity provider above.
             </p>
           </div>
         </CardContent>

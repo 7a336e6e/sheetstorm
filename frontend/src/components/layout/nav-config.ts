@@ -33,7 +33,7 @@ export const adminNavigation: AdminNavItem[] = [
     name: 'Settings',
     href: '/dashboard/admin/settings',
     icon: Settings,
-    anyOf: ['organizations:manage', 'integrations:read', 'admin:manage'],
+    anyOf: ['organizations:manage', 'integrations:read', 'admin:manage', 'users:manage'],
     keywords: 'admin organization integrations',
   },
 ]

@@ -187,6 +187,23 @@
 
 ### New
 
+- **Single sign-on with OpenID Connect** (Admin → Settings → Authentication).
+  - **Providers:** Microsoft Entra ID, Okta, Keycloak, Google Workspace,
+    authentik, Auth0, or any provider with OpenID Connect discovery. Each gets
+    a login button.
+  - **Protocol:** authorization code flow with PKCE, state bound to the
+    browser, and full ID token verification (JWKS, issuer, audience, nonce;
+    RS/PS/ES only).
+  - **Accounts:** just-in-time accounts, account linking by verified email,
+    and email-domain and group allowlists. Group-to-role mapping is applied
+    once or on every sign-in, never removing the last administrator.
+  - **MFA:** a per-provider mode decides whether SheetStorm TOTP or the
+    identity provider's MFA applies.
+  - **Testing:** tested against a mock provider in CI and verified against
+    Keycloak 26.7. See `assets/docs/sso.md`.
+  - **Login page fixes:** the GitHub button now uses the backend OAuth app when
+    it is configured (Supabase otherwise) and is hidden when neither is. The
+    disabled "Azure AD" and "Okta" placeholder buttons are gone.
 - **Continuous integration:** every pull request and push to `main` runs:
   - the backend suite on real PostgreSQL and Redis;
   - the MCP server and bridge suites;

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 1.0.0 (2026-10-10)
+
+First tagged release. Release images are published to `ghcr.io/7a336e6e/sheetstorm-*`
+(see `assets/docs/operations.md`).
+
 ### Behavior changes (upgrade notes)
 
 - **Archived incidents are hidden and read-only.** Without `incidents:archive`
@@ -209,7 +216,9 @@
   - the MCP server and bridge suites;
   - frontend type checks, lint, unit tests and the production build;
   - Playwright against a full Docker stack;
-  - a backup → `down -v` → restore round trip.
+  - a backup → `down -v` → restore round trip;
+  - a dependency review that fails a pull request adding a dependency with a
+    known moderate or worse advisory.
 - **Release images:** tagging `vX.Y.Z` publishes multi-arch (amd64 + arm64)
   images of every service to `ghcr.io/7a336e6e/sheetstorm-*`, with signed
   build-provenance attestations, SBOM, and a GitHub Release built from this

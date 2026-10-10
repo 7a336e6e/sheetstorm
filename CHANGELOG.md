@@ -333,6 +333,10 @@
 ### Other fixes
 
 - The command palette (Ctrl/⌘ + K) no longer opens partly off-screen.
+- The proxy re-resolves the frontend/backend/MCP containers at runtime
+  (`resolver` from the container's DNS, override with `NGINX_RESOLVER`), so
+  recreating one of them no longer leaves the proxy answering 502 until it is
+  restarted.
 - Date-time fields use the full field width, show the time zone on the label
   line, and open the calendar/time picker on click.
 

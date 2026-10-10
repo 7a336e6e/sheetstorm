@@ -4,6 +4,38 @@
 
 Nothing yet.
 
+## 1.0.1 (2026-10-10)
+
+### New
+
+- **Install a release without cloning.** Each GitHub Release now carries
+  `sheetstorm-X.Y.Z.tar.gz`, the same archive as `sheetstorm.tar.gz` (so
+  `releases/latest/download/sheetstorm.tar.gz` always works), a standalone
+  `docker-compose.yml` and `SHA256SUMS`, all attested.
+  - The archive holds the compose file for that release's images,
+    `.env.example`, `install.sh`, and the backup and restore scripts.
+  - To install: unpack it and run `./install.sh`. Upgrades are the same:
+    unpack a newer bundle over it and run `./install.sh` again.
+  - The release workflow installs every release from its bundle on a clean
+    runner before publishing the release.
+  - The compose file is generated from the source stack, so it cannot drift.
+    CI builds and validates it, and shellchecks the scripts, on every pull
+    request.
+
+### Fixes
+
+- **Custody signatures on existing installs.** `start.sh` gave an existing
+  install without `CUSTODY_SIGNING_KEY` a new random key. Custody entries
+  recorded until then had been signed with the `SECRET_KEY` fallback, so
+  they would no longer verify. Such an install now gets its current
+  `SECRET_KEY` (the documented migration).
+- **More secrets for fresh installs.** A fresh `.env` (from `start.sh` or
+  `install.sh`) now also gets a random database password, `AUDIT_CHAIN_KEY`
+  and `API_KEY_PEPPER`, and mode 0600. If a database volume exists but `.env`
+  is missing, the installer warns instead.
+- **Version in backup manifests.** They now record the release version of
+  image-based installs.
+
 ## 1.0.0 (2026-10-10)
 
 First tagged release. Release images are published to `ghcr.io/7a336e6e/sheetstorm-*`

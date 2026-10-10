@@ -43,6 +43,7 @@ done
 umask 077
 mkdir -p "$OUT"
 # A failed backup must not leave a directory that looks complete.
+# shellcheck disable=SC2154  # status is assigned inside the trap
 trap 'status=$?; [ "$status" -eq 0 ] || { rm -rf "$OUT"; echo "backup: failed, removed $OUT" >&2; }' EXIT
 
 echo "backup: dumping the database..." >&2
@@ -54,7 +55,7 @@ dc exec -T backend sh -c 'tar -C "${LOCAL_ARTIFACT_DIR:-/app/artifacts}" -cf - .
 revision="$(dc exec -T database sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version_num FROM alembic_version"' | tr -d '[:space:]')"
 server="$(dc exec -T database sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SHOW server_version"' | tr -d '[:space:]')"
-app_version="$(dc exec -T backend sh -c 'printf %s "${APP_VERSION:-}"')"
+app_version="$(dc exec -T backend sh -c 'printf %s "${APP_VERSION:-${SHEETSTORM_IMAGE_VERSION:-}}"')"
 commit="$(git rev-parse HEAD 2>/dev/null || true)"
 
 cat > "$OUT/manifest.json" <<EOF

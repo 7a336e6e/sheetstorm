@@ -203,16 +203,28 @@ your own agents work a case in natural language, under the same permissions as t
 
 ## Quick start
 
+**Run a release** (no clone, no build): download the bundle from the
+[latest release](https://github.com/7a336e6e/sheetstorm/releases/latest) and run its
+installer.
+
+```bash
+curl -fsSLO https://github.com/7a336e6e/sheetstorm/releases/latest/download/sheetstorm.tar.gz
+tar -xzf sheetstorm.tar.gz && cd sheetstorm && ./install.sh
+```
+
+**Or build from source:**
+
 ```bash
 git clone https://github.com/7a336e6e/sheetstorm.git && cd sheetstorm
 ./start.sh
 ```
 
-`start.sh` creates `.env` from `.env.example`, generates the secrets, builds and starts the
-containers, applies the database migrations and creates the first administrator.
+Both create `.env` from `.env.example` with freshly generated secrets, start the containers
+and apply the database migrations. They also create the first administrator. The release
+bundle runs the signed multi-arch images from `ghcr.io`; `start.sh` builds them locally.
 
 Open **http://localhost:8080** and sign in as `admin@sheetstorm.local`. With `ADMIN_PASSWORD`
-empty in `.env`, a random password is printed **once** in the `start.sh` output. You must
+empty in `.env`, a random password is printed **once** in the installer output. You must
 choose a new password at first sign-in. Add further users from **Admin → Users**.
 
 | Service | Address | Notes |
@@ -224,11 +236,9 @@ choose a new password at first sign-in. Add further users from **Admin → Users
 
 **Requirements:** Docker with Compose v2, 2 GB RAM (4 GB recommended).
 
-**Prefer prebuilt images?** `./start.sh --version 1.0.0` pulls the signed multi-arch
-release images from `ghcr.io` instead of building. Check the
-[releases](https://github.com/7a336e6e/sheetstorm/releases) for the current version, and
-see [Operations](assets/docs/operations.md#install-from-source-or-from-release-images)
-for how to verify the images.
+Upgrading, verifying the images and the bundle, and running release images from a source
+checkout (`./start.sh --version X.Y.Z`) are covered in
+[Operations](assets/docs/operations.md#install-from-a-release-or-from-source).
 
 > Plain HTTP works on `localhost` only. For any other host name, terminate TLS in front of
 > the proxy (load balancer, Caddy, a tunnel, ...) and set `FRONTEND_URL` and `CORS_ORIGINS` to

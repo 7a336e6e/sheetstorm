@@ -7,6 +7,10 @@ import { api, expect, expectOk, test, useRole } from './fixtures'
 
 const stamp = () => `${Date.now()}-${Math.floor(Math.random() * 1e4)}`
 
+// One worker, in order: the org-policy test switches API keys off for the whole
+// organization, which must never overlap the key lifecycle tests.
+test.describe.configure({ mode: 'default' })
+
 /** The one-time secret shown in the dialog, then dismissed through the acknowledgement. */
 async function readAndDismissSecret(page: Page, title: 'API key created' | 'API key rotated'): Promise<string> {
   const dialog = page.getByRole('dialog', { name: title })

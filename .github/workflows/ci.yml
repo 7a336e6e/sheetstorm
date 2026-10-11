@@ -80,7 +80,7 @@ jobs:
       - run: npm run build
 
   bundle:
-    name: Release bundle and shell scripts
+    name: Release bundle, badges and shell scripts
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -89,6 +89,10 @@ jobs:
           persist-credentials: false
       - name: shellcheck
         run: shellcheck -S warning start.sh deploy/install.sh scripts/backup.sh scripts/restore.sh ci/*.sh
+      # README badges are static SVGs derived from the repo (version, stack,
+      # MCP tool count); fail when one no longer matches.
+      - name: README badges are current
+        run: python3 ci/badges.py --check
       # The bundle every release ships (docker-compose.yml generated from the
       # source stack): it must build and be a valid compose file.
       - name: Build and validate the release bundle

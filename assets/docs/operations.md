@@ -170,8 +170,9 @@ compares every table's row count and every evidence file's hash
 
 ## Releases (maintainers)
 
-1. Move the `## Unreleased` notes in `CHANGELOG.md` under `## X.Y.Z (YYYY-MM-DD)`
-   and merge that to `main`.
+1. Move the `## Unreleased` notes in `CHANGELOG.md` under `## X.Y.Z (YYYY-MM-DD)`,
+   run `python3 ci/badges.py` (the README release badge follows the changelog;
+   CI fails while it is stale) and merge that to `main`.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. A tag with a
    suffix (`vX.Y.Z-rc.1`) makes a prerelease: no `X.Y` or `latest` tags,
    and the notes may come from `Unreleased`.

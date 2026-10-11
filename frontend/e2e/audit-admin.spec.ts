@@ -101,11 +101,12 @@ test.describe('audit admin (Administrator)', { tag: '@audit-admin' }, () => {
         await expect(place).toBeDisabled()
         await page.getByLabel('Reason (required)').fill(`E2E hold ${stamp()}`)
         await place.click()
-        await expect(page.getByText('Legal hold is on')).toBeVisible()
+        // exact: the card description also says "while a legal hold is on".
+        await expect(page.getByText('Legal hold is on', { exact: true })).toBeVisible()
 
         await toggle.click()
         await page.getByRole('dialog').getByRole('button', { name: 'Release hold' }).click()
-        await expect(page.getByText('Legal hold is off')).toBeVisible()
+        await expect(page.getByText('Legal hold is off', { exact: true })).toBeVisible()
       } finally {
         await api.put(context, '/admin/audit-settings', { legal_hold: false })
       }

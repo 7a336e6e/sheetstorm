@@ -9,14 +9,14 @@ A structured, collaborative replacement for the incident-response spreadsheet:
 timelines, hosts, indicators, evidence and decisions in one place, with an audit trail that holds up afterwards.
 
 <p>
-  <a href="https://github.com/7a336e6e/sheetstorm/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/7a336e6e/sheetstorm/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
-  <a href="https://github.com/7a336e6e/sheetstorm/releases"><img src="https://img.shields.io/github/v/release/7a336e6e/sheetstorm?include_prereleases&sort=semver&style=flat-square&color=4D82CB" alt="Latest release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4D82CB?style=flat-square" alt="MIT License" /></a>
-  <img src="https://img.shields.io/badge/Next.js-16-18181B?style=flat-square&logo=nextdotjs" alt="Next.js 16" />
-  <img src="https://img.shields.io/badge/Flask-3.1-18181B?style=flat-square&logo=flask" alt="Flask 3.1" />
-  <img src="https://img.shields.io/badge/PostgreSQL-16-18181B?style=flat-square&logo=postgresql" alt="PostgreSQL 16" />
-  <img src="https://img.shields.io/badge/MCP-143_tools-18181B?style=flat-square" alt="MCP server: 143 tools" />
-  <a href="https://github.com/7a336e6e/sheetstorm"><img src="https://img.shields.io/github/stars/7a336e6e/sheetstorm?style=flat-square&color=4D82CB" alt="GitHub stars" /></a>
+  <!-- Badges: GitHub's own CI badge plus static SVGs from ci/badges.py (no third-party badge service). -->
+  <a href="https://github.com/7a336e6e/sheetstorm/actions/workflows/ci.yml"><img src="https://github.com/7a336e6e/sheetstorm/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" height="20" /></a>
+  <a href="https://github.com/7a336e6e/sheetstorm/releases/latest"><img src="assets/badges/release.svg" alt="Latest release" height="20" /></a>
+  <a href="LICENSE"><img src="assets/badges/license.svg" alt="MIT License" height="20" /></a>
+  <img src="assets/badges/nextjs.svg" alt="Next.js 16" height="20" />
+  <img src="assets/badges/flask.svg" alt="Flask 3.1" height="20" />
+  <img src="assets/badges/postgresql.svg" alt="PostgreSQL 16" height="20" />
+  <img src="assets/badges/mcp.svg" alt="MCP server: 143 tools" height="20" />
 </p>
 
 <p>

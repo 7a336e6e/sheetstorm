@@ -19,7 +19,7 @@
 # ---------------------------------------------------------------------------
 # Base image pinned by multi-arch index digest (Dependabot "docker" updates it);
 # same base as the backend image.
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS builder
+FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS builder
 
 WORKDIR /build
 
@@ -37,7 +37,7 @@ RUN pip wheel --no-cache-dir --no-deps --no-build-isolation --wheel-dir /wheels 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — minimal image
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS runtime
+FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS runtime
 
 LABEL maintainer="SheetStorm Team"
 LABEL description="MCP server for SheetStorm incident response platform"

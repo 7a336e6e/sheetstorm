@@ -254,7 +254,7 @@ services:
   # (no host port is published: the backend reaches it over the compose network;
   # if you point OUTBOUND_URL_ALLOWLIST at it, add `ollama`).
   ollama:
-    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
+    image: ollama/ollama:0.40.4@sha256:926d40fd6eeeebd346b5c358a63de2a10ec995371cd93dd22f1843200694b1a6
     container_name: sheetstorm-ollama
     profiles: ["local-llm"]
     volumes:

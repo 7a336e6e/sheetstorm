@@ -176,8 +176,8 @@ Gates: backend docker suite (includes the single-Alembic-head check in `test_mig
 |---------|------------|
 | backend | `python:3.12-slim-bookworm` (hash-locked `pip install --require-hashes`, wheels only) |
 | mcp-server | `python:3.12-slim-bookworm` (same) |
-| frontend | `node:22-alpine` (build uses `npm ci --legacy-peer-deps`) |
-| proxy | `nginx:1.28-alpine` |
+| frontend | `node:22.23.4-alpine` (build uses `npm ci --legacy-peer-deps`) |
+| proxy | `nginx:1.31-alpine` |
 | ollama (optional profile) | `ollama/ollama` pinned to a specific version tag |
 
 Shell scripts must keep LF line endings (enforced by `.gitattributes`) and `backend/entrypoint.sh` must be committed executable.

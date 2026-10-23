@@ -26,7 +26,10 @@ detected and unpublished within hours to a few days.
   `registry.npmjs.org` with an `integrity` hash. Git/URL/tarball dependencies
   are not allowed (`allow-git=none`).
 - Frontend installs need `--legacy-peer-deps` (current peer-dependency
-  conflicts): `npm ci --ignore-scripts --legacy-peer-deps`.
+  conflicts): `npm ci --ignore-scripts --legacy-peer-deps`. `frontend/.npmrc`
+  sets `legacy-peer-deps=true` as well, so Dependabot's lockfile updates
+  resolve the same way (otherwise they mark the Tailwind build tree as
+  production and dependency review flags it).
 
 ### 2. No install scripts (allowlist only)
 

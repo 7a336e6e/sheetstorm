@@ -1,6 +1,6 @@
 # Test-only OpenID Connect provider for the e2e stack (ci/compose.e2e.yml).
 # Standard library only; same digest-pinned base image as the backend.
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
 COPY server.py /mock/server.py
 USER nobody
 EXPOSE 9000

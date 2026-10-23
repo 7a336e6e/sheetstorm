@@ -76,7 +76,12 @@ detected and unpublished within hours to a few days.
 
   | Package | Version | Advisory | Re-verify |
   |---|---|---|---|
-  | _none currently_ | | | |
+  | `brotli` (backend) | 1.2.1 (2026-10-22) | CVE-2026-111497 | 2026-10-29 |
+  | `brotlicffi` (backend lock, non-CPython only) | 1.2.1.0 (2026-10-22) | CVE-2026-111497 | 2026-10-29 |
+
+  `scripts/lock-python.sh` carries the same exceptions in
+  `EXCLUDE_NEWER_PACKAGES`; drop them there and here once the default cutoff
+  has passed them.
 
   2026-10-08: `next`/`eslint-config-next` are pinned to `16.3.8` (published
   2026-09-30, past the cooldown), which fixes GHSA-2xp9-vwfh-vxw4,

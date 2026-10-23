@@ -1,5 +1,5 @@
 # Base image pinned by multi-arch index digest (Dependabot "docker" updates it).
-FROM nginx:1.31-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+FROM nginx:1.31-alpine@sha256:a3554c0d0b48177b1413c26e01f695334428020d9df01243fbae3e11cfd17417
 
 RUN rm /etc/nginx/conf.d/default.conf
 

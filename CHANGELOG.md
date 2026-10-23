@@ -4,6 +4,29 @@
 
 Nothing yet.
 
+## 1.0.2 (2026-10-23)
+
+### Security
+
+- **CVE-2026-111497, Brotli decoder out-of-bounds write.** A crafted Brotli
+  stream can corrupt memory in the decoder and may allow remote code
+  execution. Upgrade every install.
+  - The frontend image runs Node.js 22.23.4 (`node:22.23.4-alpine`), the
+    release that fixes the Brotli copy bundled in `zlib`.
+  - The backend image installs `brotli` 1.2.1, which WeasyPrint uses through
+    fontTools. The lock also moves `brotlicffi`, only installed on
+    non-CPython interpreters, to 1.2.1.0.
+  - All base images (Python, nginx, PostgreSQL, Redis) are pinned to current
+    digests, so they carry the latest OS package updates.
+  - Still waiting on upstream fixes: Debian bookworm `libbrotli1` (backend
+    image), Alpine `brotli-libs` (proxy image), and the `libbrotlidec` that
+    Pillow bundles in its wheels. SheetStorm passes them no untrusted Brotli
+    data: nginx has no Brotli module, the PDF renderer refuses every URL
+    fetch so it never loads an outside font, and `curl` only runs local
+    health checks. A later release will pick up the fixed packages.
+- Upgrading needs no configuration or schema change: rebuild from source, or
+  pull the 1.0.2 images.
+
 ## 1.0.1 (2026-10-10)
 
 ### New

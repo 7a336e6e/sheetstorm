@@ -32,13 +32,21 @@ EXCLUDE_NEWER="${EXCLUDE_NEWER:-$(date -u -v-7d +%FT%TZ 2>/dev/null || date -u -
 # `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<ver>-python3.12-trixie-slim`.
 UV_IMAGE="ghcr.io/astral-sh/uv:0.12.21-python3.12-trixie-slim@sha256:5ae92e4d35b8d586d50ddf4aba6ecdd9f744237284d31c86bf45077e4e17e4bd"
 
+# Security-fix exceptions to the cooldown (assets/docs/supply-chain.md, section
+# 3): space-separated package=cutoff pairs, each one listed in that table.
+# Remove an entry once the default cutoff has passed it.
+EXCLUDE_NEWER_PACKAGES="brotli=2026-10-23T00:00:00Z brotlicffi=2026-10-23T00:00:00Z"
+
 echo "Locking with --exclude-newer ${EXCLUDE_NEWER} (nothing uploaded after this moment resolves)"
+[ -n "$EXCLUDE_NEWER_PACKAGES" ] && echo "  security exceptions: ${EXCLUDE_NEWER_PACKAGES}"
 
 docker run --rm --network bridge \
-  -e EXCLUDE_NEWER="$EXCLUDE_NEWER" -e UV_NO_CONFIG=1 -e UV_CACHE_DIR=/tmp/uv-cache \
+  -e EXCLUDE_NEWER="$EXCLUDE_NEWER" -e EXCLUDE_NEWER_PACKAGES="$EXCLUDE_NEWER_PACKAGES" \
+  -e UV_NO_CONFIG=1 -e UV_CACHE_DIR=/tmp/uv-cache \
   -v "$ROOT:/src" -w /src --entrypoint /bin/sh "$UV_IMAGE" -euc '
 compile() {  # compile <python-version> <output> <inputs/flags...>
   pyver="$1"; out="$2"; shift 2
+  for p in $EXCLUDE_NEWER_PACKAGES; do set -- "$@" --exclude-newer-package "$p"; done
   uv pip compile --quiet --generate-hashes --universal --python-version "$pyver" \
     --exclude-newer "$EXCLUDE_NEWER" --index-url https://pypi.org/simple \
     --custom-compile-command "scripts/lock-python.sh  (EXCLUDE_NEWER=$EXCLUDE_NEWER)" \

@@ -17,7 +17,8 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build — install deps + build wheel
 # ---------------------------------------------------------------------------
-# Base image pinned by multi-arch index digest (Dependabot "docker" updates it);
+# Base image pinned by multi-arch index digest (bumped by hand, see
+# assets/docs/supply-chain.md section 6);
 # same base as the backend image.
 FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS builder
 

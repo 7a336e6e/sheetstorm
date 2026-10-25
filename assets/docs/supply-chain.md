@@ -27,9 +27,9 @@ detected and unpublished within hours to a few days.
   are not allowed (`allow-git=none`).
 - Frontend installs need `--legacy-peer-deps` (current peer-dependency
   conflicts): `npm ci --ignore-scripts --legacy-peer-deps`. `frontend/.npmrc`
-  sets `legacy-peer-deps=true` as well, so Dependabot's lockfile updates
-  resolve the same way (otherwise they mark the Tailwind build tree as
-  production and dependency review flags it).
+  sets `legacy-peer-deps=true` as well, so a plain `npm install` resolves
+  the same way (otherwise it marks the Tailwind build tree as production and
+  dependency review flags it).
 
 ### 2. No install scripts (allowlist only)
 
@@ -104,17 +104,14 @@ detected and unpublished within hours to a few days.
   `@testing-library/user-event` was not added: after a year without
   releases it published five versions in August-September 2026
   (checklist item 3); re-evaluate later.
-- Dependabot (`.github/dependabot.yml`) opens PRs only for versions past a
-  7-day cooldown and covers npm, pip (backend, mcp-server, mcp-bridge),
-  Dockerfiles, docker-compose and GitHub Actions. For npm, Docker,
-  docker-compose and Actions, version updates arrive as one grouped weekly PR
-  of minor/patch bumps per ecosystem/directory (at most 2 open per entry);
-  semver-major bumps are ignored and done manually. Security updates are
-  grouped into one PR per ecosystem/directory. The pip entries are
-  security-only (`open-pull-requests-limit: 0` disables version updates):
-  Python deps are hash-locked and Dependabot does not regenerate the `*.lock`
-  files, so routine pip bumps are done by hand with `scripts/lock-python.sh`
-  (section 5), and pip security PRs also need a relock before merging.
+- Updates are manual: no bot opens version- or security-update PRs.
+  Dependabot alerts (a repository setting that opens no PRs) and the
+  `dependency-review` CI check report known advisories. Fix them by hand
+  through the same paths as any bump: npm with
+  `npm install --save-exact <pkg>@<version>` (`min-release-age` applies),
+  pip with `scripts/lock-python.sh` (section 5), images by digest
+  (section 6), and actions by commit SHA. Every bump goes through the
+  vetting checklist (section 4).
 
 ### 4. Vetting checklist for a new or bumped dependency
 
@@ -187,14 +184,13 @@ Before adding a dependency or merging a bump:
    any new transitive package against section 4 and OSV.
 5. Rebuild and test: `docker compose build backend mcp-server`,
    `backend/tests/run_in_docker.sh`, and the component's own tests.
-6. Commit the input and the lock together. Dependabot PRs (pip) only edit the
-   input files; check such a PR out, run step 3 and push the regenerated lock
-   before merging (the Docker build fails until you do).
+6. Commit the input and the lock together.
 
 ### 6. Digest-pinned container images
 
 - Every `FROM` and every `image:` in `docker-compose.yml` is pinned as
-  `name:tag@sha256:<multi-arch index digest>`. Dependabot updates the digest.
+  `name:tag@sha256:<multi-arch index digest>`. Tag and digest are bumped by
+  hand.
 - Resolve a digest with
   `docker buildx imagetools inspect <name:tag> --format '{{json .Manifest}}'`
   and use the top-level (index) digest.
@@ -213,8 +209,7 @@ Before adding a dependency or merging a bump:
 - CI (`.github/workflows/`) follows the same rules:
   - workflows get a read-only token by default; only the release jobs get
     `packages: write`, `id-token: write` and `attestations: write`;
-  - every action is pinned by commit SHA, and Dependabot's `github-actions`
-    entry bumps them;
+  - every action is pinned by commit SHA and bumped by hand;
   - checkouts don't persist credentials, and nothing uses
     `pull_request_target`;
   - the release publishes with the short-lived `GITHUB_TOKEN`, never a stored

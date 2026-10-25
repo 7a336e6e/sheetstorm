@@ -1,7 +1,7 @@
 # Continuous integration: every pull request and every push to main.
 #
-# Hardening: read-only token, actions pinned by commit SHA (Dependabot keeps
-# them current), no credentials persisted in the checkout, no
+# Hardening: read-only token, actions pinned by commit SHA (bumped by hand),
+# no credentials persisted in the checkout, no
 # pull_request_target. Everything the jobs install comes from lockfiles:
 # npm ci --ignore-scripts and hash-locked pip (assets/docs/supply-chain.md).
 name: CI

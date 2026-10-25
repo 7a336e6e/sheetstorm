@@ -58,7 +58,7 @@ logs/
 # frontend/src/app/dashboard/incidents/[id]/artifacts/)
 /artifacts/
 .claude/
-# .github/ itself is tracked (dependabot.yml, future workflows); only local
+# .github/ itself is tracked (workflows); only local
 # AI-assistant files inside it are ignored.
 .github/copilot-instructions.md
 .github/agent/
